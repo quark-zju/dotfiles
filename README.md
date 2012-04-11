@@ -10,17 +10,17 @@ Any comments are welcome :p
 
 Usage
 =====
-Just run `update_home.sh` in terminal (`zsh` required).
-This script will install dotfiles if they are not existed in `$HOME`,
-update older `$HOME` dotfiles, and show file names with difference found.
+Just run `update_home.sh` in terminal (zsh required).
+This script will update non-existed, out-dated dotfiles in home. 
+If conflicts are found, nothing will be written but file names are printed.
 
 Notes
 =====
 fonts
 -----
-* Install `DroidSans` to display CJK and Thai characters correctly.
-* Install `Terminus` as terminal / gvim font. If you do not like bitmap fonts,
-  `Dejavu Sans Mono` and `Droid Sans Mono` are good terminal fonts.
+* Install DroidSans to display CJK and Thai characters correctly.
+* Install Terminus as terminal / gvim font. If you do not like bitmap fonts,
+  Dejavu Sans Mono and Droid Sans Mono are good terminal fonts.
 
 gemrc
 -----
