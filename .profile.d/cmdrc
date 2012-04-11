@@ -201,3 +201,36 @@ EOF
     popd &>/dev/null
 }
 
+# rails related
+rails() {
+    if [[ -e Gemfile ]]; then
+        bundle exec rails "$@"
+    else
+        command rails "$@"
+    fi
+}
+
+rake() {
+    if [[ -e Gemfile ]]; then
+        bundle exec rake "$@"
+    else
+        command rake "$@"
+    fi
+}
+
+thin() {
+    if [[ -e Gemfile ]]; then
+        bundle exec thin "$@"
+    else
+        command thin "$@"
+    fi
+}
+
+unicorn() {
+    if [[ -e Gemfile ]]; then
+        bundle exec unicorn "$@"
+    else
+        command unicorn "$@"
+    fi
+}
+

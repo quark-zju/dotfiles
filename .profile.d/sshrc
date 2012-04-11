@@ -1,4 +1,0 @@
-
-if [ -n "$SSH_CLIENT" ]; then
-    export PULSE_SERVER=${SSH_CLIENT/ [ 0-9]*/}
-fi

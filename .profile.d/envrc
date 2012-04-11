@@ -29,3 +29,8 @@ export WINEDEBUG=err-all,fixme-all,warn-all
 
 # utils
 export EDITOR=vim
+
+# dynamically set according to ssh_client
+if [ -n "$SSH_CLIENT" ]; then
+    export PULSE_SERVER=${SSH_CLIENT/ [ 0-9]*/}
+fi
