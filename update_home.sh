@@ -9,6 +9,7 @@ SELF_BASENAME=`basename $0`
 for i in `find`; do
     [[ $i =~ '\.git$' ]] && continue
     [[ $i =~ '\.gitignore' ]] && continue
+    [[ $i =~ '\.gitmodules' ]] && continue
     [[ $i =~ '\.git/' ]] && continue
     [[ $i =~ '^\./README' ]] && continue
     [[ -f $i ]] || continue
