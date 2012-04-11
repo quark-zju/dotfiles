@@ -1,0 +1,5 @@
+include "/usr/share/themes/Mist/gtk-2.0/gtkrc"
+gtk-theme-name="Mist"
+gtk-icon-theme-name="Tango"
+gtk-font-name="Droid Sans 9"
+gtk-can-change-accels=1

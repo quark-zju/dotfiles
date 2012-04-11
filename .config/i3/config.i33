@@ -1,0 +1,126 @@
+# This configuration uses Mod4 and Mod1. Make sure they are mapped properly using xev(1)
+# and xmodmap(1). Usually, Mod4 is Alt (Alt_L) and Mod1 is Windows (Super_L)
+
+# xmodmap:  up to 4 keys per modifier, (keycodes in parentheses):
+# 
+# shift       Shift_L (0x32),  Shift_R (0x3e)
+# lock      
+# control     Control_L (0x25),  Control_R (0x69)
+# mod1        Alt_L (0x40),  Alt_R (0x6c),  Meta_L (0xcd)
+# mod2        Num_Lock (0x4d)
+# mod3      
+# mod4        Super_L (0x85),  Super_R (0x86),  Super_L (0xce),  Hyper_L (0xcf)
+# mod5        ISO_Level3_Shift (0x5c),  Mode_switch (0xcb)
+
+# keycode from xev
+
+# ISO 10646 = Unicode
+font -misc-fixed-medium-r-normal--13-120-75-75-C-70-iso10646-1
+
+# Use Mouse+Mod4 to drag floating windows to their wanted position
+floating_modifier Mod4
+
+# Fullscreen (Mod4+f)
+bind Mod4+41 f
+
+# Stacking (Mod4+s)
+bindsym Mod4+s s
+
+# Tabbed (Mod4+w)
+bind Mod4+25 T
+
+# Default (Mod4+e)
+bind Mod4+26 d
+
+# Toggle tiling/floating of the current window (Mod4+Shift+Space)
+bind Mod4+Shift+65 t
+
+# Go into the tiling layer / floating layer, depending on whether
+# the current window is tiling / floating (Mod4+space)
+bind Mod4+65 focus ft
+
+# Focus (Mod4+h/j/k/l)
+bindsym Mod4+h h
+bindsym Mod4+j j
+bindsym Mod4+k k
+bindsym Mod4+l l
+
+# Focus Container (Mod1+h/j/k/l)
+bindsym Mod1+h wch
+bindsym Mod1+j wcj
+bindsym Mod1+k wck
+bindsym Mod1+ wcl
+
+# Snap (Mod4+Control+h/j/k/l)
+bindsym Mod5+Control+h sh
+bindsym Mod4+Control+j sj
+bindsym Mod4+Control+k sk
+bindsym Mod4+Control+l sl
+
+# Move (Mod4+Shift+hjkl)
+bindsym Mod4+Shift+h mh
+bindsym Mod4+Shift+j mj
+bindsym Mod4+Shift+k mk
+bindsym Mod4+Shift+l ml
+
+# Move Container (Mod1+Shift+hjkl)
+bindsym Mod1+Shift+h wcmh
+bindsym Mod1+Shift+j wcmj
+bindsym Mod1+Shift+k wcmk
+bindsym Mod1+Shift+l wcml
+
+# Workspaces (Mod4+1/2/…)
+bind Mod4+10 1
+bind Mod4+11 2
+bind Mod4+12 3
+bind Mod4+13 4
+bind Mod4+14 5
+bind Mod4+15 6
+bind Mod4+16 7
+bind Mod4+17 8
+bind Mod4+18 9
+bind Mod4+19 10
+
+# Move to Workspaces
+bind Mod4+Shift+10 m1
+bind Mod4+Shift+11 m2
+bind Mod4+Shift+12 m3
+bind Mod4+Shift+13 m4
+bind Mod4+Shift+14 m5
+bind Mod4+Shift+15 m6
+bind Mod4+Shift+16 m7
+bind Mod4+Shift+17 m8
+bind Mod4+Shift+18 m9
+bind Mod4+Shift+19 m10
+
+# Mod4+Enter starts a new terminal
+bind Mod4+36 exec export GTK2_RC_FILES=$XDG_CONFIG_HOME/i3/gtkrc-2.0; /usr/bin/roxterm
+bindsym Mod4+semicolon exec export GTK2_RC_FILES=$XDG_CONFIG_HOME/i3/gtkrc-2.0; /usr/bin/roxterm
+
+# Mod4+c kills the current client
+bindsym Mod4+c kill
+
+# Mod4+p starts dmenu and launches the selected application
+bind Mod4+33 exec export GTK2_RC_FILES=$XDG_CONFIG_HOME/i3/gtkrc-2.0; /usr/bin/dmenu_run
+
+# Mod4+Shift+e exits i3
+bind Mod4+Shift+26 exit
+
+# Mod4+Shift+r restarts i3 inplace
+bind Mod4+Shift+27 restart
+
+# The IPC interface allows programs like an external workspace bar
+# (i3-wsbar) or i3-msg (can be used to "remote-control" i3) to work.
+ipc-socket /tmp/i3ipc.sock
+
+exec hsetroot -solid '#111111'
+# start i3status on external HDMI display
+# exec (xrandr | grep -q 'HDMI[0-9 ]*connected') && xrandr --output HDMI1 --right-of LVDS1 --primary --auto --output LVDS1 --auto && i3status | dzen2 -w 1400 -xs 1 -y 1062 -x 520 -bg black -ta r
+# start synergyc if no external HDMI display
+# exec (xrandr | grep -q 'HDMI[0-9 ]*disconnected') && synergyc lab.lihdd.net
+
+# synergy server
+exec synergys -c /etc/synergy.conf
+exec sleep 2 && i3status | dzen2 -xs 0 -y 782 -x 400 -w 880 -bg black -ta r
+exec export GTK2_RC_FILES=$XDG_CONFIG_HOME/i3/gtkrc-2.0; ibus-daemon -rxd
+exec xcompmgr -n

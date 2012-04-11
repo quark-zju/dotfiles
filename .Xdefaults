@@ -1,0 +1,43 @@
+! This is a comment
+! Xcursor.theme:Grounation
+
+! use gnome3 default, gnome3 cursor settings not found :(
+Xcursor.theme: Adwaita
+
+Xft.dpi:96
+Xft.antialias: 1
+Xft.hinting: 1
+Xft.hintstyle: hintslight
+Xft.lcdfilter: lcddefault
+Xft.rgba: rgb
+
+URxvt.color0:   #000000
+URxvt.color1:   #AA2222
+URxvt.color2:   #22AA22
+URxvt.color3:   #AA7722
+URxvt.color4:   #2222AA
+URxvt.color5:   #AA22AA
+URxvt.color6:   #22AAAA
+URxvt.color7:   #AAAAAA
+
+URxvt.color8:   #555555
+URxvt.color9:   #FF5555
+URxvt.color10:  #55FF55
+URxvt.color11:  #FFFF55
+URxvt.color12:  #5555FF
+URxvt.color13:  #FF55FF
+URxvt.color14:  #55FFFF
+URxvt.color15:  #FFFFFF
+
+URxvt.background:   #111111
+URxvt.foreground:   #DDDDDD
+URxvt.cursorColor:  #00FF00
+
+!URxvt.title: rxvt
+URxvt.visualBell: 0
+URxvt.scrollBar: 0
+URxvt.underlineColor:   yellow
+!URxvt.preeditType: OverTheSpot ! This EXTERMELY slow down urxvt start speed
+URxvt*font: xft:Terminus-8
+
+URxvt.preeditType: OverTheSpot 

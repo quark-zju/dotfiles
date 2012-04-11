@@ -1,0 +1,23 @@
+extends c
+
+snippet cl "class .. (class)" !b
+class ${1:`!p snip.rv = snip.basename or "name"`} {
+public:
+	${1/(\w+).*/$1/} (${2:arguments});
+	virtual ~${1/(\w+).*/$1/} ();
+
+private:
+	${0:/* data */}
+};
+endsnippet
+
+snippet ns "namespace .. (namespace)" !b
+namespace${1/.+/ /m}${1:`!p snip.rv = snip.basename or "name"`} {
+	$0
+}${1/.+/ \/* /m}$1${1/.+/ *\/ /m}
+endsnippet
+
+snippet us "using namespace std" !b
+using namespace std;
+endsnippet
+

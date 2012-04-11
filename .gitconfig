@@ -1,0 +1,12 @@
+[user]
+    name = [TODO]
+    email = [TODO]
+[alias]
+    co = checkout
+    br = branch
+    c = commit
+    st = status
+[core]
+    editor = vim
+[color]
+    ui = true
