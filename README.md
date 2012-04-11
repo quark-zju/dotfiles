@@ -1,4 +1,4 @@
-Here is some of my ([quark\_zju](http://twitter.com/Quark_zju)'s) dotfiles.
+Here is some of my ([quark\_zju](https://twitter.com/Quark_zju)'s) dotfiles.
 
 About
 =====
@@ -27,4 +27,9 @@ gemrc
 * Currently `ruby.taobao.org` is in `.gemrc`, you may want to
   change it to `rubygems.org`.
 
-
+vim
+---
+* I use [Vundle](https://github.com/gmarik/vundle) to manage vim packages.
+* Start vim and use `:BundleInstall` command to install packages.
+* You may want to run `cd ~/.vim/bundle/ultisnips && ln snippets ../snippets` to
+  workaround ultisnip's 'duplicated' snippets issue.
