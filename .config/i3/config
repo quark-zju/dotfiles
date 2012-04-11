@@ -19,8 +19,8 @@ floating_modifier Mod4
 bindsym Mod4+b border toggle
 
 # Mod4+Enter starts a new terminal
-bindsym Mod4+Return exec GTK2_RC_FILES=$XDG_CONFIG_HOME/i3/gtkrc-2.0 /usr/bin/terminal
-bindsym Mod4+semicolon exec GTK2_RC_FILES=$XDG_CONFIG_HOME/i3/gtkrc-2.0 /usr/bin/terminal
+bindsym Mod4+Return exec /usr/bin/terminal
+bindsym Mod4+semicolon exec /usr/bin/terminal
 
 # kill focused window
 bindsym Mod4+c kill
@@ -29,7 +29,7 @@ bindsym Mod4+c kill
 bindsym Mod4+x exec i3lock -d
 
 # start dmenu (a program launcher)
-bindsym Mod4+p exec GTK2_RC_FILES=$XDG_CONFIG_HOME/i3/gtkrc-2.0 /usr/bin/dmenu_run
+bindsym Mod4+p exec /usr/bin/dmenu_run
 
 # change focus
 bindsym Mod4+h focus left
