@@ -3,13 +3,14 @@
 autoload colors
 colors
 
+cd $(dirname `readlink -f "$0"`)
 SELF_BASENAME=`basename $0`
 
 for i in `find`; do
-    [[ $i =~ .git$ ]] && continue
-    [[ $i =~ .gitignore ]] && continue
-    [[ $i =~ .git/ ]] && continue
-    [[ $i =~ README ]] && continue
+    [[ $i =~ '\.git$' ]] && continue
+    [[ $i =~ '\.gitignore' ]] && continue
+    [[ $i =~ '\.git/' ]] && continue
+    [[ $i =~ '^\./README' ]] && continue
     [[ -f $i ]] || continue
 
     FILE_BASENAME=`basename $i`
