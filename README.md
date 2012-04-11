@@ -30,6 +30,7 @@ gemrc
 vim
 ---
 * I use [Vundle](https://github.com/gmarik/vundle) to manage vim packages.
-* Start vim and use `:BundleInstall` command to install packages.
+* For Vundle to work properly, `git clone https://github.com/gmarik/vundle.git ~/.vim/bundle/vundle`.
+* To install vim packages, start vim and use `:BundleInstall` command.
 * You may want to run `cd ~/.vim/bundle/ultisnips && ln snippets ../snippets` to
   workaround ultisnip's 'duplicated' snippets issue.
