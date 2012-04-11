@@ -201,36 +201,14 @@ EOF
     popd &>/dev/null
 }
 
-# rails related
-rails() {
+# rails related, bundle exec wrapper
+for i in rails rake thin unicorn; do
+function $i {
     if [[ -e Gemfile ]]; then
-        bundle exec rails "$@"
+        bundle exec $0 "$@"
     else
-        command rails "$@"
+        command $0 "$@"
     fi
 }
-
-rake() {
-    if [[ -e Gemfile ]]; then
-        bundle exec rake "$@"
-    else
-        command rake "$@"
-    fi
-}
-
-thin() {
-    if [[ -e Gemfile ]]; then
-        bundle exec thin "$@"
-    else
-        command thin "$@"
-    fi
-}
-
-unicorn() {
-    if [[ -e Gemfile ]]; then
-        bundle exec unicorn "$@"
-    else
-        command unicorn "$@"
-    fi
-}
+done
 
