@@ -3,5 +3,5 @@ set file:charset "UTF-8"
 set net:reconnect-interval-multiplier 1
 set net:reconnect-interval-base 25
 set ftp:fix-pasv-address false
-set http:user-agent "w3m/0.5.2"
-set net:limit-rate 4000000
+# set http:user-agent "w3m/0.5.2"
+# set net:limit-rate 4000000
