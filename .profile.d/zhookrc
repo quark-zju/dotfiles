@@ -1,45 +1,6 @@
 # do nothing if current shell is not zsh
 [[ $SHELL =~ zsh$ ]] || exit
 
-# zsh hook functions {{{
-chpwd() {
-    # modify title
-    # if in ssh, add hostname
-    if [[ -z "$SSH_CLIENT" ]]; then
-        title "%1c"
-    else
-        title "%m: %1c"
-    fi
-
-    # push current path to $path_history (use zsh cdr instead)
-    if [[ -z $cb_flag ]]; then
-        path_history+=($PWD);
-    fi
-}
-
-preexec() {
-    # modify title to command name
-    # if in ssh, add hostname
-    local ESCAPED_CONTENT=`echo $1 | sed 's/[^a-zA-Z0-9_-. ].*$//g'`
-    if [[ -z "$SSH_CLIENT" ]]; then
-        title "$ESCAPED_CONTENT"
-    else
-        title "%m: $ESCAPED_CONTENT"
-    fi
-}
-
-precmd() {
-    # modify title to partial path
-    # if in ssh, add hostname
-    if [[ -z "$SSH_CLIENT" ]]; then
-        title "%2c"
-    else
-        title "%m: %2c"
-    fi
-}
-# }}}
-
-
 # related helper functions {{{
 
 # change title
@@ -59,6 +20,44 @@ cb() {
     cd $path_history[-1]
     # unset flag
     unset cb_flag
+}
+# }}}
+
+# zsh hook functions {{{
+chpwd() {
+    # modify title
+    # if in ssh, add hostname
+    if [[ -z "$SSH_CLIENT" ]]; then
+        title "%1c"
+    else
+        title "%m: %1c"
+    fi
+
+    # push current path to $path_history (use zsh cdr instead)
+    if [[ -z $cb_flag ]]; then
+        path_history+=($PWD);
+    fi
+}
+
+preexec() {
+    # modify title to command name
+    # if in ssh, add hostname
+    ESCAPED_CONTENT=`echo $1 | sed 's/[^a-zA-Z0-9_-. ].*$//g'`
+    if [[ -z "$SSH_CLIENT" ]]; then
+        title "$ESCAPED_CONTENT"
+    else
+        title "%m: $ESCAPED_CONTENT"
+    fi
+}
+
+precmd() {
+    # modify title to partial path
+    # if in ssh, add hostname
+    if [[ -z "$SSH_CLIENT" ]]; then
+        title "%2c"
+    else
+        title "%m: %2c"
+    fi
 }
 # }}}
 
