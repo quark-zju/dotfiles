@@ -109,9 +109,6 @@ set textwidth=79
 set formatoptions=tcqrnl
 " per language settings
 autocmd FileType ruby setlocal sw=2
-" c++11 syntax
-au BufNewFile,BufRead *.cpp set syntax=cpp11
-au BufNewFile,BufRead *.cc set syntax=cpp11
 " }}}
 
 " Status line (deprecated, use vim-powerline instead) {{{
