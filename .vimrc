@@ -184,7 +184,7 @@ noremap L g_
 nnoremap j gj
 nnoremap k gk
 " K use :man
-nnoremap K :Man <C-R><C-W><CR>
+nnoremap K :Man <cword><CR>
 " c-a, c-e style home, end
 cnoremap <C-a> <Home>
 cnoremap <C-e> <End>
