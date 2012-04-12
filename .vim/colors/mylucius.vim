@@ -279,4 +279,7 @@ hi CursorLine   guibg=#333333
 hi MatchParen   guifg=bg  guibg=#fa3 gui=bold
 " bold
 hi Statement    gui=bold
-
+" showmarks
+hi ShowMarksHLl guibg=#bae682 guifg=bg gui=bold
+hi ShowMarksHLu guibg=#50d6de guifg=bg
+hi ShowMarksHLo guibg=#2e2e2e guifg=#ddd
