@@ -36,91 +36,91 @@ hi Normal           guifg=#e4e4e4           guibg=#242424
 " Comment Group
 " -------------
 " any comment
-hi Comment          guifg=#808080                                   gui=none
+hi Comment          guifg=#808080                                   gui=NONE
 
 
 " Constant Group
 " --------------
 " any constant
-hi Constant         guifg=#50d6de                                   gui=none
+hi Constant         guifg=#50d6de                                   gui=NONE
 " strings
-hi String           guifg=#8ad6f2                                   gui=none
+hi String           guifg=#8ad6f2                                   gui=NONE
 " character constant
-hi Character        guifg=#8ad6f2                                   gui=none
+hi Character        guifg=#8ad6f2                                   gui=NONE
 " numbers decimal/hex
-hi Number           guifg=#50d6de                                   gui=none
+hi Number           guifg=#50d6de                                   gui=NONE
 " true, false
-hi Boolean          guifg=#50d6de                                   gui=none
+hi Boolean          guifg=#50d6de                                   gui=NONE
 " float
-hi Float            guifg=#50d6de                                   gui=none
+hi Float            guifg=#50d6de                                   gui=NONE
 
 
 " Identifier Group
 " ----------------
 " any variable name
-hi Identifier       guifg=#fcb666                                   gui=none
+hi Identifier       guifg=#fcb666                                   gui=NONE
 " function, method, class
-hi Function         guifg=#fcb666                                   gui=none
+hi Function         guifg=#fcb666                                   gui=NONE
 
 
 " Statement Group
 " ---------------
 " any statement
-hi Statement        guifg=#bae682                                   gui=none
+hi Statement        guifg=#bae682                                   gui=NONE
 " if, then, else
-hi Conditional      guifg=#bae682                                   gui=none
+hi Conditional      guifg=#bae682                                   gui=NONE
 " try, catch, throw, raise
-hi Exception        guifg=#bae682                                   gui=none
+hi Exception        guifg=#bae682                                   gui=NONE
 " for, while, do
-hi Repeat           guifg=#bae682                                   gui=none
+hi Repeat           guifg=#bae682                                   gui=NONE
 " case, default
-hi Label            guifg=#bae682                                   gui=none
+hi Label            guifg=#bae682                                   gui=NONE
 " sizeof, +, *
-hi Operator         guifg=#bae682                                   gui=none
+hi Operator         guifg=#bae682                                   gui=NONE
 " any other keyword
-hi Keyword          guifg=#bae682                                   gui=none
+hi Keyword          guifg=#bae682                                   gui=NONE
 
 
 " Preprocessor Group
 " ------------------
 " generic preprocessor
-hi PreProc          guifg=#efefaf                                   gui=none
+hi PreProc          guifg=#efefaf                                   gui=NONE
 " #include
-hi Include          guifg=#efefaf                                   gui=none
+hi Include          guifg=#efefaf                                   gui=NONE
 " #define
-hi Define           guifg=#efefaf                                   gui=none
+hi Define           guifg=#efefaf                                   gui=NONE
 " same as define
-hi Macro            guifg=#efefaf                                   gui=none
+hi Macro            guifg=#efefaf                                   gui=NONE
 " #if, #else, #endif
-hi PreCondit        guifg=#efefaf                                   gui=none
+hi PreCondit        guifg=#efefaf                                   gui=NONE
 
 
 " Type Group
 " ----------
 " int, long, char
-hi Type             guifg=#93e690                                   gui=none
+hi Type             guifg=#93e690                                   gui=NONE
 " static, register, volative
-hi StorageClass     guifg=#93e690                                   gui=none
+hi StorageClass     guifg=#93e690                                   gui=NONE
 " struct, union, enum
-hi Structure        guifg=#93e690                                   gui=none
+hi Structure        guifg=#93e690                                   gui=NONE
 " typedef
-hi Typedef          guifg=#93e690                                   gui=none
+hi Typedef          guifg=#93e690                                   gui=NONE
 
 
 " Special Group
 " -------------
 " any special symbol
-hi Special          guifg=#cfafcf                                   gui=none
+hi Special          guifg=#cfafcf                                   gui=NONE
 " special character in a constant
-hi SpecialChar      guifg=#cfafcf                                   gui=none
+hi SpecialChar      guifg=#cfafcf                                   gui=NONE
 " things you can CTRL-]
-hi Tag              guifg=#cfafcf                                   gui=none
+hi Tag              guifg=#cfafcf                                   gui=NONE
 " character that needs attention
-hi Delimiter        guifg=#cfafcf                                   gui=none
+hi Delimiter        guifg=#cfafcf                                   gui=NONE
 " special things inside a comment
-hi SpecialComment   guifg=#cfafcf                                   gui=none
+hi SpecialComment   guifg=#cfafcf                                   gui=NONE
 " debugging statements
-hi Debug            guifg=#cfafcf           guibg=NONE              gui=none
+hi Debug            guifg=#cfafcf           guibg=NONE              gui=NONE
 
 
 " Underlined Group
@@ -138,7 +138,7 @@ hi Ignore           guifg=bg
 " Error Group
 " -----------
 " any erroneous construct
-hi Error            guifg=#dd4040           guibg=NONE              gui=none
+hi Error            guifg=#dd4040           guibg=NONE              gui=NONE
 
 
 " Todo Group
@@ -174,32 +174,32 @@ hi CursorLine                               guibg=#3d3d4d
 " Misc
 " ----
 " directory names and other special names in listings
-hi Directory        guifg=#95e494                                   gui=none
+hi Directory        guifg=#95e494                                   gui=NONE
 " error messages on the command line
-hi ErrorMsg         guifg=#ee0000           guibg=NONE              gui=none
+hi ErrorMsg         guifg=#ee0000           guibg=NONE              gui=NONE
 " column separating vertically split windows
-hi VertSplit        guifg=#777777           guibg=#444444           gui=none
+hi VertSplit        guifg=#777777           guibg=#444444           gui=NONE
 " columns where signs are displayed (used in IDEs)
-hi SignColumn       guifg=#9fafaf           guibg=#181818           gui=none
+hi SignColumn       guifg=#9fafaf           guibg=#181818           gui=NONE
 " line numbers
 hi LineNr           guifg=#857b6f           guibg=#444444
 " match parenthesis, brackets
-hi MatchParen       guifg=#00ff00           guibg=NONE              gui=none
+hi MatchParen       guifg=#00ff00           guibg=NONE              gui=NONE
 " text showing what mode you are in
-hi MoreMsg          guifg=#2e8b57                                   gui=none
+hi MoreMsg          guifg=#2e8b57                                   gui=NONE
 " the '~' and '@' and showbreak, '>' double wide char doesn't fit on line
-hi ModeMsg          guifg=#90ee90           guibg=NONE              gui=none
+hi ModeMsg          guifg=#90ee90           guibg=NONE              gui=NONE
 " the 'more' prompt when output takes more than one line
-hi NonText          guifg=#444444                                   gui=none
+hi NonText          guifg=#444444                                   gui=NONE
 " the hit-enter prompt (show more output) and yes/no questions
-hi Question         guifg=fg                                        gui=none
+hi Question         guifg=fg                                        gui=NONE
 " meta and special keys used with map, unprintable characters
 hi SpecialKey       guifg=#505050
 " titles for output from :set all, :autocmd, etc
-hi Title            guifg=#3eb8e5                                   gui=none
-"hi Title            guifg=#5ec8e5                                   gui=none
+hi Title            guifg=#3eb8e5                                   gui=NONE
+"hi Title            guifg=#5ec8e5                                   gui=NONE
 " warning messages
-hi WarningMsg       guifg=#e5786d                                   gui=none
+hi WarningMsg       guifg=#e5786d                                   gui=NONE
 " current match in the wildmenu completion
 hi WildMenu         guifg=#000000           guibg=#cae682
 
@@ -219,45 +219,45 @@ hi DiffText         guifg=fg
 " Folds
 " -----
 " line used for closed folds
-hi Folded           guifg=#a0a8b0           guibg=#404040           gui=none
+hi Folded           guifg=#a0a8b0           guibg=#404040           gui=NONE
 " column on side used to indicated open and closed folds
-hi FoldColumn       guifg=#b0d0e0           guibg=#305060           gui=none
+hi FoldColumn       guifg=#b0d0e0           guibg=#305060           gui=NONE
 
 " Search
 " ------
 " highlight incremental search text; also highlight text replaced with :s///c
 hi IncSearch        guifg=#66ffff                                   gui=reverse
 " hlsearch (last search pattern), also used for quickfix
-hi Search                                    guibg=#ffaa33          gui=none
+hi Search                                    guibg=#ffaa33          gui=NONE
 
 " Popup Menu
 " ----------
 " normal item in popup
-hi Pmenu            guifg=#f6f3e8           guibg=#444444           gui=none
+hi Pmenu            guifg=#f6f3e8           guibg=#444444           gui=NONE
 " selected item in popup
-hi PmenuSel         guifg=#000000           guibg=#cae682           gui=none
+hi PmenuSel         guifg=#000000           guibg=#cae682           gui=NONE
 " scrollbar in popup
-hi PMenuSbar                                guibg=#607b8b           gui=none
+hi PMenuSbar                                guibg=#607b8b           gui=NONE
 " thumb of the scrollbar in the popup
-hi PMenuThumb                               guibg=#aaaaaa           gui=none
+hi PMenuThumb                               guibg=#aaaaaa           gui=NONE
 
 
 " Status Line
 " -----------
 " status line for current window
-hi StatusLine       guifg=#e0e0e0           guibg=#444444           gui=none
+hi StatusLine       guifg=#e0e0e0           guibg=#444444           gui=NONE
 " status line for non-current windows
-hi StatusLineNC     guifg=#777777           guibg=#444444           gui=none
+hi StatusLineNC     guifg=#777777           guibg=#444444           gui=NONE
 
 
 " Tab Lines
 " ---------
 " tab pages line, not active tab page label
-hi TabLine          guifg=#b6bf98           guibg=#181818           gui=none
+hi TabLine          guifg=#b6bf98           guibg=#181818           gui=NONE
 " tab pages line, where there are no labels
-hi TabLineFill      guifg=#cfcfaf           guibg=#181818           gui=none
+hi TabLineFill      guifg=#cfcfaf           guibg=#181818           gui=NONE
 " tab pages line, active tab page label
-hi TabLineSel       guifg=#efefef           guibg=#1c1c1b           gui=none
+hi TabLineSel       guifg=#efefef           guibg=#1c1c1b           gui=NONE
 
 " Visual
 " ------
@@ -279,7 +279,9 @@ hi CursorLine   guibg=#333333
 hi MatchParen   guifg=bg  guibg=#fa3 gui=bold
 " bold
 hi Statement    gui=bold
-" showmarks
+" showmarks (seems gui=none will be ignored, use all gui=bold here)
 hi ShowMarksHLl guibg=#bae682 guifg=bg gui=bold
-hi ShowMarksHLu guibg=#50d6de guifg=bg
-hi ShowMarksHLo guibg=#2e2e2e guifg=#ddd
+hi ShowMarksHLu guibg=#50d6de guifg=bg gui=bold
+hi ShowMarksHLo guifg=#ddd guibg=#2e2e2e gui=bold
+hi ShowMarksHLm guifg=#ddd guibg=#2e2e2e gui=bold
+

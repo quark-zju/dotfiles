@@ -52,7 +52,7 @@ Bundle 'python.vim'
 Bundle 'renamer.vim'
 Bundle 'Source-Explorer-srcexpl.vim'
 Bundle 'trinity.vim'
-Bundle 'ShowMarks'
+Bundle 'ShowMarks7'
 
 " not used
 " lucius author frequently changes design, not using its latest version
