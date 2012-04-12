@@ -32,4 +32,4 @@ vim
 * I use [Vundle](https://github.com/gmarik/vundle) to manage vim packages. For Vundle to work properly, `git clone https://github.com/gmarik/vundle.git ~/.vim/bundle/vundle`.
 * To install vim packages, start vim and use `:BundleInstall` command.
 * You may want to run `cd ~/.vim/ && ln -s bundle/ultisnips/UltiSnips snippets_basic` to
-  workaround ultisnip's 'duplicated' snippets issue.
+  enable UltiSnips builtin snippets.
