@@ -52,12 +52,15 @@ Bundle 'python.vim'
 Bundle 'renamer.vim'
 Bundle 'Source-Explorer-srcexpl.vim'
 Bundle 'trinity.vim'
+Bundle 'ShowMarks'
 
 " not used
 " lucius author frequently changes design, not using its latest version
 " Bundle 'Lucius'
 " use meld GUI tool instead
 " Bundle 'sjl/threesome.vim'
+" not elegent if status line is visibile, no solution yet
+" Bundle 'TabBar'
 
 filetype plugin indent on
 " }}}
@@ -237,6 +240,8 @@ cmap w!! w !sudo tee % >/dev/null
 " }}}
 
 " Plugin Settings {{{
+" ShowMarks
+let g:showmarks_include="abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.'`^<>[]{}()\""
 " vim-srcexpl
 let g:SrcExpl_pluginList=[
         \ "__Tag_List__",
