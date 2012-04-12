@@ -37,9 +37,11 @@ Bundle 'tpope/vim-rails'
 Bundle 'tpope/vim-surround'
 Bundle 'tpope/vim-unimpaired'
 Bundle 'Twinside/vim-syntax-haskell-cabal'
+Bundle 'glts/vim-spacebox'
 
 " vim.org
 Bundle 'colorsupport.vim'
+Bundle 'Cpp11-Syntax-Support'
 Bundle 'css_color.vim'
 Bundle 'indentpython.vim'
 Bundle 'iptables'
@@ -242,6 +244,10 @@ let g:ctrlp_custom_ignore={
 let g:ctrlp_max_files=400
 nmap <unique> <silent> <Leader>b :CtrlPBuffer<CR>
 nmap <unique> <silent> <Leader>m :CtrlPMRU<CR>
+
+" c++11 syntax
+au BufNewFile,BufRead *.cpp set syntax=cpp11
+au BufNewFile,BufRead *.cc set syntax=cpp11
 
 "" command-t (supressed by ctrlp)
 " let g:CommandTMaxCachedDirectories=16
