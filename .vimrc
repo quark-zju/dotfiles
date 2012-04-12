@@ -82,20 +82,11 @@ if has("gui_running")
 else
     set t_Co=256
 endif
-
 " color scheme
 colorscheme mylucius
-
 set showmode
 set showcmd
 set number
-" set cursorline
-" set cursorcolumn
-au InsertEnter * set cursorcolumn
-au InsertEnter * set cursorline
-au InsertLeave * set nocursorcolumn
-au InsertLeave * set nocursorline
-" ttyfast significantly improves cursor moving speed with cursorcolumn set
 set ttyfast 
 set lazyredraw
 set ruler
@@ -104,6 +95,32 @@ set title
 set colorcolumn=+1
 " wildmenu completion
 set wildmenu
+" show cursor line/column in active window
+function! ShowCursorCross(visible)
+    if a:visible == 0
+        set nocursorcolumn
+        set nocursorline
+    else
+        set cursorcolumn
+        set cursorline
+    endif
+endfunction
+function! HighlightCursorCross(level)
+    if a:level == 0
+        hi CursorColumn guibg=#333
+        hi CursorLine   guibg=#333
+    else
+        hi CursorColumn guibg=#223f44
+        hi CursorLine   guibg=#223f44
+    endif
+endfunction
+
+call ShowCursorCross(1)
+call HighlightCursorCross(0)
+au WinEnter * call ShowCursorCross(1)
+au WinLeave * call ShowCursorCross(0)
+au InsertEnter * call HighlightCursorCross(1)
+au InsertLeave * call HighlightCursorCross(0)
 " }}}
 
 " Tab, Spaces, Indent, Numbers, Syntax {{{
