@@ -17,6 +17,7 @@ Bundle 'taglist.vim'
 " bundles
 " github
 Bundle 'ecomba/vim-ruby-refactoring'
+Bundle 'glts/vim-spacebox'
 Bundle 'gmarik/vundle'
 Bundle 'godlygeek/tabular'
 Bundle 'kchmck/vim-coffee-script'
@@ -27,6 +28,7 @@ Bundle 'lukerandall/haskellmode-vim'
 Bundle 'nelstrom/vim-textobj-rubyblock'
 Bundle 'scrooloose/syntastic'
 Bundle 'SirVer/ultisnips'
+Bundle 'tomasr/molokai'
 Bundle 'tpope/vim-abolish'
 Bundle 'tpope/vim-commentary'
 Bundle 'tpope/vim-endwise'
@@ -37,7 +39,6 @@ Bundle 'tpope/vim-rails'
 Bundle 'tpope/vim-surround'
 Bundle 'tpope/vim-unimpaired'
 Bundle 'Twinside/vim-syntax-haskell-cabal'
-Bundle 'glts/vim-spacebox'
 
 " vim.org
 Bundle 'colorsupport.vim'
@@ -69,22 +70,31 @@ source $VIMRUNTIME/ftplugin/man.vim
 
 " Basic UI, Color Theme {{{
 syntax on
-" for gvim, use lucius
+" for gvim
 if has("gui_running")
     set guioptions=egit
+    " " if non-bitmap font is preferable
+    " set guifont=DejaVu\ Sans\ Mono\ 9
     set guifont=Terminus\ 9
     set nomousehide
     set lines=40
     set columns=83
-    colorscheme mylucius
 else
-    colorscheme ron
+    set t_Co=256
 endif
+
+" color scheme
+colorscheme mylucius
+
 set showmode
 set showcmd
 set number
-set cursorline
-set cursorcolumn
+" set cursorline
+" set cursorcolumn
+au InsertEnter * set cursorcolumn
+au InsertEnter * set cursorline
+au InsertLeave * set nocursorcolumn
+au InsertLeave * set nocursorline
 " ttyfast significantly improves cursor moving speed with cursorcolumn set
 set ttyfast 
 set lazyredraw
@@ -111,14 +121,15 @@ set formatoptions=tcqrnl
 autocmd FileType ruby setlocal sw=2
 " }}}
 
-" Status line (deprecated, use vim-powerline instead) {{{
+" Status line  {{{
 " " always show status line
 set laststatus=2
-"
+" (deprecated, use vim-powerline instead)"
 " " change statusline color when inserting
 " augroup ft_statuslinecolor
 "     au InsertEnter * hi StatusLine guifg=#2e3436 guibg=#8ae234
 "     au InsertLeave * hi StatusLine guifg=#eee guibg=#444
+"
 " augroup END
 " 
 " " path, modified, readonly, preview, help, list

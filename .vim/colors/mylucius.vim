@@ -340,8 +340,8 @@ hi VisualNOS        guifg=fg                                        gui=underlin
 hi VisualNOS        ctermfg=fg                                      cterm=underline
 
 " Additional Tweaking
-" -------------------
-" Modifier: WU Jun <quark@zju.edu.cn>
+" by WU Jun <quark@zju.edu.cn>
+"
 " current line numbers
 hi CursorLineNr guifg=#ffaa33  guibg=#555555
 hi ColorColumn  guibg=#222222
