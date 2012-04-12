@@ -66,23 +66,8 @@ source $VIMRUNTIME/vimrc_example.vim
 source $VIMRUNTIME/ftplugin/man.vim
 " }}}
 
-" Tab, Spaces, Indent, Number {{{
-set expandtab
-set smarttab
-set autoindent 
-set tabstop=4 
-set shiftwidth=4 
-set backspace=indent,eol,start
-set nolinebreak
-set nowrap
-set textwidth=79
-set formatoptions=tcqrnl
-" per language settings
-autocmd FileType ruby setlocal sw=2
-" }}}
 
 " Basic UI, Color Theme {{{
-" enable syntax
 syntax on
 " for gvim, use lucius
 if has("gui_running")
@@ -100,7 +85,7 @@ set showcmd
 set number
 set cursorline
 set cursorcolumn
-" ttyfast significantly improve cursor moving speed with cursorcolumn
+" ttyfast significantly improves cursor moving speed with cursorcolumn set
 set ttyfast 
 set lazyredraw
 set ruler
@@ -109,6 +94,24 @@ set title
 set colorcolumn=+1
 " wildmenu completion
 set wildmenu
+" }}}
+
+" Tab, Spaces, Indent, Numbers, Syntax {{{
+set expandtab
+set smarttab
+set autoindent 
+set tabstop=4 
+set shiftwidth=4 
+set backspace=indent,eol,start
+set nolinebreak
+set nowrap
+set textwidth=79
+set formatoptions=tcqrnl
+" per language settings
+autocmd FileType ruby setlocal sw=2
+" c++11 syntax
+au BufNewFile,BufRead *.cpp set syntax=cpp11
+au BufNewFile,BufRead *.cc set syntax=cpp11
 " }}}
 
 " Status line (deprecated, use vim-powerline instead) {{{
@@ -180,6 +183,8 @@ noremap L g_
 " useful when a line is wrapped
 nnoremap j gj
 nnoremap k gk
+" K use :man
+nnoremap K :Man <C-R><C-W><CR>
 " c-a, c-e style home, end
 cnoremap <C-a> <Home>
 cnoremap <C-e> <End>
@@ -245,9 +250,6 @@ let g:ctrlp_max_files=400
 nmap <unique> <silent> <Leader>b :CtrlPBuffer<CR>
 nmap <unique> <silent> <Leader>m :CtrlPMRU<CR>
 
-" c++11 syntax
-au BufNewFile,BufRead *.cpp set syntax=cpp11
-au BufNewFile,BufRead *.cc set syntax=cpp11
 
 "" command-t (supressed by ctrlp)
 " let g:CommandTMaxCachedDirectories=16
