@@ -205,7 +205,7 @@ EOF)
 # rails related, bundle exec wrapper
 for i in rails rake thin unicorn puma warble; do
 function $i {
-    if [[ -e Gemfile ]]; then
+    if [[ -e Gemfile ]] && cat Gemfile | grep -qF "$0"; then
         bundle exec $0 "$@"
     else
         command $0 "$@"
