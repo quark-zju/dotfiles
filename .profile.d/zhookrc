@@ -42,7 +42,13 @@ chpwd() {
 preexec() {
     # modify title to command name
     # if in ssh, add hostname
-    ESCAPED_CONTENT=`echo $1 | sed 's/[^a-zA-Z0-9_-. ].*$//g'`
+    # if $TITLE is non-empty, use it
+    local ESCAPED_CONTENT;
+    if [ -n "$TITLE" ]; then
+        ESCAPED_CONTENT="$TITLE"
+    else
+        ESCAPED_CONTENT=`echo $1 | sed 's/[^a-zA-Z0-9_-. ].*$//g'`
+    fi
     if [[ -z "$SSH_CLIENT" ]]; then
         title "$ESCAPED_CONTENT"
     else
