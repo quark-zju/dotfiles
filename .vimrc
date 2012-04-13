@@ -72,7 +72,7 @@ source $VIMRUNTIME/ftplugin/man.vim
 " }}}
 
 
-" Basic UI, Color Theme {{{
+" Basic UI {{{
 syntax on
 set showmode
 set showcmd
@@ -81,11 +81,32 @@ set ttyfast
 set lazyredraw
 set ruler
 set title
+set noea
+set wildmenu
+set nomousehide
+set lines=40
+set columns=83
 set updatetime=500
+" }}}
+
+" Tab, Spaces, Indent {{{
+set expandtab
+set smarttab
+set autoindent 
+set tabstop=4 
+set shiftwidth=4 
+set backspace=indent,eol,start
+set nolinebreak
+set nowrap
+set textwidth=79
+set formatoptions=tcqrnl
+" per language settings
+autocmd FileType ruby setlocal sw=2
+" }}}
+
+" Colors {{{
 " highlight the column after textwidth column
 set colorcolumn=+1
-" wildmenu completion
-set wildmenu
 " show cursor line/column in active window
 function! ShowCursorCross(visible)
     if a:visible == 0
@@ -113,9 +134,6 @@ if has("gui_running")
     " " if non-bitmap font is preferable
     " set guifont=DejaVu\ Sans\ Mono\ 9
     set guifont=Terminus\ 9
-    set nomousehide
-    set lines=40
-    set columns=83
     au WinEnter * call ShowCursorCross(1)
     au WinLeave * call ShowCursorCross(0)
     au InsertEnter * call HighlightCursorCross(1)
@@ -126,23 +144,8 @@ endif
 colo mylucius
 " }}}
 
-" Tab, Spaces, Indent, Numbers, Syntax {{{
-set expandtab
-set smarttab
-set autoindent 
-set tabstop=4 
-set shiftwidth=4 
-set backspace=indent,eol,start
-set nolinebreak
-set nowrap
-set textwidth=79
-set formatoptions=tcqrnl
-" per language settings
-autocmd FileType ruby setlocal sw=2
-" }}}
-
 " Status line  {{{
-" " always show status line
+" always show status line
 set laststatus=2
 " (deprecated, use vim-powerline instead)"
 " " change statusline color when inserting
@@ -155,19 +158,17 @@ set laststatus=2
 " " path, modified, readonly, preview, help, list
 " set statusline=%f%m%r%w%h%q
 " 
-" " " show warning in red
-" " set statusline+=%#redbar#
-" " set statusline+=%*
-" 
 " " right align, show  file type, encoding, file format, line, col
 " set statusline+=%=%{&ft}\ \ 
 " set statusline+=%{strlen(&fenc)?&fenc:&enc},%{&ff}\ \ 
 " set statusline+=%l\/%L\ \ %03c
-
 " }}}
 
-" Encodings {{{
-set fileencodings=utf-8,ucs-bom,gb18030,default
+" Encoding, BOM {{{
+set fileencodings=utf-8,ucs-bom,gb18030,big5,shift-jis,default
+set fileencoding=utf-8
+set encoding=utf-8
+set nobomb
 " }}}
 
 " Searching, Scrolling, Movement {{{
@@ -177,9 +178,8 @@ set incsearch
 set showmatch
 set hlsearch
 set gdefault
-" preview at least next 4 lines
 set scrolloff=4
-set virtualedit=block
+set virtualedit=block,insert
 " }}}
 
 " Swapping, Undos, Backups, Clipboard, Encrypt {{{
@@ -188,11 +188,26 @@ set undofile
 " set /tmp as swap dir and undodir
 set dir=/var/tmp/vim,/tmp/vim,/tmp
 set undodir=/var/tmp/vim,/tmp/vim,/tmp
+set backupdir=/var/tmp/vim,/tmp/vim,/tmp
 " disable annoying backup file, thus no need to set backupdir
 set nobackup
 " Use X Window clipboard as default clipboard (VimTip21)
-set clipboard=unnamedplus,autoselect
+set clipboard=unnamedplus,unnamed,autoselect
 set cm=blowfish
+" }}}
+
+" Folding {{{
+" fold level
+set foldlevel=4
+set foldmethod=marker
+" by filetype
+autocmd FileType c,cpp,ruby setlocal foldmethod=syntax
+autocmd FileType java,javascript setlocal foldmarker={,}
+" }}}
+
+" Custom commands {{{
+" sudo write
+cmap w!! w !sudo tee % >/dev/null
 " }}}
 
 " Shortcut keys {{{
@@ -216,28 +231,18 @@ nnoremap K :Man <cword><CR>
 " c-a, c-e style home, end
 cnoremap <C-a> <Home>
 cnoremap <C-e> <End>
+" <Space> toggles folds
+nnoremap <Space> za
+" zO recursively open all folds
+nnoremap zO zCzO
 " srcexpl, nerdtree, taglist toggle
 nmap <F8> :TrinityToggleAll<CR>
 nmap <F9> :NERDTree<CR>
+" ctrlp
+nmap <unique> <silent> <Leader>b :CtrlPBuffer<CR>
+nmap <unique> <silent> <Leader>m :CtrlPMRU<CR>
 " }}}
 
-" Folding {{{
-" <Space> toggles folds
-nnoremap <Space> za
-" fold level
-set foldlevel=4
-" zO recursively open all folds
-nnoremap zO zCzO
-set foldmethod=marker
-" by filetype
-autocmd FileType c,cpp,ruby setlocal foldmethod=syntax
-autocmd FileType java,javascript setlocal foldmarker={,}
-" }}}
-
-" Custom commands {{{
-" sudo write
-cmap w!! w !sudo tee % >/dev/null
-" }}}
 
 " Plugin Settings {{{
 " ShowMarks
@@ -277,9 +282,6 @@ let g:ctrlp_custom_ignore={
             \ 'file': '\.so$\|\.o$\|\.out$\|\.lock$',
             \ }
 let g:ctrlp_max_files=400
-nmap <unique> <silent> <Leader>b :CtrlPBuffer<CR>
-nmap <unique> <silent> <Leader>m :CtrlPMRU<CR>
-
 
 "" command-t (supressed by ctrlp)
 " let g:CommandTMaxCachedDirectories=16
@@ -289,7 +291,6 @@ nmap <unique> <silent> <Leader>m :CtrlPMRU<CR>
 
 "" Molly (supressed by ctrlp)
 " nmap <unique> <silent> <Leader>t :Molly<CR>
-
 
 " }}}
 

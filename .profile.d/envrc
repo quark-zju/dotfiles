@@ -28,7 +28,7 @@ export WINEDLLOVERRIDES="winemenubuilder.exe=d"
 export WINEDEBUG=err-all,fixme-all,warn-all
 
 # utils
-export EDITOR=vim
+export EDITOR='gvim -f'
 
 # dynamically set according to ssh_client
 if [ -n "$SSH_CLIENT" ]; then
