@@ -290,7 +290,7 @@ hi Repeat       gui=bold
 hi ShowMarksHLl guibg=#bae682 guifg=bg gui=bold
 hi ShowMarksHLu guibg=#50d6de guifg=bg gui=bold
 hi ShowMarksHLo guifg=#ddd guibg=#2e2e2e gui=bold
-hi ShowMarksHLm guifg=#ddd guibg=#2e2e2e gui=bold
+hi ShowMarksHLm guibg=#bae682 guifg=bg gui=bold
 
 " xterm colors (dumped using colorsupport.vim)
 " --------------------------------------------
@@ -378,6 +378,6 @@ if &t_Co > 255
     hi CursorIM       ctermfg=235 ctermbg=116
     hi ShowMarksHLl   cterm=bold ctermfg=235 ctermbg=150
     hi ShowMarksHLu   cterm=bold ctermfg=235 ctermbg=80
-    hi ShowMarksHLo   cterm=bold ctermfg=160 ctermbg=236
-    hi ShowMarksHLm   cterm=bold ctermfg=160 ctermbg=236
+    hi ShowMarksHLo   cterm=bold ctermfg=7 ctermbg=236
+    hi ShowMarksHLm   cterm=bold ctermfg=235 ctermbg=150
 end
