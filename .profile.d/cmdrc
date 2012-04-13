@@ -193,14 +193,12 @@ shuffle_play() {
     pushd ${1:-$PWD} &>/dev/null
     # use temp file, make 'q', ' ', '0' control keys available inside mplayer
 local TITLE='shuffle_play'
-ruby =( cat << EOF
+ruby =(cat <<'EOF'
 Dir['{,*/,*/*/,*/*/*/}*.{mp3,flac,ogg,wma}'].shuffle.each do |f|
 puts f
-f.gsub! "'", "'\''"
-exit unless system("mplayer -really-quiet '#{f}'")
+exit unless system("mplayer -really-quiet '#{f.gsub "'", "'\"'\"'"}'")
 end
-EOF
-)
+EOF)
     popd &>/dev/null
 }
 
