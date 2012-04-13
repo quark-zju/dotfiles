@@ -162,6 +162,7 @@ bindsym Mod4+r mode "resize"
 for_window [class="MPlayer"] border 1pixel 
 for_window [class="MPlayer"] floating enable
 for_window [class="Vlc"] floating enable
+for_window [class="Gcolor2"] floating enable
 for_window [class="Tilda"] floating enable
 for_window [class="Xfce4-notifyd"] floating enable
 for_window [class="Xfce4-notifyd"] border 1pixel

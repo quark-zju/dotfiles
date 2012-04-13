@@ -280,6 +280,12 @@ hi CursorLine   guibg=#333333
 hi MatchParen   guifg=bg  guibg=#fa3 gui=bold
 " bold
 hi Statement    gui=bold
+hi Conditional  gui=bold
+hi Keyword      gui=bold
+hi SpecialChar  gui=bold
+hi PreCondit    gui=bold
+hi Repeat       gui=bold
+
 " showmarks (seems gui=none will be ignored, use all gui=bold here)
 hi ShowMarksHLl guibg=#bae682 guifg=bg gui=bold
 hi ShowMarksHLu guibg=#50d6de guifg=bg gui=bold
@@ -288,89 +294,90 @@ hi ShowMarksHLm guifg=#ddd guibg=#2e2e2e gui=bold
 
 " xterm colors (dumped using colorsupport.vim)
 " --------------------------------------------
-hi SpecialKey     term=bold ctermfg=239  
-hi NonText        term=bold ctermfg=238  
-hi Directory      term=bold ctermfg=114  
-hi ErrorMsg       term=standout ctermfg=196 
-hi IncSearch      term=reverse cterm=reverse ctermfg=87   
-hi Search         term=reverse ctermbg=215  
-hi MoreMsg        term=bold ctermfg=29  
-hi ModeMsg        term=bold ctermfg=120 
-hi LineNr         term=underline ctermfg=243 ctermbg=236  
-hi CursorLineNr   term=bold ctermfg=215 ctermbg=238   
-hi Question       term=standout ctermfg=254  
-hi StatusLine     term=bold,reverse ctermfg=254 ctermbg=238  
-hi StatusLineNC   term=reverse ctermfg=243 ctermbg=238  
-hi VertSplit      term=reverse ctermfg=243 ctermbg=238  
-hi Title          term=bold ctermfg=74  
-hi Visual         term=reverse ctermbg=240 
-hi VisualNOS      term=bold,underline cterm=underline ctermfg=254   
-hi WarningMsg     term=standout ctermfg=173  
-hi WildMenu       term=standout ctermfg=16 ctermbg=186  
-hi Folded         term=standout ctermfg=248 ctermbg=238  
-hi FoldColumn     term=standout ctermfg=152 ctermbg=239  
-hi DiffAdd        term=bold ctermfg=254 ctermbg=30  
-hi DiffChange     term=bold ctermfg=254 ctermbg=28  
-hi DiffDelete     term=bold cterm=bold ctermfg=254 ctermbg=16   
-hi DiffText       term=reverse cterm=bold ctermfg=254 ctermbg=196   
-hi SignColumn     term=standout ctermfg=248 ctermbg=234  
-hi Conceal        ctermfg=7 ctermbg=242  
-hi SpellBad       term=reverse cterm=undercurl ctermbg=196   
-hi SpellCap       term=reverse cterm=undercurl ctermbg=226   
-hi SpellRare      term=reverse cterm=undercurl ctermbg=214   
-hi SpellLocal     term=underline cterm=undercurl ctermbg=214   
-hi Pmenu          ctermfg=15 ctermbg=238  
-hi PmenuSel       ctermfg=16 ctermbg=186  
-hi PmenuSbar      ctermbg=66  
-hi PmenuThumb     ctermbg=248  
-hi TabLine        term=underline ctermfg=144 ctermbg=234  
-hi TabLineSel     term=bold ctermfg=255 ctermbg=234  
-hi TabLineFill    term=reverse ctermfg=187 ctermbg=234  
-hi CursorColumn   term=reverse ctermbg=236  
-hi CursorLine     term=underline ctermbg=236  
-hi ColorColumn    term=reverse ctermbg=235 
-hi Cursor         cterm=reverse ctermfg=235 ctermbg=117   
-hi lCursor        cterm=reverse   
-hi MatchParen     term=reverse cterm=bold ctermfg=235 ctermbg=196   
-hi Normal         ctermfg=254 ctermbg=235  
-hi Error          term=reverse ctermfg=9 
-hi Comment        term=bold ctermfg=244 
-hi Constant       term=underline ctermfg=80 
-hi Special        term=bold ctermfg=182 
-hi Identifier     term=underline ctermfg=215 
-hi Statement      term=bold cterm=bold ctermfg=150  
-hi PreProc        term=underline ctermfg=229 
-hi Type           term=underline ctermfg=114 
-hi Underlined     term=underline cterm=underline ctermfg=254  
-hi Ignore         ctermfg=235 
-hi Todo           term=standout cterm=underline ctermfg=11  
-hi String         ctermfg=117 
-hi Character      ctermfg=117 
-hi Number         ctermfg=80 
-hi Boolean        ctermfg=80 
-hi Float          ctermfg=80 
-hi Function       ctermfg=215 
-hi Conditional    ctermfg=150 
-hi Repeat         ctermfg=150 
-hi Label          ctermfg=150 
-hi Operator       ctermfg=150 
-hi Keyword        ctermfg=150 
-hi Exception      ctermfg=150 
-hi Include        ctermfg=229 
-hi Define         ctermfg=229 
-hi Macro          ctermfg=229 
-hi PreCondit      ctermfg=229 
-hi StorageClass   ctermfg=114 
-hi Structure      ctermfg=114 
-hi Typedef        ctermfg=114 
-hi Tag            ctermfg=182 
-hi SpecialChar    ctermfg=182 
-hi Delimiter      ctermfg=182 
-hi SpecialComment ctermfg=182 
-hi Debug          ctermfg=182 
-hi CursorIM       ctermfg=235 ctermbg=116  
-hi ShowMarksHLl   cterm=bold ctermfg=235 ctermbg=150   
-hi ShowMarksHLu   cterm=bold ctermfg=235 ctermbg=80   
-hi ShowMarksHLo   cterm=bold ctermfg=160 ctermbg=236   
-hi ShowMarksHLm   cterm=bold ctermfg=160 ctermbg=236   
-
+if &t_Co > 255
+    hi SpecialKey     term=bold ctermfg=239
+    hi NonText        term=bold ctermfg=238
+    hi Directory      term=bold ctermfg=114
+    hi ErrorMsg       term=standout ctermfg=196 ctermbg=235
+    hi IncSearch      term=reverse cterm=reverse ctermfg=87
+    hi Search         term=reverse ctermbg=215
+    hi MoreMsg        term=bold ctermfg=29
+    hi ModeMsg        term=bold ctermfg=120
+    hi LineNr         term=underline ctermfg=243 ctermbg=236
+    hi CursorLineNr   term=bold ctermfg=215 ctermbg=238
+    hi Question       term=standout ctermfg=254
+    hi StatusLine     term=bold,reverse ctermfg=254 ctermbg=238
+    hi StatusLineNC   term=reverse ctermfg=243 ctermbg=238
+    hi VertSplit      term=reverse ctermfg=243 ctermbg=238
+    hi Title          term=bold ctermfg=74
+    hi Visual         term=reverse ctermbg=240
+    hi VisualNOS      term=bold,underline cterm=underline ctermfg=254
+    hi WarningMsg     term=standout ctermfg=173
+    hi WildMenu       term=standout ctermfg=16 ctermbg=186
+    hi Folded         term=standout ctermfg=248 ctermbg=238
+    hi FoldColumn     term=standout ctermfg=152 ctermbg=239
+    hi DiffAdd        term=bold ctermfg=254 ctermbg=30
+    hi DiffChange     term=bold ctermfg=254 ctermbg=28
+    hi DiffDelete     term=bold cterm=bold ctermfg=254 ctermbg=16
+    hi DiffText       term=reverse cterm=bold ctermfg=254 ctermbg=196
+    hi SignColumn     term=standout ctermfg=248 ctermbg=234
+    hi Conceal        ctermfg=7 ctermbg=242
+    hi SpellBad       term=reverse cterm=undercurl ctermbg=196
+    hi SpellCap       term=reverse cterm=undercurl ctermbg=226
+    hi SpellRare      term=reverse cterm=undercurl ctermbg=214
+    hi SpellLocal     term=underline cterm=undercurl ctermbg=214
+    hi Pmenu          ctermfg=15 ctermbg=238
+    hi PmenuSel       ctermfg=16 ctermbg=186
+    hi PmenuSbar      ctermbg=66
+    hi PmenuThumb     ctermbg=248
+    hi TabLine        term=underline ctermfg=144 ctermbg=234
+    hi TabLineSel     term=bold ctermfg=255 ctermbg=234
+    hi TabLineFill    term=reverse ctermfg=187 ctermbg=234
+    hi CursorColumn   term=reverse ctermbg=236
+    hi CursorLine     term=underline ctermbg=236
+    hi ColorColumn    term=reverse ctermbg=235
+    hi Cursor         cterm=reverse ctermfg=235 ctermbg=117
+    hi lCursor        cterm=reverse
+    hi MatchParen     term=reverse cterm=bold ctermfg=235 ctermbg=196
+    hi Normal         ctermfg=254 ctermbg=235
+    hi Error          term=reverse ctermfg=9 ctermbg=235
+    hi Comment        term=bold ctermfg=244
+    hi Constant       term=underline ctermfg=80
+    hi Special        term=bold ctermfg=182
+    hi Identifier     term=underline ctermfg=215
+    hi Statement      term=bold cterm=bold ctermfg=150
+    hi PreProc        term=underline ctermfg=229
+    hi Type           term=underline ctermfg=114
+    hi Underlined     term=underline cterm=underline ctermfg=254
+    hi Ignore         ctermfg=235
+    hi Todo           term=standout cterm=underline ctermfg=11
+    hi String         ctermfg=117
+    hi Character      ctermfg=117
+    hi Number         ctermfg=80
+    hi Boolean        ctermfg=80
+    hi Float          ctermfg=80
+    hi Function       ctermfg=215
+    hi Conditional    cterm=bold ctermfg=150
+    hi Repeat         ctermfg=150
+    hi Label          ctermfg=150
+    hi Operator       ctermfg=150
+    hi Keyword        ctermfg=150
+    hi Exception      ctermfg=150
+    hi Include        ctermfg=229
+    hi Define         ctermfg=229
+    hi Macro          ctermfg=229
+    hi PreCondit      ctermfg=229
+    hi StorageClass   ctermfg=114
+    hi Structure      ctermfg=114
+    hi Typedef        ctermfg=114
+    hi Tag            ctermfg=182
+    hi SpecialChar    ctermfg=182
+    hi Delimiter      ctermfg=182
+    hi SpecialComment ctermfg=182
+    hi Debug          ctermfg=182
+    hi CursorIM       ctermfg=235 ctermbg=116
+    hi ShowMarksHLl   cterm=bold ctermfg=235 ctermbg=150
+    hi ShowMarksHLu   cterm=bold ctermfg=235 ctermbg=80
+    hi ShowMarksHLo   cterm=bold ctermfg=160 ctermbg=236
+    hi ShowMarksHLm   cterm=bold ctermfg=160 ctermbg=236
+end
