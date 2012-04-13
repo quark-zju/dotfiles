@@ -232,8 +232,8 @@ nnoremap K :Man <cword><CR>
 " c-a, c-e style home, end
 cnoremap <C-a> <Home>
 cnoremap <C-e> <End>
-" <Space> toggles folds
-nnoremap <Space> za
+" <Space> calls SpaceBox
+nnoremap <Space> :SpaceBox<CR>
 " zO recursively open all folds
 nnoremap zO zCzO
 " srcexpl, nerdtree, taglist toggle
