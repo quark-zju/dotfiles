@@ -15,7 +15,7 @@ alias p='RAILS_ENV=production'
 alias pryc='bundle exec pry -r ./config/environment'
 alias rd='rmdir'
 alias t=tmux
-alias monitor='DEBUG=1 lrun --reset-env=false --network true --isolate-process false'
+alias monitor='DEBUG=1 lrun --reset-env false --network true --isolate-process false'
 
 alias -g ...='../..'
 alias -g ....='../../..'
