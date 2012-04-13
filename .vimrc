@@ -41,7 +41,6 @@ Bundle 'tpope/vim-unimpaired'
 Bundle 'Twinside/vim-syntax-haskell-cabal'
 
 " vim.org
-Bundle 'colorsupport.vim'
 Bundle 'Cpp11-Syntax-Support'
 Bundle 'css_color.vim'
 Bundle 'indentpython.vim'
@@ -61,6 +60,8 @@ Bundle 'ShowMarks7'
 " Bundle 'sjl/threesome.vim'
 " not elegent if status line is visibile, no solution yet
 " Bundle 'TabBar'
+" works well but too slow
+" Bundle 'colorsupport.vim'
 
 filetype plugin indent on
 " }}}
@@ -73,20 +74,6 @@ source $VIMRUNTIME/ftplugin/man.vim
 
 " Basic UI, Color Theme {{{
 syntax on
-" for gvim
-if has("gui_running")
-    set guioptions=egit
-    " " if non-bitmap font is preferable
-    " set guifont=DejaVu\ Sans\ Mono\ 9
-    set guifont=Terminus\ 9
-    set nomousehide
-    set lines=40
-    set columns=83
-else
-    set t_Co=256
-endif
-" color scheme
-colorscheme mylucius
 set showmode
 set showcmd
 set number
@@ -117,13 +104,25 @@ function! HighlightCursorCross(level)
         hi CursorLine   guibg=#223f44
     endif
 endfunction
-
 call ShowCursorCross(1)
 call HighlightCursorCross(0)
-au WinEnter * call ShowCursorCross(1)
-au WinLeave * call ShowCursorCross(0)
-au InsertEnter * call HighlightCursorCross(1)
-au InsertLeave * call HighlightCursorCross(0)
+" for gvim
+if has("gui_running")
+    set guioptions=egit
+    " " if non-bitmap font is preferable
+    " set guifont=DejaVu\ Sans\ Mono\ 9
+    set guifont=Terminus\ 9
+    set nomousehide
+    set lines=40
+    set columns=83
+    au WinEnter * call ShowCursorCross(1)
+    au WinLeave * call ShowCursorCross(0)
+    au InsertEnter * call HighlightCursorCross(1)
+    au InsertLeave * call HighlightCursorCross(0)
+else
+    set t_Co=256
+endif
+colo mylucius
 " }}}
 
 " Tab, Spaces, Indent, Numbers, Syntax {{{
