@@ -247,6 +247,7 @@ nmap <unique> <silent> <Leader>m :CtrlPMRU<CR>
 
 " Plugin Settings {{{
 " ShowMarks
+let g:showmarks_enable=0
 let g:showmarks_include="abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.'`^<>[]{}()\""
 " vim-srcexpl
 let g:SrcExpl_pluginList=[

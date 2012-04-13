@@ -1,0 +1,4 @@
+compile.fastops=true
+backtrace.color=true
+compat.version=1.9
+
