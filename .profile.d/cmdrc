@@ -203,7 +203,7 @@ EOF)
 }
 
 # rails related, bundle exec wrapper
-for i in rails rake thin unicorn; do
+for i in rails rake thin unicorn puma warble; do
 function $i {
     if [[ -e Gemfile ]]; then
         bundle exec $0 "$@"
