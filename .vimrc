@@ -39,6 +39,7 @@ Bundle 'tpope/vim-rails'
 Bundle 'tpope/vim-surround'
 Bundle 'tpope/vim-unimpaired'
 Bundle 'Twinside/vim-syntax-haskell-cabal'
+Bundle 'bbommarito/vim-slim.git'
 
 " vim.org
 Bundle 'Cpp11-Syntax-Support'
