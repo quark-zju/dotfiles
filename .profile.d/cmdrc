@@ -191,13 +191,15 @@ resize() {
 # shuffle play music in current dir
 shuffle_play() {
     pushd ${1:-$PWD} &>/dev/null
-    ruby<<EOF
+    # use temp file, make 'q', ' ', '0' control keys available inside mplayer
+    ruby =( cat << EOF
     Dir['{,*/,*/*/,*/*/*/}*.{mp3,flac,ogg,wma}'].shuffle.each do |f|
     puts f
     f.gsub! "'", "'\''"
     exit unless system("mplayer -really-quiet '#{f}'")
     end
 EOF
+)
     popd &>/dev/null
 }
 
