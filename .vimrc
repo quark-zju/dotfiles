@@ -81,6 +81,7 @@ set ttyfast
 set lazyredraw
 set ruler
 set title
+set updatetime=500
 " highlight the column after textwidth column
 set colorcolumn=+1
 " wildmenu completion
