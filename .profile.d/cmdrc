@@ -44,7 +44,7 @@ s() {
 			grep -q "#include.*$key" "$file" && cxxflags+=(${cxxref[$key]})
 		}
 		# use echo to reparse $cxxflags, do not regard it as a whole
-		g++ "$file" -std=c++0x -Wall `echo $cxxflags` -lm && { ./a.out; rm a.out &> /dev/null; }
+		g++ "$file" -std=c++0x -Wall `echo $cxxflags` -lm && { stdbuf -o0 ./a.out && rm a.out &> /dev/null; }
 	else
 		\tmux attach || \tmux
 	fi
