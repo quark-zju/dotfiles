@@ -12,6 +12,7 @@ alias mame=sdlmame
 alias md='mkdir -p'
 alias pc='proxychains'
 alias p='RAILS_ENV=production'
+alias e='RAILS_ENV=staging'
 alias pryc='bundle exec pry -r ./config/environment'
 alias rd='rmdir'
 alias t=tmux
