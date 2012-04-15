@@ -111,11 +111,11 @@ set colorcolumn=+1
 " show cursor line/column in active window
 function! ShowCursorCross(visible)
     if a:visible == 0
-        set nocursorcolumn
-        set nocursorline
+        setlocal nocursorcolumn
+        setlocal nocursorline
     else
-        set cursorcolumn
-        set cursorline
+        setlocal cursorcolumn
+        setlocal cursorline
     endif
 endfunction
 function! HighlightCursorCross(level)

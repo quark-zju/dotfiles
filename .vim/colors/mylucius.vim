@@ -273,7 +273,7 @@ hi VisualNOS        guifg=fg                                        gui=underlin
 hi CursorLineNr guifg=#ffaa33  guibg=#444444
 hi LineNr       guibg=#2e2e2e
 " right column margin
-hi ColorColumn  guibg=#222222
+hi ColorColumn  guifg=#f84 guibg=NONE
 " cursor column/line
 hi CursorColumn guibg=#333333
 hi CursorLine   guibg=#333333
