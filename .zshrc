@@ -58,7 +58,7 @@ setterm -blength 0
 # }}}
 
 # Load other stuff {{{
-for i in . /etc/profile.d/*sh ~/.profile.d/*sh; do
+for i in . /etc/profile.d/*.{sh,zsh} ~/.profile.d/*.{sh,zsh}; do
     source $i
 done
 # }}}
