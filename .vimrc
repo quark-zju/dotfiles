@@ -143,6 +143,10 @@ else
     set t_Co=256
 endif
 colo mylucius
+" no syntax for large files
+au BufReadPost * if getfsize(bufname("%")) > 512*1024 |
+\ set syntax= |
+\ endif
 " }}}
 
 " Status line  {{{
