@@ -1,10 +1,12 @@
-# ZSH_CACHE path {{{
-ZSH_CACHE=~/.cache/zsh
+# History, Cache {{{
+HISTFILE=$ZSH_CACHE/histfile
+HISTSIZE=5000
+SAVEHIST=5000
+local ZSH_CACHE=~/.cache/zsh
 mkdir -p $ZSH_CACHE
 # }}}
 
 # Zstyles, Autoload, Completion {{{
-
 zstyle ':completion:*' completer _complete _ignored _approximate
 zstyle ':completion:*' group-name ''
 zstyle ':completion:*' list-colors ''
@@ -23,19 +25,11 @@ zstyle ':chpwd:*' recent-dirs-file $ZSH_CACHE/chpwd_recent
 autoload -Uz compinit vcs_info zmv zcp zln chpwd_recent_dirs cdr add-zsh-hook zed
 add-zsh-hook chpwd chpwd_recent_dirs
 
-# vcs_info_wrapper
-_vcs_info() {
-  vcs_info
-  [[ -n "$vcs_info_msg_0_" ]] && echo -n "${vcs_info_msg_0_}"
-}
+# custom completion scripts
+local CUSTOM_COMP_PATH=~/.profile.d/zcompletion
+[[ -d $CUSTOM_COMP_PATH ]] && fpath=($CUSTOM_COMP_PATH $fpath)
 
 compinit
-# }}}
-
-# History {{{
-HISTFILE=$ZSH_CACHE/histfile
-HISTSIZE=5000
-SAVEHIST=5000
 # }}}
 
 # Setopt, Bindkey {{{
@@ -44,6 +38,12 @@ bindkey -e
 # }}}
 
 # Prompt {{{
+# vcs_info_wrapper
+_vcs_info() {
+  vcs_info
+  [[ -n "$vcs_info_msg_0_" ]] && echo -n "${vcs_info_msg_0_}"
+}
+
 if [[ -n "$SSH_TTY" ]]; then
 	export PS1="%F{cyan}%U%n@%m%u%f %B%F{red}%(?..[%?] )%f%F{cyan}%#%f%b "
 else
@@ -58,16 +58,13 @@ setterm -blength 0
 # }}}
 
 # Load other stuff {{{
-for i in . /etc/profile.d/*.{sh,zsh} ~/.profile.d/*.{sh,zsh}; do
+for i in /etc/profile.d/*.{sh,zsh} ~/.profile.d/*.{sh,zsh}; do
     source $i
 done
 # }}}
 
 # Deprecated {{{
 
-# custom completion scripts
-# CUSTOM_COMP_PATH=~/.profile.d/zcompletion
-# [[ -d $CUSTOM_COMP_PATH ]] && fpath=($CUSTOM_COMP_PATH $fpath)
 
 # colorize stderr in red
 # exec 2>>(while read line; do
