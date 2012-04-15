@@ -65,12 +65,8 @@ done
 
 # Deprecated {{{
 
-
 # colorize stderr in red
 # exec 2>>(while read line; do
 #   print '\e[91m'${(q)line}'\e[0m' > /dev/tty; print -n $'\0'; done &)
 
 # }}}
-  
-
-PATH=$PATH:$HOME/.rvm/bin # Add RVM to PATH for scripting
