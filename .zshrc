@@ -44,7 +44,7 @@ _vcs_info() {
   [[ -n "$vcs_info_msg_0_" ]] && echo -n "${vcs_info_msg_0_}"
 }
 
-if [[ -n "$SSH_TTY" ]]; then
+if [[ -n "$SSH_CLIENT" ]]; then
 	export PS1="%F{cyan}%U%n@%m%u%f %B%F{red}%(?..[%?] )%f%F{cyan}%#%f%b "
 else
 	export PS1="%F{g}%U%n%u%f %B%F{red}%(?..[%?] )%f%F{g}%#%f%b "
