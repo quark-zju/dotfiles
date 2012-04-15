@@ -1,20 +1,24 @@
-begin
-  Y = ->p{->f{f[f]}[->g{p[->*n{g[g][*n]}]}]}
+Y = ->p{->f{f[f]}[->g{p[->*n{g[g][*n]}]}]}
 
-  # activesupport for datetime
-  require 'prime'
-  require 'fileutils'
-  require 'active_support/time'
-  require 'active_support/core_ext/string'
-  require 'awesome_print'
-  require 'interactive_editor'
-  require 'term/ansicolor'
+[ 'prime',
+  'fileutils',
+  'active_support/time',
+  'active_support/core_ext/string',
+  'awesome_print',
+  'interactive_editor',
+  'term/ansicolor'
+].each do |m|
+  begin
+    require m
+  rescue LoadError => e
+    warn e
+  end
+end
 
+if defined? Term::ANSIColor
   class String
     include Term::ANSIColor
   end
-
-rescue LoadError => err
 end
 
 # vim: set ft=ruby:
