@@ -58,16 +58,8 @@ setterm -blength 0
 # }}}
 
 # Load other stuff {{{
-# system resources
-. /etc/profile.d/*.zsh
-
-for i in ~/.profile.d/*; do
-	# echo 'Loading' $i
-	. $i
-done
-
-# update title
-chpwd
+. /etc/profile.d/*sh
+[ -d ~/.profile.d ] && . ~/.profile.d/*sh
 # }}}
 
 # Deprecated {{{
