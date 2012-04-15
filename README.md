@@ -17,20 +17,22 @@ If conflicts are found, nothing will be written but filenames are printed.
 
 Notes
 =====
+vim
+---
+* I use [Vundle](https://github.com/gmarik/vundle) to manage vim packages.
+  For Vundle to work properly, `git clone https://github.com/gmarik/vundle.git ~/.vim/bundle/vundle`
+* To install vim packages, start vim and use `:BundleInstall`
+* To enable UltiSnips builtin snippets: 
+  `cd ~/.vim/ && ln -s bundle/ultisnips/UltiSnips snippets_basic` 
+
 fonts
 -----
 * Install DroidSans to display CJK and Thai characters correctly.
 * Install Terminus as terminal / gvim font. If you do not like bitmap fonts,
   Dejavu Sans Mono and Droid Sans Mono are good terminal fonts.
 
-gemrc
------
-* Currently `ruby.taobao.org` is in `.gemrc`, you may want to
-  change it to `rubygems.org`.
+rubygem
+-------
+* `ruby.taobao.org` is currently the only source. You may want to edit
+  `.gemrc`.
 
-vimrc
------
-* I use [Vundle](https://github.com/gmarik/vundle) to manage vim packages. For Vundle to work properly, `git clone https://github.com/gmarik/vundle.git ~/.vim/bundle/vundle`
-* To install vim packages, start vim and use `:BundleInstall`
-* To enable UltiSnips builtin snippets: 
-  `cd ~/.vim/ && ln -s bundle/ultisnips/UltiSnips snippets_basic` 
