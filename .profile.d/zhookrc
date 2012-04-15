@@ -1,5 +1,5 @@
 # do nothing if current shell is not zsh
-[[ $SHELL =~ zsh$ ]] || exit
+[[ $SHELL =~ zsh$ ]] || return
 
 # related helper functions {{{
 
