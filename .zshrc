@@ -58,8 +58,9 @@ setterm -blength 0
 # }}}
 
 # Load other stuff {{{
-. /etc/profile.d/*sh
-[ -d ~/.profile.d ] && . ~/.profile.d/*sh
+for i in . /etc/profile.d/*sh ~/.profile.d/*sh; do
+    source $i
+done
 # }}}
 
 # Deprecated {{{
