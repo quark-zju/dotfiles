@@ -15,9 +15,7 @@ zstyle ':completion:*' max-errors 2
 zstyle ':completion:*' use-cache on
 zstyle ':completion:*' cache-path $ZSH_CACHE/comp_cache
 zstyle ':completion:*:functions' ignored-patterns '_*'
-zstyle ':completion:*:*:kill:*' menu yes select
-zstyle ':completion:*:kill:*' force-list always
-zstyle ':completion:*:*:cdr:*:*' menu selection
+zstyle ':completion:*' menu select=8
 zstyle ':vcs_info:*' formats '%F{cyan}%s %B%b%f '
 zstyle ':vcs_info:*' enable git svn
 zstyle ':chpwd:*' recent-dirs-file $ZSH_CACHE/chpwd_recent
@@ -28,13 +26,18 @@ add-zsh-hook chpwd chpwd_recent_dirs
 # custom completion scripts
 local CUSTOM_COMP_PATH=~/.profile.d/zcompletion
 [[ -d $CUSTOM_COMP_PATH ]] && fpath=($CUSTOM_COMP_PATH $fpath)
-
 compinit
 # }}}
 
 # Setopt, Bindkey {{{
 setopt append_history autocd cshnullglob extendedglob short_loops hist_ignore_space hist_ignore_dups prompt_subst
-bindkey -e
+bindkey -v
+bindkey '^A' beginning-of-line
+bindkey '^E' end-of-line
+bindkey '^K' kill-line
+bindkey '^L' clear-screen
+bindkey '^R' history-incremental-search-backward
+bindkey '^W' backward-kill-word
 # }}}
 
 # Prompt {{{
@@ -44,7 +47,7 @@ _vcs_info() {
   [[ -n "$vcs_info_msg_0_" ]] && echo -n "${vcs_info_msg_0_}"
 }
 
-if [[ -n "$SSH_CLIENT" ]]; then
+if [[ -n "$SSH_TTY" ]]; then
 	export PS1="%F{cyan}%U%n@%m%u%f %B%F{red}%(?..[%?] )%f%F{cyan}%#%f%b "
 else
 	export PS1="%F{g}%U%n%u%f %B%F{red}%(?..[%?] )%f%F{g}%#%f%b "
@@ -65,8 +68,12 @@ done
 
 # Deprecated {{{
 
+
 # colorize stderr in red
 # exec 2>>(while read line; do
 #   print '\e[91m'${(q)line}'\e[0m' > /dev/tty; print -n $'\0'; done &)
 
 # }}}
+  
+
+PATH=$PATH:$HOME/.rvm/bin # Add RVM to PATH for scripting
