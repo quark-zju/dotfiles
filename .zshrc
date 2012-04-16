@@ -35,7 +35,7 @@ compinit
 # }}}
 
 # Setopt, Bindkey {{{
-setopt append_history autocd cshnullglob extendedglob short_loops hist_ignore_space hist_ignore_dups prompt_subst
+setopt append_history inc_append_history autocd cshnullglob extendedglob short_loops hist_ignore_space hist_ignore_dups prompt_subst
 bindkey -v
 bindkey '^A' beginning-of-line
 bindkey '^E' end-of-line
@@ -79,7 +79,7 @@ setterm -blength 0
 # Title, Paths {{{
 # change title
 title() {
-    [ $TERM != 'linux' ] && print -Pn "\e]2;$@\a"
+    [ $TERM != 'linux' ] && print -RPn "\e]2;$@\a"
 }
 
 chpwd() {
@@ -141,7 +141,7 @@ alias ls='ls --color=auto'
 alias rm='rm -v'
 alias mv='mv -vi'
 alias cp='cp -aviu'
-alias scp='scp -r'
+alias scp='noglob scp -r'
 # suffix
 alias -g L='| less'
 alias -g N='&> /dev/null'

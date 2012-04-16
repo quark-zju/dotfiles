@@ -54,9 +54,9 @@ s() {
 # gvim, a directory or a file
 g() {
     if [ -d "$1" ]; then
-        pushd "$1" &>/dev/null
+        pushd -q "$1"
         gvim -c 'NERDTree'
-        popd &>/dev/null
+        popd -q
     else
         gvim "$@"
     fi
@@ -194,7 +194,7 @@ resize() {
 
 # shuffle play music in current dir
 shuffle_play() {
-    pushd ${1:-$PWD} &>/dev/null
+    pushd -q ${1:-$PWD}
     # use temp file, make 'q', ' ', '0' control keys available inside mplayer
 local TITLE='shuffle_play'
 ruby =(cat <<'EOF'
@@ -204,7 +204,7 @@ exit unless system("mplayer -really-quiet '#{f.gsub "'", "'\"'\"'"}'")
 end
 EOF
 )
-    popd &>/dev/null
+    popd -q
 }
 
 # rails related, bundle exec wrapper
