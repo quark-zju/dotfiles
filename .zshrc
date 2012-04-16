@@ -1,8 +1,8 @@
 # History, Cache {{{
+local ZSH_CACHE=~/.cache/zsh
 HISTFILE=$ZSH_CACHE/histfile
 HISTSIZE=5000
 SAVEHIST=5000
-local ZSH_CACHE=~/.cache/zsh
 mkdir -p $ZSH_CACHE
 # }}}
 
