@@ -2,13 +2,7 @@
 exists() {
     which "$@" &>/dev/null
 }
-alias bd='bg;disown'
 alias ip6='ip -f inet6'
-alias la='ls -A'
-alias ll='ls -lh'
-alias l='ls -CF'
-alias md='mkdir -p'
-alias rd='rmdir'
 exists bundle && alias be='bundle exec'
 exists sdlmame && alias mame=sdlmame
 exists proxychains && alias pc='proxychains'
@@ -24,7 +18,6 @@ fi
 # default parameters
 alias audacious='audacious2 -i gtkui'
 alias bc='bc -l'
-alias cp='cp -aviu'
 alias df='df -h'
 alias dosfsck='dosfsck -r -w -v'
 alias du='du -hs'
@@ -33,15 +26,11 @@ alias fgrep='fgrep --colour=auto'
 alias grep='grep --colour=auto'
 alias gvim='gvim -p'
 alias locate='locate -b'
-alias ls='ls --color=auto'
 alias math='rlwrap math'
-alias mv='mv -vi'
 alias mysqldump='mysqldump --max_allowed_packet=90M'
 alias rara='rar a -s -m4 -ol'
 alias rdesktop='rdesktop -5 -z -r sound:local -r disk:Temp=/tmp -K -g 1280x782 -p -'
 alias freerdp='xfreerdp -a 16 -g 1280x782 -z -x 95' 
-alias rm='rm -v'
-alias scp='scp -r'
 alias screen='screen -R'
 alias ssh='ssh -Y'
 alias sshfs='sshfs -o follow_symlinks'
@@ -97,17 +86,4 @@ autoload -U pick-web-browser
 alias -s com=pick-web-browser
 alias -s net=pick-web-browser
 alias -s org=pick-web-browser
-
-# suffix
-alias -g L='| less'
-alias -g N='&> /dev/null'
-alias -g S='&> /dev/null &!'
-alias -g EL='|& less'
-alias -g H='| head'
-alias -g EH='|& head'
-alias -g T='| tail'
-alias -g ET='|& tail'
-alias -g M='| most'
-alias -g EM='|& most'
-alias -g C='2> >(while read line; do print "\e[91m"${(q)line}"\e[0m"; done)'
 

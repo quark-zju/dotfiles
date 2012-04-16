@@ -23,8 +23,10 @@ zstyle ':vcs_info:*' formats '%F{cyan}%s %B%b%f '
 zstyle ':vcs_info:*' enable git svn
 zstyle ':chpwd:*' recent-dirs-file $ZSH_CACHE/chpwd_recent
 
-autoload -Uz compinit vcs_info zmv zcp zln chpwd_recent_dirs cdr add-zsh-hook zed
-add-zsh-hook chpwd chpwd_recent_dirs
+autoload -Uz compinit vcs_info zmv zcp zln add-zsh-hook zed zfinit
+
+# zftp
+zfinit
 
 # custom completion scripts
 local CUSTOM_COMP_PATH=~/.profile.d/zcompletion
@@ -126,6 +128,34 @@ cb() {
 precmd
 # }}}
 
+# Basic alias {{{
+# short names
+alias la='ls -A'
+alias ll='ls -lh'
+alias l='ls -CF'
+alias md='mkdir -p'
+alias rd='rmdir'
+alias bd='bg && disown'
+# default parameters
+alias ls='ls --color=auto'
+alias rm='rm -v'
+alias mv='mv -vi'
+alias cp='cp -aviu'
+alias scp='scp -r'
+# suffix
+alias -g L='| less'
+alias -g N='&> /dev/null'
+alias -g S='&> /dev/null &!'
+alias -g CE='2> >(while read line; do print "\e[91m"${(q)line}"\e[0m"; done)'
+alias -g EL='|& less'
+alias -g H='| head'
+alias -g EH='|& head'
+alias -g T='| tail'
+alias -g ET='|& tail'
+alias -g M='| most'
+alias -g EM='|& most'
+# }}}
+
 # Load other stuff {{{
 for i in /etc/profile.d/*.{sh,zsh} ~/.profile.d/*.{sh,zsh}; do
     if [ -e ${i:r}.zwc ]; then
@@ -134,4 +164,13 @@ for i in /etc/profile.d/*.{sh,zsh} ~/.profile.d/*.{sh,zsh}; do
         source $i
     fi
 done
+# }}}
+
+# Deprecated {{{
+# cdr (now use autojump)
+if ! which autojump &>/dev/null; then
+    autoload -Uz chpwd_recent_dirs cdr 
+    add-zsh-hook chpwd chpwd_recent_dirs
+fi
+
 # }}}
