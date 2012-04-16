@@ -108,6 +108,8 @@ autocmd FileType ruby setlocal sw=2
 " Colors {{{
 " highlight the column after textwidth column
 set colorcolumn=+1
+autocmd FileType man setlocal colorcolumn=
+autocmd FileType help setlocal colorcolumn=
 " show cursor line/column in active window
 function! ShowCursorCross(visible)
     if a:visible == 0
