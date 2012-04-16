@@ -128,6 +128,10 @@ precmd
 
 # Load other stuff {{{
 for i in /etc/profile.d/*.{sh,zsh} ~/.profile.d/*.{sh,zsh}; do
-    source $i
+    if [ -e $i.zwc ]; then
+        source $i.zwc
+    else
+        source $i
+    fi
 done
 # }}}
