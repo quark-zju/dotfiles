@@ -16,6 +16,8 @@ zstyle ':completion:*' use-cache on
 zstyle ':completion:*' cache-path $ZSH_CACHE/comp_cache
 zstyle ':completion:*:functions' ignored-patterns '_*'
 zstyle ':completion:*' menu select=8
+zstyle ':completion:*:*:kill:*:processes' list-colors '=(#b) #([0-9]#)*=0=01;31'
+zstyle ':completion:*:*:kill:*:processes' command 'ps xo pid,user:10,cmd | grep -v "zsh$" | grep -v "\ssshd:"'
 zstyle ':vcs_info:*' formats '%F{cyan}%s %B%b%f '
 zstyle ':vcs_info:*' enable git svn
 zstyle ':chpwd:*' recent-dirs-file $ZSH_CACHE/chpwd_recent
