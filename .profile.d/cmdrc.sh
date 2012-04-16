@@ -55,7 +55,7 @@ s() {
 g() {
     if [ -d "$1" ]; then
         pushd "$1" &>/dev/null
-        gvim .
+        gvim -c 'NERDTree'
         popd &>/dev/null
     else
         gvim "$@"
