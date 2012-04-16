@@ -23,10 +23,13 @@ zstyle ':vcs_info:*' formats '%F{cyan}%s %B%b%f '
 zstyle ':vcs_info:*' enable git svn
 zstyle ':chpwd:*' recent-dirs-file $ZSH_CACHE/chpwd_recent
 
-autoload -Uz compinit vcs_info zmv zcp zln add-zsh-hook zed zfinit
+autoload -Uz compinit vcs_info zmv zcp zln add-zsh-hook zed zfinit select-word-style
 
 # zftp
 zfinit
+
+# backward kill word now stops at /
+select-word-style bash
 
 # custom completion scripts
 local CUSTOM_COMP_PATH=~/.profile.d/zcompletion
