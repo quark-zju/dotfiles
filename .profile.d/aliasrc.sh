@@ -58,10 +58,6 @@ alias mount='sudo mount'
 # alias -s, -g requires zsh
 [[ $SHELL =~ zsh$ ]] || return
 
-alias -g ...='../..'
-alias -g ....='../../..'
-alias -g .....='../../../..'
-
 local PLAYER=mplayer
 
 # file extensions

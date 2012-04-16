@@ -16,6 +16,7 @@ zstyle ':completion:*' use-cache on
 zstyle ':completion:*' cache-path $ZSH_CACHE/comp_cache
 zstyle ':completion:*:functions' ignored-patterns '_*'
 zstyle ':completion:*' menu select=8
+zstyle ':completion:*' squeeze-slashes true
 zstyle ':completion:*:*:kill:*:processes' list-colors '=(#b) #([0-9]#)*=0=01;31'
 zstyle ':completion:*:*:kill:*:processes' command 'ps xo pid,user:10,cmd | grep -v "zsh$" | grep -v "\ssshd:"'
 zstyle ':vcs_info:*' formats '%F{cyan}%s %B%b%f '
@@ -41,6 +42,16 @@ bindkey '^L' clear-screen
 bindkey '^R' history-incremental-search-backward
 bindkey '^W' backward-kill-word
 bindkey '^[.' insert-last-word
+# auto replace ... to ../.. (from zsh-lovers)
+rationalise-dot() {
+    if [[ $LBUFFER = *.. ]] && [[ "$LBUFFER" = "$BUFFER" ]]; then
+        LBUFFER+=/..
+    else
+        LBUFFER+=.
+    fi
+}
+zle -N rationalise-dot
+bindkey . rationalise-dot
 # }}}
 
 # Prompt {{{
@@ -59,14 +70,8 @@ fi
 export RPS1='$(_vcs_info)'"%B%F{yellow}%~%f%b"
 # }}}
 
-# Term Settings, Beep {{{
+# No Beep {{{
 setterm -blength 0
-# }}}
-
-# Load other stuff {{{
-for i in /etc/profile.d/*.{sh,zsh} ~/.profile.d/*.{sh,zsh}; do
-    source $i
-done
 # }}}
 
 # Title, Paths {{{
@@ -121,3 +126,8 @@ cb() {
 precmd
 # }}}
 
+# Load other stuff {{{
+for i in /etc/profile.d/*.{sh,zsh} ~/.profile.d/*.{sh,zsh}; do
+    source $i
+done
+# }}}
