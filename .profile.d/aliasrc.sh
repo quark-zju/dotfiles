@@ -1,6 +1,6 @@
 # short names
 exists() {
-    which --skip-dot --skip-tilde --skip-functions --skip-alias "$@" &>/dev/null
+    which "$@" &>/dev/null
 }
 alias bd='bg;disown'
 alias ip6='ip -f inet6'
