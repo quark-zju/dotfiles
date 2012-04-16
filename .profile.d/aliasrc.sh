@@ -1,22 +1,25 @@
 # short names
+exists() {
+    which --skip-dot --skip-tilde --skip-functions --skip-alias "$@" &>/dev/null
+}
 alias bd='bg;disown'
-alias be='bundle exec'
-alias g=gvim
 alias ip6='ip -f inet6'
-# alias jr='jruby -Ku --1.9 --server -J-Djruby.compile.fastest=true -J-Djruby.compile.fastops=true -J-Djruby.compile.fastsend=true -J-Djruby.compile.frameless=true -J-Djruby.compile.inlineDyncalls=true -J-Djruby.compile.positionless=true -J-Djruby.compile.threadless=true'
-# alias jrs='jr -S'
 alias la='ls -A'
 alias ll='ls -lh'
 alias l='ls -CF'
-alias mame=sdlmame
 alias md='mkdir -p'
-alias pc='proxychains'
-alias p='RAILS_ENV=production'
-alias e='RAILS_ENV=staging'
-alias pryc='bundle exec pry -r ./config/environment'
 alias rd='rmdir'
-alias t=tmux
-alias monitor='DEBUG=1 lrun --reset-env false --network true --isolate-process false'
+exists bundle && alias be='bundle exec'
+exists sdlmame && alias mame=sdlmame
+exists proxychains && alias pc='proxychains'
+exists tmux && alias t=tmux
+exists lrun && alias m='DEBUG=1 lrun --reset-env false --network true --isolate-process false'
+if exists rails; then
+    alias p='RAILS_ENV=production'
+    alias e='RAILS_ENV=staging'
+    alias d='RAILS_ENV=development'
+fi
+
 
 # default parameters
 alias audacious='audacious2 -i gtkui'

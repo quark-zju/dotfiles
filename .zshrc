@@ -69,14 +69,55 @@ for i in /etc/profile.d/*.{sh,zsh} ~/.profile.d/*.{sh,zsh}; do
 done
 # }}}
 
-# Deprecated {{{
+# Title, Paths {{{
+# change title
+title() {
+    [ $TERM != 'linux' ] && print -Pn "\e]2;$@\a"
+}
 
+chpwd() {
+    # push current path to $path_history (use zsh cdr instead)
+    [[ -z $cb_flag ]] && path_history+=($PWD)
+}
 
-# colorize stderr in red
-# exec 2>>(while read line; do
-#   print '\e[91m'${(q)line}'\e[0m' > /dev/tty; print -n $'\0'; done &)
+preexec() {
+    # modify title to command name
+    # if in ssh, add hostname
+    # if $TITLE is non-empty, use it
+    local ESCAPED_CONTENT;
+    if [ -n "$TITLE" ]; then
+        ESCAPED_CONTENT="$TITLE"
+    else
+        ESCAPED_CONTENT=`echo $1 | cut -d ' ' -f 1,2,3`
+    fi
+    if [[ -z "$SSH_CLIENT" ]]; then
+        title "$ESCAPED_CONTENT"
+    else
+        title "%m: $ESCAPED_CONTENT"
+    fi
+}
 
+precmd() {
+    # modify title to partial path
+    # if in ssh, add hostname
+    if [[ -z "$SSH_CLIENT" ]]; then
+        title "%2c"
+    else
+        title "%m: %2c"
+    fi
+}
+
+cb() {
+    # pop current pwd
+    path_history[-1]=()
+    # set flag
+    cb_flag=1
+    # top, -1 means the last element
+    cd $path_history[-1]
+    # unset flag
+    unset cb_flag
+}
+
+precmd
 # }}}
-  
 
-PATH=$PATH:$HOME/.rvm/bin # Add RVM to PATH for scripting

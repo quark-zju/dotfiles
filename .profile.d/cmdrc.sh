@@ -25,6 +25,7 @@ ping1() {
 }
 
 # colorize output in red
+# cat xxx | redize
 redize() {
     while read line; do
         print '\e[91m'${(q)line}'\e[0m' > /dev/tty
@@ -50,6 +51,17 @@ s() {
 	fi
 }
 
+# gvim, a directory or a file
+g() {
+    if [ -d "$1" ]; then
+        pushd "$1" &>/dev/null
+        gvim .
+        popd &>/dev/null
+    else
+        gvim "$@"
+    fi
+}
+
 nocolorgcc() {
   # unset colorgcc path
   export PATH=`echo $PATH | sed 's#/usr/lib/colorgcc/bin:##'`
@@ -58,7 +70,7 @@ nocolorgcc() {
 
 # run compiler with auto package parameters
 vala() {
-	if [[ "${#@}" < 3 ]] then
+	if [[ "${#@}" < 3 ]]; then
 		# smart detect packages needed
 		pkgparams=()
 		typeset -A packages
@@ -73,16 +85,8 @@ vala() {
 	fi
 }
 
-
-# quick utilities, can be written outside
-
-# pdf merge, output to merged.pdf
-# mergepdfs files
-mergepdfs() {
-	gs -dNOPAUSE -sDEVICE=pdfwrite -sOUTPUTFILE=merged.pdf -dBATCH "$@"
-}
-
 # tarxz, expect a directory name without tailing '/'
+# tarxz directory/without/tailing/slash
 tarxz() {
     if [ -n "$1" ]; then
         if which pv &>/dev/null; then
@@ -198,7 +202,8 @@ Dir['{,*/,*/*/,*/*/*/}*.{mp3,flac,ogg,wma}'].shuffle.each do |f|
 puts f
 exit unless system("mplayer -really-quiet '#{f.gsub "'", "'\"'\"'"}'")
 end
-EOF)
+EOF
+)
     popd &>/dev/null
 }
 
@@ -213,3 +218,9 @@ function $i {
 }
 done
 
+# pdf merge, output to merged.pdf
+# mergepdfs files
+mergepdfs() {
+	gs -dNOPAUSE -sDEVICE=pdfwrite -sOUTPUTFILE=merged.pdf -dBATCH "$@"
+}
+# vim:ft=zsh
