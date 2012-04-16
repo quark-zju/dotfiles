@@ -79,7 +79,7 @@ setterm -blength 0
 # Title, Paths {{{
 # change title
 title() {
-    [ $TERM != 'linux' ] && print -RPn "\e]2;$@\a"
+    [ $TERM != 'linux' ] && print -Pn "\e]2;$@\a"
 }
 
 chpwd() {
@@ -91,16 +91,14 @@ preexec() {
     # modify title to command name
     # if in ssh, add hostname
     # if $TITLE is non-empty, use it
-    local ESCAPED_CONTENT;
-    if [ -n "$TITLE" ]; then
-        ESCAPED_CONTENT="$TITLE"
-    else
-        ESCAPED_CONTENT=`echo $1 | cut -d ' ' -f 1,2,3`
-    fi
+    emulate -L zsh
+    local -a cmd
+    cmd=(${(z)1})
+    [[ -n "$TITLE" ]] && cmd[1]="$TITLE"
     if [[ -z "$SSH_CLIENT" ]]; then
-        title "$ESCAPED_CONTENT"
+        title $cmd[1]:t "$cmd[2,-1]"
     else
-        title "%m: $ESCAPED_CONTENT"
+        title "%m: " $cmd[1]:t "$cmd[2,-1]"
     fi
 }
 
