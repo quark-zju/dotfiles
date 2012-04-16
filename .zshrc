@@ -40,6 +40,7 @@ bindkey '^K' kill-line
 bindkey '^L' clear-screen
 bindkey '^R' history-incremental-search-backward
 bindkey '^W' backward-kill-word
+bindkey '^[.' insert-last-word
 # }}}
 
 # Prompt {{{
