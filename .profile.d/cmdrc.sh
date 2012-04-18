@@ -207,6 +207,11 @@ EOF
     popd -q
 }
 
+# copy file content to clipboard & primary selection
+copy() {
+    cat $@ > >(xsel -b) > >(xsel -p)
+}
+
 # rails related, bundle exec wrapper
 for i in rails rake thin unicorn puma warble; do
 function $i {
