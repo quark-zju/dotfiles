@@ -98,7 +98,7 @@ set tabstop=4
 set shiftwidth=4 
 set backspace=indent,eol,start
 set nolinebreak
-set nowrap
+set wrap
 set textwidth=79
 set formatoptions=tcqrnl
 " per language settings
@@ -148,6 +148,7 @@ colo mylucius
 " no syntax for large files
 au BufReadPost * if getfsize(bufname("%")) > 512*1024 |
 \ set syntax= |
+\ set nowrap |
 \ endif
 " }}}
 
