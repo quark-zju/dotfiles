@@ -159,8 +159,8 @@ alias -g EM='|& most'
 
 # Load other stuff {{{
 for i in /etc/profile.d/*.{sh,zsh} ~/.profile.d/*.{sh,zsh}; do
-    if [ -e ${i:r}.zwc ]; then
-        source ${i:r}.zwc
+    if [[ -e ${i}.zwc ]]; then # use ${i:r} to remove ext
+        source ${i}.zwc
     else
         source $i
     fi
