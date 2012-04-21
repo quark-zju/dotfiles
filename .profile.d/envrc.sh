@@ -30,6 +30,10 @@ export WINEDEBUG=err-all,fixme-all,warn-all
 # utils
 export EDITOR='gvim -f'
 
+# java workarounds
+export AWT_TOOLKIT="MToolkit"
+export _JAVA_OPTIONS="-Dawt.useSystemAAFontSettings=lcd -Dswing.aatext=true"
+
 # dynamically set according to ssh_client
 if [ -n "$SSH_CLIENT" ]; then
     export PULSE_SERVER=${SSH_CLIENT/ [ 0-9]*/}
