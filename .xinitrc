@@ -37,6 +37,9 @@ fi
 # synergyc synergy-server
 # exec synergys -c /etc/synergy.conf
 
+# tilda
+tilda 2>&1 >/dev/null &
+
 # i3
 exec ck-launch-session i3
 
