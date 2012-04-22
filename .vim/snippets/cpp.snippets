@@ -29,3 +29,8 @@ snippet vec "std::vector (v)" !b
 std::vector<${1:char}> ${3:v};$0
 endsnippet
 
+snippet fori "for (iterator)" !b
+for (__typeof(${1:m}.begin()) ${2:it} = ${1}.begin(); it != ${1}.end(); ++it) {
+    ${3}
+}${0}
+endsnippet

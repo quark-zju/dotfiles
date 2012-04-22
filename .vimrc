@@ -256,9 +256,11 @@ nmap <unique> <silent> <Leader>m :CtrlPMRU<CR>
 " ShowMarks
 let g:showmarks_enable=0
 let g:showmarks_include="abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.'`^<>[]{}()\""
+
 " Syntastic
 let g:syntastic_cpp_compiler_options='-Wall -std=c++11'
 let g:syntastic_c_compiler_options='-Wall -std=c11'
+
 " vim-srcexpl
 let g:SrcExpl_pluginList=[
         \ "__Tag_List__",
