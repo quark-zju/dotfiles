@@ -35,6 +35,19 @@ for (__typeof($1.begin()) ${2:it} = ${1:m}.begin(); $2 != $1.end(); ++$2) {
 }${0}
 endsnippet
 
-snippet sort "sort(...)" !b
+snippet sort "sort(vector)" !b
 sort(${1:v}.begin(), $1.end());${0}
 endsnippet
+
+snippet sorta "sort(array)" !b
+sort(${1:a}, $1 + sizeof($1) / sizeof($1[0]));${0}
+endsnippet
+
+snippet nextp "next_permutation(vector)" !
+next_permutation(${1:v}.begin(), $1.end());${0}
+endsnippet
+
+snippet nextpa "next_permutation(vector)" !
+next_permutation(${1:a}, $1 + sizeof($1) / sizeof($1[0]));${0}
+endsnippet
+
