@@ -24,8 +24,8 @@ int main(int argc, char const *argv[]) {
 endsnippet
 
 snippet for "for int loop (fori)" !
-for (int ${2:i} = 0; $2 < ${1:n}; ++$2) {
-	${3:/* code */}
+for (`!p snip.rv = 'int' if t[1].find('size()') < 0 else 'size_t'` ${2:i} = `!p snip.rv = '0' if t[2] != 'j' else 'i + 1'`; $2 < ${1:n}; ++$2) {
+	${3}
 }${0}
 endsnippet
 
