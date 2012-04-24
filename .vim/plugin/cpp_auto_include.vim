@@ -69,8 +69,10 @@ def auto_cpp_include
     :set => [/set\s*</],
     :cstdio => ['scanf', 'FILE', 'puts', 'printf'],
     :cassert => ['assert'],
+    :cstring => ['memset', 'strlen', 'strerror', /strn?cmp/, 'strcat', 'memcmp'],
     :cstdlib => ['abs', 'EXIT_', 'NULL', 'exit', 'ato', 'free', 'malloc', 'rand', /qsort\s*\(/],
-    :string => ['string']
+    :string => ['string'],
+    :typeinfo => ['typeid']
   }.each do |header, keywords|
     header = "<#{header}>"
     has_keyword = keywords.any? { |word| content[word] }
