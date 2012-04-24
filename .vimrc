@@ -41,7 +41,7 @@ Bundle 'tpope/vim-unimpaired'
 Bundle 'Twinside/vim-syntax-haskell-cabal'
 Bundle 'bbommarito/vim-slim.git'
 Bundle 'vim-ruby/vim-ruby'
-Bundle 'quark_zju/vim-cpp-auto-include'
+Bundle 'quark-zju/vim-cpp-auto-include'
 
 " vim.org
 Bundle 'Cpp11-Syntax-Support'
