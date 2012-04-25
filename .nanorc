@@ -236,7 +236,7 @@ include "/usr/share/nano/patch.nanorc"
 include "/usr/share/nano/man.nanorc"
 
 ## Groff
-include "/usr/share/nano/groff.nanorc"
+# include "/usr/share/nano/groff.nanorc"
 
 ## Perl
 include "/usr/share/nano/perl.nanorc"
@@ -251,15 +251,18 @@ include "/usr/share/nano/ruby.nanorc"
 include "/usr/share/nano/java.nanorc"
 
 ## Assembler
-include "/usr/share/nano/asm.nanorc"
+# include "/usr/share/nano/asm.nanorc"
 
 ## Bourne shell scripts
 include "/usr/share/nano/sh.nanorc"
 
 ## POV-Ray
-include "/usr/share/nano/pov.nanorc"
+# include "/usr/share/nano/pov.nanorc"
 
-#Lua
+## Makefile
+include "/usr/share/nano/makefile.nanorc"
+
+## Lua
 syntax "lua" "\.lua$"
 color black "def [a-zA-Z_0-9]+"
 color brightblue "\<(break|do|else|elseif|end|for|function|if|repeat|return|then|until|while)\>"
@@ -271,21 +274,3 @@ color green "([\"'])[^\"]*?[^\\]\1"
 color green start="\[\[" end="\]\]\""
 color cyan "\-\-.*$"
 
-##Patch
-#syntax "patch" "\.(patch|diff)$"
-#color brightgreen "^\+.*"
-#color green "^\+\+\+.*"
-#color brightblue "^ .*"
-#color brightred "^-.*"
-#color red "^---.*"
-#color brightyellow "^@@.*"
-#color magenta "^diff.*"
-
-##Makefile
-syntax "makefile" "^Makefile\.?"
-color red "[:=]"
-color magenta "\<(if|ifeq|else|endif)\>"
-color blue "\$\{.*}"
-color brightblue "\w+:"
-color green "#.*$"
- 
