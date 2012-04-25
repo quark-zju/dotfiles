@@ -18,7 +18,7 @@ endsnippet
 
 snippet main "main() (main)" !b
 int main(int argc, char const *argv[]) {
-	${0:/* code */}
+	${0}
 	return 0;
 }
 endsnippet
@@ -31,7 +31,7 @@ endsnippet
 
 snippet if "if .. (if)" !
 if (${1:/* condition */}) {
-	${2:/* code */}
+	${2}
 }${0}
 endsnippet
 
@@ -50,10 +50,14 @@ fprintf(${1:stderr}, "${2:%s}\n"${2/([^%]|%%)*(%.)?.*/(?2:, :\);)/}$3${2/([^%]|%
 endsnippet
 
 snippet sc "scanf .. " !
-scanf("${1:%d}", ${2:&n})${3}
+scanf("${1:%d}", ${2:&n})${0}
 endsnippet
 
 snippet ms "memset" !
-memset(${1:a}, ${2:0}, sizeof($1));
+memset(${1:a}, ${2:0}, sizeof($1));${0}
+endsnippet
+
+snippet puts "puts .. " !
+puts("${1}");${0}
 endsnippet
 
