@@ -1,4 +1,4 @@
-Y = ->p{->f{f[f]}[->g{p[->*n{g[g][*n]}]}]}
+Y = ->p{->f{f[f]}[->g{p[->*n{g[g][*n]}]}]} unless defined? Y
 
 [ 'prime',
   'fileutils',
