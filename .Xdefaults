@@ -1,7 +1,6 @@
 ! This is a comment
-! Xcursor.theme:Grounation
 
-! use gnome3 default, gnome3 cursor settings not found :(
+! Xcursor.theme:Grounation
 Xcursor.theme: Adwaita
 
 Xft.dpi:96
@@ -37,7 +36,6 @@ URxvt.cursorColor:  #00FF00
 URxvt.visualBell: 0
 URxvt.scrollBar: 0
 URxvt.underlineColor:   yellow
-!URxvt.preeditType: OverTheSpot ! This EXTERMELY slow down urxvt start speed
-URxvt*font: xft:Terminus-8
-
+! This may EXTERMELY slow down urxvt start speed
 URxvt.preeditType: OverTheSpot 
+URxvt*font: xft:Terminus-8
