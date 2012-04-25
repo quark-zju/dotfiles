@@ -1,61 +1,61 @@
 [default]
-# Write your default config options here!
 # sub title settings
-	subfont-autoscale = 3
- 	subfont-outline = 2.0
-	subfont-blur = 3.0
-	subfont-osd-scale = 5.0
-	subfont-text-scale = 3.0
-	subfont = "Droid Sans"
-	# for display unicode chinese correctly
-	fontconfig = true
-	subcp = "UTF-8"
-	# subfont-encoding = 
-	
+subfont-autoscale = 3
+subfont-outline = 2.0
+subfont-blur = 3.0
+subfont-osd-scale = 5.0
+subfont-text-scale = 3.0
+subfont = "Droid Sans"
+
+# for display unicode chinese correctly
+fontconfig = true
+subcp = "UTF-8"
+# subfont-encoding = 
+
 # audio ouput:
-	ao = pulse
-	
+ao = pulse
+
 # video filter
-    vf = screenshot
+vf = screenshot
 
 # video output: 
-	# use xv, less cpu usage, fastest
-	# but low subtitle quality (when zoomed)
-	# xv has brightness adjust, maybe hardware level.
-	vo = xv
-	
-	# opengl (enable adjust keys: 123478) more cpu usage, and paused when workspace switched
-	# quite good without compositing manager (due to intel graphic card)
-	# and high quality osd (x11 with -zoom has too)
-	# but more CPU consume, unstable, mouse pointer problem...
-	# conflict with composition (due to Intel GMA950)
-	# vo = gl
-	
-	# x11 has no zoom effect without zoom=true para...	
-	# x11 has no brightness or other adjust..
-	# for most compititable ..
-	# zoom = true costs much more CPU...
-	#vo = x11
-	#zoom = true
+# use xv, less cpu usage, fastest
+# but low subtitle quality (when zoomed)
+# xv has brightness adjust, maybe hardware level.
+vo = xv
+
+# opengl (enable adjust keys: 123478) more cpu usage, and paused when workspace switched
+# quite good without compositing manager (due to intel graphic card)
+# and high quality osd (x11 with -zoom has too)
+# but more CPU consume, unstable, mouse pointer problem...
+# conflict with composition (due to Intel GMA950)
+# vo = gl
+
+# x11 has no zoom effect without zoom=true para...    
+# x11 has no brightness or other adjust..
+# for most compititable ..
+# zoom = true costs much more CPU...
+#vo = x11
+#zoom = true
 
 # cache (quite useful for big files)
-	cache = 8192
+cache = 8192
 
-# quiet (especially for caca output correctly)
-	quiet = true
-	# really-quiet = true
+# quiet (for caca output correctly)
+quiet = true
+# really-quiet = true
 
 # framedrop
-	framedrop = true
+framedrop = true
 
 #lirc
-	nolirc = true
+nolirc = true
 
 #window set
-    # ontop will cause fullscreen in i3
-	# ontop = true
+# ontop will cause fullscreen in i3
+# ontop = true
 
 #encoder
-	#ovc=lavc=1
-	#oac=lavc=1
-	#lavcopts=vcodec=mpeg4:vbitrate=100:vratetol=10000:vrc_maxrate=400
+#ovc=lavc=1
+#oac=lavc=1
+#lavcopts=vcodec=mpeg4:vbitrate=100:vratetol=10000:vrc_maxrate=400
