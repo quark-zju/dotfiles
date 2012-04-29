@@ -168,11 +168,9 @@ for_window [class="Tilda"] border 1pixel
 for_window [class="Xfce4-notifyd"] floating enable
 for_window [class="Xfce4-notifyd"] border 1pixel
 for_window [class="rdesktop"] floating enable
+for_window [class="rdesktop"] border none
 for_window [class="xfreerdp"] floating enable 
 for_window [class="Wine"] floating enable
-for_window [class="com-topcoder-client-contestApplet-runner-generic"] floating enable
-for_window [class="sun-awt-X11-XFramePeer"] floating enable
-
 
 # xcompmgr & background color
 exec hsetroot -solid '#111111'

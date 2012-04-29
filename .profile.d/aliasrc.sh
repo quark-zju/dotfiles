@@ -30,7 +30,14 @@ alias locate='locate -b'
 alias math='rlwrap math'
 alias mysqldump='mysqldump --max_allowed_packet=90M'
 alias rara='rar a -s -m4 -ol'
-alias rdesktop='rdesktop -5 -z -r sound:local -r disk:Temp=/tmp -K -g 100% -p -'
+alias rdesktop='rdesktop -5Kz -g 100% -r sound:local -r disk:Temp=/tmp -p -'
+    # For WinXP SP3:
+    #   enable 24 bpp: MS Q278502
+    #     gpedit.msc > Computer Configuration > Administrative Templates > Terminal Services
+    #     Limit maximum color depth
+    #   enable font aa:
+    #     [HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp]
+    #     "AllowFontAntiAlias"=dword:00000001
 alias freerdp='xfreerdp -a 16 -g 1280x782 -z -x 95' 
 alias screen='screen -R'
 alias ssh='ssh -Y'
