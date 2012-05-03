@@ -3,7 +3,7 @@ Y = ->p{->f{f[f]}[->g{p[->*n{g[g][*n]}]}]} unless defined? Y
 [ 'prime',
   'fileutils',
   'active_support/time',
-  'active_support/core_ext/string',
+  'active_support/core_ext',
   'awesome_print',
   'interactive_editor',
   'term/ansicolor'
