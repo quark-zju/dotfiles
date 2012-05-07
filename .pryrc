@@ -5,7 +5,7 @@ Y = ->p{->f{f[f]}[->g{p[->*n{g[g][*n]}]}]} unless defined? Y
   'active_support/time',
   'active_support/core_ext',
   'awesome_print',
-  'interactive_editor',
+  # 'interactive_editor', (pry has builtin 'edit')
   'term/ansicolor'
 ].each do |m|
   begin
