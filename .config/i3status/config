@@ -1,7 +1,7 @@
 general {
 #  output_format = "dzen2"
-  colors = true
-  interval = 30
+  colors = false
+  interval = 5
 }
 
 order  = "ipv6"
