@@ -45,7 +45,7 @@ s() {
 			grep -q "#include.*$key" "$file" && cxxflags+=(${cxxref[$key]})
 		}
 		# use echo to reparse $cxxflags, do not regard it as a whole
-		g++ "$file" -std=c++0x -Wall `echo $cxxflags` -lm && { stdbuf -o0 ./a.out && rm a.out &> /dev/null; }
+		g++ "$file" -O2 -std=c++0x -Wall `echo $cxxflags` -lm && { stdbuf -o0 ./a.out && rm a.out &> /dev/null; }
 	else
 		\tmux attach || \tmux
 	fi
@@ -209,7 +209,26 @@ EOF
 
 # copy file content to clipboard & primary selection
 copy() {
-    cat $@ > >(xsel -b) > >(xsel -p)
+    # b: clipboard, vim unnamedplus
+    # copy content
+    cat "$@" > >(xsel -b) 
+    # p: primary, shift+Ins @ terminal
+    # copy filenames
+    local _path
+    for _path in "$@"; do
+        if [ "${_path[1]}" = '/' ]; then
+            echo "${_path}"
+        else
+            echo "${PWD}/${_path}"
+        fi
+    done | xsel -p
+}                                                        
+
+paste() {
+    local _srcpath
+    xsel -p | while read _srcpath; do
+        \cp -aivu "${_srcpath}" .
+    done
 }
 
 # rails related, bundle exec wrapper
