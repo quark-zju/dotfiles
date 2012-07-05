@@ -47,16 +47,15 @@ bindkey '^L' clear-screen
 bindkey '^R' history-incremental-search-backward
 bindkey '^W' backward-kill-word
 bindkey '^[.' insert-last-word
-# auto replace ... to ../.. (from zsh-lovers)
+# auto replace ... to ../.. (from zsh-lovers, modified)
 rationalise-dot() {
     if [[ $LBUFFER = *.. ]] && [[ "$LBUFFER" = "$BUFFER" ]]; then
         LBUFFER+=/..
     else
-        LBUFFER+=.
+        zle .self-insert "$@"
     fi
 }
-zle -N rationalise-dot
-bindkey . rationalise-dot
+zle -N self-insert rationalise-dot
 # }}}
 
 # Prompt {{{

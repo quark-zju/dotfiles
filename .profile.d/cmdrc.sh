@@ -1,17 +1,17 @@
 # mkdir and cd
 mcd() {
-	mkdir -p "$@"
-	cd "$1"
+    mkdir -p "$@"
+    cd "$1"
 }
 
 # cd up
 cu() {
-	for i in `seq 1 ${1:-1}`; do cd ..; done
+    for i in `seq 1 ${1:-1}`; do cd ..; done
 }
 
 # mv $1 to dir $2, and link back
 lmv() {
-	[ -e "$1" -a -d "$2" ] && mv "$1" "$2"/ && ln -s "$2"/"$(basename "$1")" "$(dirname "$1")"; 
+    [ -e "$1" -a -d "$2" ] && mv "$1" "$2"/ && ln -s "$2"/"$(basename "$1")" "$(dirname "$1")"; 
 }
 
 # empty file ?
@@ -21,7 +21,7 @@ empty() {
 
 # simple ping
 ping1() {
-	ping -W 1 -c 1 "$1" &>/dev/null && echo "$1"
+    ping -W 1 -c 1 "$1" &>/dev/null && echo "$1"
 }
 
 # colorize output in red
@@ -35,20 +35,21 @@ redize() {
 
 # simple compile and run or run screen (now tmux)
 s() {
-	if [ -e "$1" ]; then
-		# detect compile flags
-		cxxflags=()
-		typeset -A cxxref
-		cxxref=(mathlink.h '-pthread -lML32i3 -lrt' pthread '-pthread' boost/program_options '-lboost_program_options')
-		file="$1"
-		for key (${(k)cxxref}) {
-			grep -q "#include.*$key" "$file" && cxxflags+=(${cxxref[$key]})
-		}
-		# use echo to reparse $cxxflags, do not regard it as a whole
-		g++ "$file" -O2 -std=c++0x -Wall `echo $cxxflags` -lm && { stdbuf -o0 ./a.out && rm a.out &> /dev/null; }
-	else
-		\tmux attach || \tmux
-	fi
+    if [ -e "$1" ]; then
+        # detect compile flags
+        cxxflags=()
+        typeset -A cxxref
+        cxxref=(mathlink.h '-pthread -lML32i3 -lrt' pthread '-pthread' boost/program_options '-lboost_program_options')
+        local file="$1"
+        for key (${(k)cxxref}) {
+            grep -q "#include.*$key" "$file" && cxxflags+=(${cxxref[$key]})
+        }
+        # use echo to reparse $cxxflags, do not regard it as a whole
+        shift
+        g++ "$file" -std=c++0x -Wall `echo $cxxflags` -lm && { stdbuf -o0 ./a.out $* && \rm -f a.out }
+    else
+        \tmux attach || \tmux
+    fi
 }
 
 # gvim, a directory or a file
@@ -70,19 +71,19 @@ nocolorgcc() {
 
 # run compiler with auto package parameters
 vala() {
-	if [[ "${#@}" < 3 ]]; then
-		# smart detect packages needed
-		pkgparams=()
-		typeset -A packages
-		packages=(Gst gstreamer-0.10 Gee gee-1.0 Gtk gtk+-2.0 Sqlite sqlite3)
-		file="$1"
-		for key (${(k)packages}) {
-			grep -q "using $key;" "$file" && pkgparams+=(--pkg ${packages[$key]})
-		}
-		valac $pkgparams $@
-	else
-		valac $@
-	fi
+    if [[ "${#@}" < 3 ]]; then
+        # smart detect packages needed
+        pkgparams=()
+        typeset -A packages
+        packages=(Gst gstreamer-0.10 Gee gee-1.0 Gtk gtk+-2.0 Sqlite sqlite3)
+        file="$1"
+        for key (${(k)packages}) {
+            grep -q "using $key;" "$file" && pkgparams+=(--pkg ${packages[$key]})
+        }
+        valac $pkgparams $@
+    else
+        valac $@
+    fi
 }
 
 # tarxz, expect a directory name without tailing '/'
@@ -211,7 +212,7 @@ EOF
 copy() {
     # b: clipboard, vim unnamedplus
     # copy content
-    cat "$@" > >(xsel -b) 
+    cat "$@" 2>/dev/null | xsel -b 
     # p: primary, shift+Ins @ terminal
     # copy filenames
     local _path
@@ -221,12 +222,12 @@ copy() {
         else
             echo "${PWD}/${_path}"
         fi
-    done | xsel -p
+    done > >(xsel -p) > >(xsel -s)
 }                                                        
 
 paste() {
     local _srcpath
-    xsel -p | while read _srcpath; do
+    xsel -s | while read _srcpath; do
         \cp -aivu "${_srcpath}" .
     done
 }
@@ -245,6 +246,6 @@ done
 # pdf merge, output to merged.pdf
 # mergepdfs files
 mergepdfs() {
-	gs -dNOPAUSE -sDEVICE=pdfwrite -sOUTPUTFILE=merged.pdf -dBATCH "$@"
+    gs -dNOPAUSE -sDEVICE=pdfwrite -sOUTPUTFILE=merged.pdf -dBATCH "$@"
 }
 # vim:ft=zsh
