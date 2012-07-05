@@ -49,7 +49,7 @@ bindkey '^W' backward-kill-word
 bindkey '^[.' insert-last-word
 # auto replace ... to ../.. (from zsh-lovers, modified)
 rationalise-dot() {
-    if [[ $LBUFFER = *.. ]] && [[ "$LBUFFER" = "$BUFFER" ]]; then
+    if [[ $LBUFFER = *.. ]] && [[ "$LBUFFER" = "$BUFFER" ]] && [[ "$KEYS" == "." ]]; then
         LBUFFER+=/..
     else
         zle .self-insert "$@"
