@@ -158,12 +158,13 @@ alias -g EM='|& most'
 
 # Load other stuff {{{
 for i in /etc/profile.d/*.{sh,zsh} ~/.profile.d/*.{sh,zsh}; do
-    if [[ -e ${i}.zwc ]]; then # use ${i:r} to remove ext
-        source ${i}.zwc
-    else
-        source $i
-    fi
+    source $i
 done
+# }}}
+
+# Security {{{
+# Auto logout VT in 10 minutes
+[[ -z "$DISPLAY" ]] && [[ -z "$SSH_CLIENT" ]] && export TMOUT=600
 # }}}
 
 # Deprecated {{{
