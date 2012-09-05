@@ -25,23 +25,28 @@ export QT_IM_MODULE=ibus
 
 # synergy synergyc synergy-server exec synergys -c /etc/synergy.conf
 
+# detect unusual long dirty expire and enable eatmydata (for SSD)
+DE_PREFIX=''
+if hash eatmydata && [ "`cat /proc/sys/vm/dirty_writeback_centisecs`" -gt 1000 ]; then
+    DE_PREFIX='eatmydata'
+fi
 
 # start de
 if [ -e /tmp/xf* ]; then
-	exec xfce4-session
+	exec $DE_PREFIX xfce4-session
 else
     # i3
     # X Custom settings
     xset r rate 400 60
     xset b off xbacklight -set 70
     # ibus
-    ibus-daemon -rxd
+    $DE_PREFIX ibus-daemon -rxd
     # nm-applet
-    if pidof NetworkManager &>/dev/null && which nm-applet &>/dev/null; then
-        nm-applet &
+    if pidof NetworkManager &>/dev/null && hash nm-applet &>/dev/null; then
+        $DE_PREFIX nm-applet &
     fi
     # tilda
-    which tilda &>/dev/null && tilda 2>&1 >/dev/null &
-    exec ck-launch-session i3
+    hash tilda && $DE_PREFIX tilda 2>&1 >/dev/null &
+    exec $DE_PREFIX ck-launch-session i3
 fi
 
