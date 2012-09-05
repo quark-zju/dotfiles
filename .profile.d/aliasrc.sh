@@ -1,18 +1,12 @@
 # short names
-exists() {
-    which "$@" &>/dev/null
-}
+exists() { hash "$@" &>/dev/null }
 alias ip6='ip -f inet6'
 exists bundle && alias be='bundle exec'
 exists sdlmame && alias mame=sdlmame
 exists proxychains && alias pc='proxychains'
-exists tmux && alias t=tmux
+exists tmux && alias tat='tmux a -t'
 exists lrun && alias m='DEBUG=1 lrun --reset-env false --network true --isolate-process false'
-if exists rails; then
-    alias p='RAILS_ENV=production'
-    alias e='RAILS_ENV=staging'
-    alias d='RAILS_ENV=development'
-fi
+exists systemctl && alias sc=systemctl
 
 
 # default parameters

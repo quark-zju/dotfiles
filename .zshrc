@@ -154,6 +154,8 @@ alias -g T='| tail'
 alias -g ET='|& tail'
 alias -g M='| most'
 alias -g EM='|& most'
+alias -g G='| gvim -'
+alias -g EG='|& gvim -'
 # }}}
 
 # Load other stuff {{{
