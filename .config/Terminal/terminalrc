@@ -22,5 +22,5 @@ TitleMode=TERMINAL_TITLE_REPLACE
 ColorPalette5=#40404040ffff
 ScrollingOnOutput=FALSE
 WordChars=-A-Za-z0-9,./?%&#:_~@
-ColorCursor=#666666666666
+ColorCursor=#8e738e738e73
 
