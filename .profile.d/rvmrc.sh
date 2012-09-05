@@ -3,3 +3,5 @@ if [ -e $HOME/.rvm/scripts/rvm ]; then
     export PATH=$PATH:$HOME/.rvm/bin
 fi
 
+hash rbenv &>/dev/null && eval "$(rbenv init -)"
+
