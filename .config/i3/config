@@ -30,6 +30,7 @@ bindsym Mod4+x exec i3lock -d
 
 # start dmenu (a program launcher)
 bindsym Mod4+p exec /usr/bin/dmenu_run
+# bindsym Mod4+o exec /usr/bin/dmenu_run
 
 # change focus
 bindsym Mod4+h focus left
