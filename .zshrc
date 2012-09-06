@@ -166,7 +166,7 @@ done
 
 # Security {{{
 # Auto logout VT in 10 minutes
-[[ -z "$DISPLAY" ]] && [[ -z "$SSH_CLIENT" ]] && export TMOUT=600
+[[ -z "$DISPLAY" ]] && [[ -z "$SSH_CLIENT" ]] && TMOUT=600
 # }}}
 
 # Deprecated {{{
