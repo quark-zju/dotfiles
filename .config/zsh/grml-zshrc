@@ -3775,6 +3775,12 @@ zrclocal
 ### example: split functions-search 8,16,24,32
 #@# split functions-search 8
 
+## load plugins
+
+for i in ~/.config/zsh/*/*.plugin.zsh; do
+    source "$i"
+done
+
 ## END OF FILE #################################################################
 # vim:filetype=zsh foldmethod=marker autoindent expandtab shiftwidth=4
 # Local variables:
