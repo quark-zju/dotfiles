@@ -1,0 +1,40 @@
+#!/usr/bin/env ruby
+
+require 'pty'
+require 'io/console'
+
+@t = IO::console
+
+def fs_hash
+  Dir['**/*'].map do |p| [p, File.lstat(p).mtime.to_i] end.sort + @t.winsize
+end
+
+@h = nil
+begin
+  isbuck = ARGV.any?{|x| x["buck"]}
+  system 'tput rmam' unless ENV['W'] # disable word-wrap
+  loop do
+    n = fs_hash
+    if n != @h
+      system 'clear'
+      height, width = @t.winsize
+      PTY.spawn(*ARGV) do |r, w, pid|
+        w.close
+        omitted = 0
+        r.each_line.with_index do |line, i|
+          if isbuck || i < height - 1
+            print line
+          else
+            omitted += 1
+          end
+        end rescue nil
+        print "(#{omitted} lines omitted)" if omitted > 0
+      end
+      @h = fs_hash
+    else
+      sleep 0.5
+    end
+  end
+ensure
+  system 'tput smam' # re-enable word-wrap
+end
