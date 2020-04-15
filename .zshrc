@@ -4,6 +4,7 @@ alias md='mkdir -p'
 alias rd='rmdir'
 alias bd='bg && disown'
 alias ip6='ip -f inet6'
+alias d='git diff --no-index'
 
 # default parameters
 alias rm='rm -v'
