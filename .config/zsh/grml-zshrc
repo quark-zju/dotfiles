@@ -2495,7 +2495,12 @@ function grml_reset_screen_title () {
     [[ ${NOTITLE:-} -gt 0 ]] && return 0
     case $TERM in
         (xterm*|rxvt*)
-            set_title ${(%):-"%n@%m: %~"}
+            # EDITED(quark): Do not show user@host unless in ssh.
+            if [[ -z $SSH_CLIENT ]]; then
+                set_title ${(%):-"%~"}
+            else
+                set_title ${(%):-"%n@%m: %~"}
+            fi
             ;;
     esac
 }
@@ -2529,7 +2534,12 @@ function grml_cmd_to_screen_title () {
 function grml_control_xterm_title () {
     case $TERM in
         (xterm*|rxvt*)
-            set_title "${(%):-"%n@%m:"}" "$2"
+            # EDITED(quark): Do not show user@host unless in ssh.
+            if [[ -z $SSH_CLIENT ]]; then
+                set_title "${(%):-""}" "$2"
+            else
+                set_title "${(%):-"%n@%m:"}" "$2"
+            fi
             ;;
     esac
 }
