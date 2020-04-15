@@ -1,12 +1,24 @@
 [user]
-    name = [TODO]
-    email = [TODO]
+	name = [TODO]
+	email = [TODO]
 [alias]
-    co = checkout
-    br = branch
-    c = commit
-    st = status
+	a = add
+	b = branch
+	br = branch
+	c = commit
+	co = checkout
+	d = diff
+	dc = diff --cached
+	push-master = push origin HEAD:refs/heads/master
+	st = status
 [core]
-    editor = vim
+	excludesfile = ~/.gitignore_global
+	autocrlf = false
 [color]
-    ui = true
+	ui = true
+[fetch]
+	prune = false
+[gui]
+	encoding = utf-8
+[pull]
+	rebase = false
