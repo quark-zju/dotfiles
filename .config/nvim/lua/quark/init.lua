@@ -18,6 +18,7 @@ local setup_plugins = function()
     'vim-scripts/python.vim',
     'roxma/nvim-yarp',
     'simnalamburt/vim-mundo',
+    'neovim/nvim-lsp',
   }
 end
 
@@ -128,11 +129,11 @@ end
 local setup_rust = function()
   utils.set_globals {
     rustfmt_autosave = 1,
-    rustfmt_command = '/home/quark/fbsource/tools/./third-party/rustfmt/rustfmt 2>/dev/null', -- eat stderr warnings
 
     racer_no_default_keymappings = 1,
     racer_experimental_completer = 1,
   }
+  require('nvim_lsp').rust_analyzer.setup()
 end
 
 -- Callbacks. Still need VimL autocmd to trigger
