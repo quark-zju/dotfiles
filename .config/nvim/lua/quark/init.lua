@@ -133,7 +133,7 @@ local setup_rust = function()
     racer_no_default_keymappings = 1,
     racer_experimental_completer = 1,
   }
-  require('nvim_lsp').rust_analyzer.setup()
+  require('nvim_lsp').rust_analyzer.setup{}
 end
 
 -- Callbacks. Still need VimL autocmd to trigger
