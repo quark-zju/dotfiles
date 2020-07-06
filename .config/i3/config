@@ -12,31 +12,42 @@
 # font for window titles. ISO 10646 = Unicode
 font -misc-fixed-medium-r-normal--13-120-75-75-C-70-iso10646-1
 
-# use Mouse+Mod4 to drag floating windows to their wanted position
-floating_modifier Mod4
+# Mod1: Alt
+# Mod4: Windows
+
+# use Mouse+Mod1 to drag floating windows to their wanted position
+floating_modifier Mod1
 
 # change border style
 bindsym Mod4+b border toggle
+bindsym Mod1+b border toggle
 
 # Mod4+Enter starts a new terminal
-bindsym Mod4+Return exec /usr/bin/terminal
-bindsym Mod4+semicolon exec /usr/bin/terminal
+bindsym Mod4+Return exec xfce4-terminal
+bindsym Mod4+semicolon exec xfce4-terminal
+bindsym Mod1+Return exec xfce4-terminal
+bindsym Mod1+semicolon exec xfce4-terminal
+bindsym Mod1+X exec xterm
 
 # kill focused window
 bindsym Mod4+c kill
+bindsym Mod1+F4 kill
 
 # i3lock -d
 bindsym Mod4+x exec i3lock -d
 
-# start dmenu (a program launcher)
-bindsym Mod4+p exec /usr/bin/dmenu_run
-# bindsym Mod4+o exec /usr/bin/dmenu_run
+# start rofi (a program launcher)
+bindsym Mod4+p exec rofi -show run
+bindsym Mod4+m exec rofi -show window
+bindsym Mod1+p exec rofi -show run
+bindsym Mod1+F2 exec rofi -show run
+bindsym Mod1+m exec rofi -show window
 
 # change focus
-bindsym Mod4+h focus left
-bindsym Mod4+j focus down
-bindsym Mod4+k focus up
-bindsym Mod4+l focus right
+bindsym Mod1+h focus left
+bindsym Mod1+j focus down
+bindsym Mod1+k focus up
+bindsym Mod1+l focus right
 
 # alternatively, you can use the cursor keys:
 bindsym Mod4+Left focus left
@@ -158,6 +169,7 @@ bar {
 }
 
 bindsym Mod4+r mode "resize"
+bindsym Mod1+r mode "resize"
 
 # specific windows rules
 for_window [class="MPlayer"] border 1pixel 
