@@ -74,11 +74,13 @@ select-word-style bash
 
 # Environments {{{
 # PATH - Include ~/bin.
-PATH="$HOME/bin:$PATH"
+PATH="$HOME/bin:$HOME/.cargo/bin:$PATH"
 
-# Editor - Prefer gvim.
+# Editor - Prefer gvim, nvim.
 if hash gvim 2>/dev/null; then
     EDITOR='gvim -f'
+elif hash nvim 2>/dev/null; then
+    EDITOR='nvim'
 fi
 
 # Dynamically set pulse server according to ssh_client
