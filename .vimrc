@@ -16,7 +16,7 @@ Bundle 'taglist.vim'
 " bundles
 " github
 Bundle 'ecomba/vim-ruby-refactoring'
-Bundle 'gmarik/vundle'
+Bundle 'VundleVim/Vundle.vim'
 Bundle 'godlygeek/tabular'
 Bundle 'kchmck/vim-coffee-script'
 Bundle 'kien/ctrlp.vim'
@@ -35,6 +35,7 @@ Bundle 'tpope/vim-markdown'
 Bundle 'tpope/vim-surround'
 Bundle 'tpope/vim-unimpaired'
 Bundle 'quark-zju/vim-cpp-auto-include'
+Bundle 'rust-lang/rust.vim'
 
 " vim.org
 Bundle 'css_color.vim'
