@@ -31,8 +31,3 @@ fonts
 * Default UI font is Droid Sans. It contains CJK and Thai characters.
 * Default monospace font is JetBrains Mono.
 
-rubygem
--------
-* `ruby.taobao.org` is currently the only source. You may want to edit
-  `.gemrc`.
-
