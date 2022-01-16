@@ -21,7 +21,7 @@ Notes
 vim
 ---
 * I use [Vundle](https://github.com/gmarik/vundle) to manage vim packages.
-  For Vundle to work properly, `git clone https://github.com/gmarik/vundle.git ~/.vim/bundle/vundle`
+  For Vundle to work properly, `git clone https://github.com/gmarik/vundle.git ~/.vim/bundle/Vundle.vim`
 * To install vim packages, start vim then `:BundleInstall`
 * To enable UltiSnips builtin snippets: 
   `cd ~/.vim/ && ln -s bundle/ultisnips/UltiSnips snippets_basic` 
@@ -29,8 +29,7 @@ vim
 fonts
 -----
 * Default UI font is Droid Sans. It contains CJK and Thai characters.
-* Default monospace font is Terminus. If you do not like bitmap fonts,
-  Dejavu Sans Mono and Droid Sans Mono are recommended.
+* Default monospace font is JetBrains Mono.
 
 rubygem
 -------

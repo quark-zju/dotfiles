@@ -2,14 +2,13 @@
 set nocompatible
 filetype off
 
-set rtp+=~/.vim/bundle/vundle/
+set rtp+=~/.vim/bundle/Vundle.vim
 call vundle#rc()
 
 " as dependence
 " github
 Bundle 'kana/vim-textobj-user'
 Bundle 'tpope/vim-repeat'
-Bundle 'mirell/vim-matchit'
 Bundle 'scrooloose/nerdtree'
 " vim.org
 Bundle 'taglist.vim'
@@ -17,7 +16,6 @@ Bundle 'taglist.vim'
 " bundles
 " github
 Bundle 'ecomba/vim-ruby-refactoring'
-Bundle 'glts/vim-spacebox'
 Bundle 'gmarik/vundle'
 Bundle 'godlygeek/tabular'
 Bundle 'kchmck/vim-coffee-script'
@@ -28,27 +26,20 @@ Bundle 'lukerandall/haskellmode-vim'
 Bundle 'nelstrom/vim-textobj-rubyblock'
 Bundle 'scrooloose/syntastic'
 Bundle 'SirVer/ultisnips'
-Bundle 'tomasr/molokai'
 Bundle 'tpope/vim-abolish'
 Bundle 'tpope/vim-commentary'
 Bundle 'tpope/vim-endwise'
 Bundle 'tpope/vim-fugitive'
 Bundle 'tpope/vim-haml'
 Bundle 'tpope/vim-markdown'
-Bundle 'tpope/vim-rails'
 Bundle 'tpope/vim-surround'
 Bundle 'tpope/vim-unimpaired'
-Bundle 'Twinside/vim-syntax-haskell-cabal'
-Bundle 'bbommarito/vim-slim.git'
-Bundle 'vim-ruby/vim-ruby'
 Bundle 'quark-zju/vim-cpp-auto-include'
 
 " vim.org
-Bundle 'Cpp11-Syntax-Support'
 Bundle 'css_color.vim'
 Bundle 'indentpython.vim'
 Bundle 'iptables'
-Bundle 'jade.vim'
 Bundle 'nginx.vim'
 Bundle 'PKGBUILD'
 Bundle 'python.vim'
@@ -125,8 +116,8 @@ function! ShowCursorCross(visible)
 endfunction
 function! HighlightCursorCross(level)
     if a:level == 0
-        hi CursorColumn guibg=#333
-        hi CursorLine   guibg=#333
+        hi CursorColumn guibg=#333333
+        hi CursorLine   guibg=#333333
     else
         hi CursorColumn guibg=#223f44
         hi CursorLine   guibg=#223f44
@@ -139,7 +130,7 @@ if has("gui_running")
     set guioptions=egit
     " " if non-bitmap font is preferable
     " set guifont=DejaVu\ Sans\ Mono\ 9
-    set guifont=Terminus\ 9
+    set guifont=JetBrains\ Mono\ 9
     au WinEnter * call ShowCursorCross(1)
     au WinLeave * call ShowCursorCross(0)
     au InsertEnter * call HighlightCursorCross(1)
@@ -242,8 +233,6 @@ nnoremap K :Man <cword><CR>
 " c-a, c-e style home, end
 cnoremap <C-a> <Home>
 cnoremap <C-e> <End>
-" <Space> calls SpaceBox
-nnoremap <Space> :SpaceBox<CR>
 " zO recursively open all folds
 nnoremap zO zCzO
 " srcexpl, nerdtree, taglist toggle
@@ -285,7 +274,7 @@ let g:UltiSnipsExpandTrigger="<tab>"
 let g:UltiSnipsJumpForwardTrigger="<tab>"
 let g:UltiSnipsJumpBackwardTrigger="<s-tab>"
 let g:UltiSnipsListSnippets="<c-tab>"
-let g:UltiSnipsSnippetDirectories=["snippets_basic", "snippets"]
+let g:UltiSnipsSnippetDirectories=["snippets_basic", "mysnippets"]
 
 " ctrlp
 let g:ctrlp_map='<leader>t'

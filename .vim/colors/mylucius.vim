@@ -273,11 +273,11 @@ hi VisualNOS        guifg=fg                                        gui=underlin
 hi CursorLineNr guifg=#ffaa33  guibg=#444444
 hi LineNr       guibg=#2e2e2e
 " right column margin
-hi ColorColumn  guifg=#f84 guibg=NONE
+hi ColorColumn  guifg=#ff8844 guibg=NONE
 " cursor column/line
 hi CursorColumn guibg=#333333
 hi CursorLine   guibg=#333333
-hi MatchParen   guifg=bg  guibg=#fa3 gui=bold
+hi MatchParen   guifg=bg  guibg=#ffaa33 gui=bold
 " bold
 hi Statement    gui=bold
 hi Conditional  gui=bold
@@ -289,7 +289,7 @@ hi Repeat       gui=bold
 " showmarks (seems gui=none will be ignored, use all gui=bold here)
 hi ShowMarksHLl guibg=#bae682 guifg=bg gui=bold
 hi ShowMarksHLu guibg=#50d6de guifg=bg gui=bold
-hi ShowMarksHLo guifg=#ddd guibg=#2e2e2e gui=bold
+hi ShowMarksHLo guifg=#dddddd guibg=#2e2e2e gui=bold
 hi ShowMarksHLm guibg=#bae682 guifg=bg gui=bold
 
 " xterm colors (dumped using colorsupport.vim)
