@@ -322,10 +322,10 @@ if &t_Co > 255
     hi DiffText       term=reverse cterm=bold ctermfg=254 ctermbg=196
     hi SignColumn     term=standout ctermfg=248 ctermbg=234
     hi Conceal        ctermfg=7 ctermbg=242
-    hi SpellBad       term=reverse cterm=undercurl ctermbg=196
-    hi SpellCap       term=reverse cterm=undercurl ctermbg=226
-    hi SpellRare      term=reverse cterm=undercurl ctermbg=214
-    hi SpellLocal     term=underline cterm=undercurl ctermbg=214
+    hi SpellBad       term=reverse cterm=undercurl ctermbg=237
+    hi SpellCap       term=reverse cterm=undercurl ctermbg=237
+    hi SpellRare      term=reverse cterm=undercurl ctermbg=237
+    hi SpellLocal     term=underline cterm=undercurl ctermbg=237
     hi Pmenu          ctermfg=15 ctermbg=238
     hi PmenuSel       ctermfg=16 ctermbg=186
     hi PmenuSbar      ctermbg=66
