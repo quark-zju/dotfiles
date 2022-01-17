@@ -83,6 +83,7 @@ set nomousehide
 set lines=40
 set columns=83
 set updatetime=500
+set mouse=
 " }}}
 
 " Tab, Spaces, Indent {{{
@@ -208,6 +209,10 @@ autocmd FileType c,cpp,ruby setlocal foldmethod=syntax
 autocmd FileType java,javascript setlocal foldmarker={,}
 " }}}
 
+" Spelling {{{
+set spell spelllang=en_us
+" }}}
+
 " Custom commands {{{
 " sudo write
 cmap w!! w !sudo tee % >/dev/null
@@ -285,7 +290,7 @@ let g:ctrlp_working_path_mode=0
 let g:ctrlp_dotfiles=0
 let g:ctrlp_max_depth=5
 let g:ctrlp_custom_ignore={
-            \ 'dir':  '\.git$\|\.hg$\|\.svn$\|tmp$',
+            \ 'dir':  '\.git$\|\.hg$\|\.svn$\|tmp\|target$',
             \ 'file': '\.so$\|\.o$\|\.out$\|\.lock$',
             \ }
 let g:ctrlp_max_files=400
