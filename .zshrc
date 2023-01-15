@@ -104,4 +104,10 @@ done
 
 # https://bugs.launchpad.net/ubuntu-gnome/+bug/1193993
 [ -f /etc/profile.d/vte.sh ] && source /etc/profile.d/vte.sh
+
+# cargo target
+if grep -q /tmp/cargo-target ~/.cargo/config 2>/dev/null; then
+  mkdir -p /tmp/cargo-target
+fi
+
 # }}}
