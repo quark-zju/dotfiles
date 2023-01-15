@@ -6,3 +6,6 @@ fi
 
 # Ruby - rbenv.
 hash rbenv &>/dev/null && eval "$(rbenv init -)"
+
+# Locale.
+export LC_ALL=en_US.UTF-8
