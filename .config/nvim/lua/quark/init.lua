@@ -18,7 +18,8 @@ local setup_plugins = function()
     'vim-scripts/python.vim',
     'roxma/nvim-yarp',
     'simnalamburt/vim-mundo',
-    'neovim/nvim-lsp',
+    'neovim/nvim-lspconfig',
+    'simrat39/rust-tools.nvim',
   }
 end
 
@@ -126,14 +127,18 @@ local setup_ctrlp = function()
 end
 
 
-local setup_rust = function()
-  utils.set_globals {
-    rustfmt_autosave = 1,
-
-    racer_no_default_keymappings = 1,
-    racer_experimental_completer = 1,
-  }
-  require('nvim_lsp').rust_analyzer.setup{}
+local setup_rust_tools = function()
+  local rt = require('rust-tools')
+  rt.setup({
+    server = {
+      on_attach = function(_, bufnr)
+        -- Hover actions
+        vim.keymap.set("n", "<C-space>", rt.hover_actions.hover_actions, { buffer = bufnr })
+        -- Code action groups
+        vim.keymap.set("n", "<Leader>a", rt.code_action_group.code_action_group, { buffer = bufnr })
+      end,
+    },
+  })
 end
 
 -- Callbacks. Still need VimL autocmd to trigger
@@ -178,7 +183,7 @@ local init = function()
   setup_key_mappings()
   setup_colors()
   setup_ctrlp()
-  setup_rust()
+  setup_rust_tools()
 end
 
 return {
