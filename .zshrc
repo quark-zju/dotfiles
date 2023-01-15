@@ -101,4 +101,7 @@ source ~/.config/zsh/autojump/bin/autojump.zsh
 for i in ~/.config/zsh/*/*.plugin.zsh; do
     source "$i"
 done
+
+# https://bugs.launchpad.net/ubuntu-gnome/+bug/1193993
+[ -f /etc/profile.d/vte.sh ] && source /etc/profile.d/vte.sh
 # }}}
