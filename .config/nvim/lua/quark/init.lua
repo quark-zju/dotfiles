@@ -20,6 +20,11 @@ local setup_plugins = function()
     'simnalamburt/vim-mundo',
     'neovim/nvim-lspconfig',
     'simrat39/rust-tools.nvim',
+    'hrsh7th/nvim-cmp',
+    'hrsh7th/cmp-nvim-lsp',
+    'hrsh7th/cmp-nvim-lsp-signature-help',
+    'hrsh7th/cmp-buffer',
+    'dcampos/nvim-snippy',
   }
 end
 
@@ -83,11 +88,6 @@ local setup_key_mappings = function()
     ['<C-j>'] = ":call search('\\%' . virtcol('.') . 'v\\S', 'wW')<CR>",
   })
 
-  utils.map_keys('inore', {
-    -- smart tab
-    ['<expr> <tab>'] = [[luaeval("require('quark/smarttab').handle_insert_tab()")]],
-  })
-
   utils.map_keys('tnore', {
     ['<Esc>'] = '<C-\\><C-n>',
   })
@@ -126,10 +126,10 @@ local setup_ctrlp = function()
   })
 end
 
-
+-- rust-tools provides inlay hints and code actions
 local setup_rust_tools = function()
   local rt = require('rust-tools')
-  rt.setup({
+  rt.setup {
     server = {
       on_attach = function(_, bufnr)
         -- Hover actions
@@ -137,8 +137,67 @@ local setup_rust_tools = function()
         -- Code action groups
         vim.keymap.set("n", "<Leader>a", rt.code_action_group.code_action_group, { buffer = bufnr })
       end,
+      settings = {
+        ['rust-analyzer'] = {
+          imports = {
+            granularity = {
+              group = "item",
+            },
+            prefix = "plain",
+          },
+        },
+      },
     },
-  })
+  }
+end
+
+-- snippy provides code completion framework
+local setup_snippy = function()
+  local snippy = require('snippy')
+  snippy.setup {
+    mappings = {
+      is = {
+        ['<Tab>'] = 'expand_or_advance',
+        ['<S-Tab>'] = 'previous',
+      },
+      nx = {
+        ['<leader>x'] = 'cut_text',
+      },
+    }
+  }
+end
+
+-- cmp provides LSP based code completion
+local setup_cmp = function()
+  local cmp = require('cmp')
+  cmp.setup {
+    snippet = {
+      -- cmp requires a snippet engine
+      expand = function(args)
+        require('snippy').expand_snippet(args.body)
+      end,
+    },
+    mapping = cmp.mapping.preset.insert({
+      ['<C-b>'] = cmp.mapping.scroll_docs(-4),
+      ['<C-f>'] = cmp.mapping.scroll_docs(4),
+      ['<C-Space>'] = cmp.mapping.complete(),
+      ['<C-e>'] = cmp.mapping.abort(),
+      ['<CR>'] = cmp.mapping.confirm({ select = true }),
+      ['<tab>'] = cmp.mapping.confirm({ select = true }),
+    }),
+    sources = {
+      {
+        name = 'nvim_lsp',
+        group_index = 1,
+        -- Drop noisy "Snippet" completions.
+        entry_filter = function(entry, ctx)
+          return require('cmp.types').lsp.CompletionItemKind[entry:get_kind()] ~= 'Snippet'
+        end
+      },
+      { name = 'nvim_lsp_signature_help', group_index = 1, },
+      { name = 'buffer', keyword_length = 4, group_index = 2, },
+    }
+  }
 end
 
 -- Callbacks. Still need VimL autocmd to trigger
@@ -183,6 +242,8 @@ local init = function()
   setup_key_mappings()
   setup_colors()
   setup_ctrlp()
+  setup_snippy()
+  setup_cmp()
   setup_rust_tools()
 end
 
