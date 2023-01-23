@@ -11,7 +11,6 @@ local setup_plugins = function()
     'easymotion/vim-easymotion',
     'justinmk/vim-sneak',
     'mhinz/vim-janah',
-    'racer-rust/vim-racer',
     'rust-lang/rust.vim',
     'vim-scripts/ctrlp.vim',
     'vim-scripts/indentpython.vim',
