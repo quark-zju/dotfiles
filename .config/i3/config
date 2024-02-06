@@ -36,12 +36,14 @@ bindsym Mod1+F4 kill
 # i3lock -d
 bindsym Mod4+x exec i3lock -d
 
-# start rofi (a program launcher)
-bindsym Mod4+p exec rofi -show run
-bindsym Mod4+m exec rofi -show window
+# start rofi (a program launcher) via Alt+p, F2, m
 bindsym Mod1+p exec rofi -show run
 bindsym Mod1+F2 exec rofi -show run
 bindsym Mod1+m exec rofi -show window
+
+# start demu via Win+p, Win+m
+bindsym Mod4+p exec dmenu_run
+bindsym Mod4+m exec i3-selwin
 
 # change focus
 bindsym Mod1+h focus left
