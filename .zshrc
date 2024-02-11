@@ -111,3 +111,11 @@ if grep -q /tmp/cargo-target ~/.cargo/config 2>/dev/null; then
 fi
 
 # }}}
+
+# bun {{{
+if [ -d "$HOME/.bun" ]; then
+  export BUN_INSTALL="$HOME/.bun"
+  source "$BUN_INSTALL/_bun"
+  export PATH="$BUN_INSTALL/bin:$PATH"
+fi
+# }}}
