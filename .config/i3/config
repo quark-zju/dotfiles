@@ -15,8 +15,8 @@ font -misc-fixed-medium-r-normal--13-120-75-75-C-70-iso10646-1
 # Mod1: Alt
 # Mod4: Windows
 
-# use Mouse+Mod1 to drag floating windows to their wanted position
-floating_modifier Mod1
+# use Mouse+Mod4 to drag floating windows to their wanted position
+floating_modifier Mod4
 
 # change border style
 bindsym Mod4+b border toggle
@@ -50,6 +50,10 @@ bindsym Mod1+h focus left
 bindsym Mod1+j focus down
 bindsym Mod1+k focus up
 bindsym Mod1+l focus right
+bindsym Mod4+h focus left
+bindsym Mod4+j focus down
+bindsym Mod4+k focus up
+bindsym Mod4+l focus right
 
 # alternatively, you can use the cursor keys:
 bindsym Mod4+Left focus left
