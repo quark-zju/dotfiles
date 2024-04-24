@@ -5,6 +5,7 @@
 local opt = vim.opt
 
 opt.relativenumber = false
+opt.conceallevel = 0
 
 if os.getenv("SSH_CLIENT") then
   vim.g.clipboard = {
