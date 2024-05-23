@@ -1,0 +1,52 @@
+#!/bin/bash
+
+# et (eternalterminal.dev) wrapper to use a "master" connection for auth, instead of ssh.
+# The first "master" connection requires ssh auth or manul auth from another connected session.
+
+export ET_BIN="${ET_BIN:-/bin/et}"
+export ET_NO_TELEMETRY=1
+
+ET_HOSTPORT="$1"
+ET_HOST="${ET_HOSTPORT%%:*}"                 # strip out ":port"
+export SESSION_NAME="et-ssh-${ET_HOST//./_}" # tmux session name cannot have "."
+
+if tmux has-session -t $SESSION_NAME 2>/dev/null; then
+	echo Authenticating via the existing master session >/dev/stderr
+	# Authenticate via the existing tmux session, by using a customized ssh script
+	# When run by 'et' as 'ssh', we got:
+	# $1: hostname.com
+	# $2: echo 'something' | etterminal --verbose=0
+	ET_SSH_DIR="$HOME/.cache/et-ssh/attach"
+	mkdir -p "$ET_SSH_DIR"
+	cat >"$ET_SSH_DIR/ssh" <<'EOF'
+#!/bin/bash
+tmux send-keys -t $SESSION_NAME "$2" C-m
+sleep 0.5
+tmux capture-pane -t $SESSION_NAME -p | grep IDPASSKEY | tail -1
+EOF
+	chmod +x "$ET_SSH_DIR/ssh"
+	export PATH="$ET_SSH_DIR:$PATH"
+	exec "$ET_BIN" "$@"
+else
+	echo Starting master session >/dev/stderr
+	ET_SSH_DIR="$HOME/.cache/et-ssh/new-session"
+	mkdir -p "$ET_SSH_DIR"
+	cat >"$ET_SSH_DIR/ssh" <<'EOF'
+#!/bin/bash
+{
+  echo 'Run from client:'
+  printf '  ssh %s %q\n\n' "$1" "$2"
+  echo 'Or, run from a connected session:'
+  printf '  %s\n\n' "$2"
+  echo
+  echo 'Input output:'
+} >/dev/tty
+read i
+echo "$i"
+EOF
+	chmod +x "$ET_SSH_DIR/ssh"
+	export PATH="$ET_SSH_DIR:$PATH"
+	exec tmux new-session -s $SESSION_NAME "$ET_BIN $@"
+fi
+
+# vim: set ts=2 sw=2 et
