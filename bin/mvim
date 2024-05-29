@@ -1,0 +1,35 @@
+#!/opt/chef/embedded/bin/ruby
+
+require 'digest'
+
+paths = ARGV.to_a
+paths = $<.each_line.map(&:chomp) if paths.empty?
+paths.uniq!
+
+def system! *args
+  raise "Cannot exec #{args}" unless system(*args.flatten)
+end
+
+session = "mvim-#{Digest::SHA1.hexdigest(paths.sort.join('-'))}"
+unless `tmux list-session`.include?("#{session}: ")
+  # new session
+  cmd = "nvim --clean #{paths.first}"
+  system! ['tmux', 'new-session', '-d', '-s', session, cmd]
+  system! ['tmux', 'set-option', '-t', session, 'synchronize-panes', 'off']
+
+  paths[1..].each do |path|
+    cmd = "nvim --clean #{path}"
+    if path != paths.last
+      begin
+        system! ['tmux', 'split-window', '-t', session, '-v', cmd]
+      rescue
+        system! ['tmux', 'split-window', '-t', session, '-h', cmd]
+      end
+    end
+    system! ['tmux', 'select-layout', '-t', session, 'tiled']
+  end
+  system! ['tmux', 'set-option', '-t', session, 'synchronize-panes', 'on']
+end
+
+# attach
+system! ['tmux', 'attach-session', '-t', session]
