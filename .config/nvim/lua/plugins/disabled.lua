@@ -4,9 +4,7 @@ return {
   -- disable (annoying) mini.indentscope animation
   {
     "echasnovski/mini.indentscope",
-    opts = {
-      draw = { animation = require("mini.indentscope").gen_animation.none() },
-    },
+    enabled = false,
   },
   -- disable (annoying) auto pairing {}, "", ''.
   {
