@@ -45,8 +45,8 @@ read i
 echo "$i"
 EOF
 	chmod +x "$ET_SSH_DIR/ssh"
-	export PATH="$ET_SSH_DIR:$PATH"
-	exec tmux new-session -s $SESSION_NAME "$ET_BIN $@"
+	echo Run:
+	echo PATH="$ET_SSH_DIR:"'$'"PATH" tmux new-session -s $SESSION_NAME "'""$ET_BIN $@""'"
 fi
 
 # vim: set ts=2 sw=2 et
