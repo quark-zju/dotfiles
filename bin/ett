@@ -20,7 +20,7 @@ if tmux has-session -t $SESSION_NAME 2>/dev/null; then
 	mkdir -p "$ET_SSH_DIR"
 	cat >"$ET_SSH_DIR/ssh" <<'EOF'
 #!/bin/bash
-tmux send-keys -t $SESSION_NAME "$2" C-m
+tmux send-keys -t $SESSION_NAME " $2" C-m
 sleep 0.5
 tmux capture-pane -t $SESSION_NAME -p | grep IDPASSKEY | tail -1
 EOF
@@ -47,6 +47,7 @@ EOF
 	chmod +x "$ET_SSH_DIR/ssh"
 	echo Run:
 	echo PATH="$ET_SSH_DIR:"'$'"PATH" tmux new-session -s $SESSION_NAME "'""$ET_BIN $@""'"
+	PATH="$ET_SSH_DIR:$PATH" tmux new-session -s $SESSION_NAME "$ET_BIN ${*} || sleep 3"
 fi
 
 # vim: set ts=2 sw=2 et
