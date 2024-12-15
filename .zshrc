@@ -113,9 +113,9 @@ fi
 # }}}
 
 # bun {{{
-if [ -d "$HOME/.bun" ]; then
+if [[ -d "$HOME/.bun" ]]; then
   export BUN_INSTALL="$HOME/.bun"
-  source "$BUN_INSTALL/_bun"
+  [[ -d "$BUN_INSTALL/_bun" ]] && source "$BUN_INSTALL/_bun"
   export PATH="$BUN_INSTALL/bin:$PATH"
 fi
 # }}}
