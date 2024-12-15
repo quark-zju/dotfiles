@@ -5,12 +5,12 @@ import os
 import subprocess
 import sys
 
-TMUX = [os.getenv("TMUX") or "tmux", "-L", "keep"]
+TMUX = [os.getenv("TMUX") or "tmux", "-L", "trun"]
 
 
 def main():
     parser = argparse.ArgumentParser(
-        prog="keep",
+        prog="trun",
         description="Spawn a script running in a tmux session on demand.",
         epilog=(
             "If --name is not set, generate from hashing the command. "
