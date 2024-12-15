@@ -1,0 +1,88 @@
+#!/usr/bin/env python3
+
+import argparse
+import os
+import subprocess
+import sys
+
+TMUX = [os.getenv("TMUX") or "tmux", "-L", "keep"]
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        prog="keep",
+        description="Spawn a script running in a tmux session on demand.",
+        epilog=(
+            "If --name is not set, generate from hashing the command. "
+            "If command is not set, --attach is implied. "
+            "If the tmux session already exists, exit."
+        ),
+    )
+    parser.add_argument("-n", "--name", type=str, help="tmux session name")
+    parser.add_argument(
+        "-a", "--attach", action="store_true", help="attach to tmux session"
+    )
+    parser.add_argument(
+        "-v", "--verbose", action="store_true", help="print debug messages"
+    )
+    parser.add_argument("command", nargs="*", help="script to run")
+
+    opts = parser.parse_args()
+    attach = opts.attach
+    command = opts.command
+    name = opts.name
+    verbose = opts.verbose
+
+    def v(message):
+        if verbose:
+            sys.stderr.write(message)
+            sys.stderr.write("\n")
+            sys.stderr.flush()
+
+    if not command and not name:
+        v("No command or --name.")
+        parser.print_help()
+        return
+
+    if not name:
+        import hashlib
+
+        name = "keep-%s" % hashlib.sha1(repr(command).encode()).hexdigest()[:7]
+        v("Generated name from hashing the command: %s" % name)
+
+    if not command:
+        v("No command. Set --attach.")
+        attach = True
+
+    if attach:
+        v("Attaching to tmux session %r." % name)
+        subprocess.run(TMUX + ["attach-session", "-t", name])
+        return
+
+    # Check if the session exists.
+    if (
+        subprocess.call(TMUX + ["has-session", "-t", name], stderr=subprocess.DEVNULL)
+        == 0
+    ):
+        v("tmux session %r exists. Exiting." % name)
+        return
+
+    # For convenience, chdir (by tmux's "-c") to the script directory so the
+    # script can access # local resources.
+    maybe_cwd = os.path.dirname(os.path.expanduser(command[0]))
+    args = ["new-session", "-d", "-s", name]
+    if maybe_cwd and os.path.isabs(maybe_cwd) and os.path.isdir(maybe_cwd):
+        v("Current dir: %r" % maybe_cwd)
+        args += ["-c", maybe_cwd]
+
+    # tmux wants a "shell command". Quote the arguments.
+    import shlex
+
+    shell_cmd = shlex.join(command)
+
+    v("Creating new tmux session %r." % name)
+    subprocess.Popen(TMUX + args + [shell_cmd])
+
+
+if __name__ == "__main__":
+    main()
