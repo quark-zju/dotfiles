@@ -4,7 +4,7 @@
 
 -- Disable autoformat for markdown files
 vim.api.nvim_create_autocmd({ "FileType" }, {
-  pattern = { "markdown", "yaml" },
+  pattern = { "markdown", "yaml", "sh", "toml" },
   callback = function()
     vim.b.autoformat = false
   end,
