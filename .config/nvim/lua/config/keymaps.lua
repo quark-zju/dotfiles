@@ -3,4 +3,4 @@
 -- Add any additional keymaps here
 
 -- LazyVim sets Ctrl-h/j/k/l to move Window, but Ctrl-L is also useful in terminal...
-vim.api.nvim_del_keymap("t", "<C-l>")
+-- vim.api.nvim_del_keymap("t", "<C-l>")
