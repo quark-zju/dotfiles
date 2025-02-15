@@ -22,3 +22,5 @@ if vim.env.SSH_TTY then
   }
   opt.clipboard = "unnamedplus"
 end
+
+vim.g.snacks_animate = false
