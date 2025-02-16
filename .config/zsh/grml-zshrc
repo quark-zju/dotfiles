@@ -2080,7 +2080,10 @@ function grml_prompt_setup () {
     # static version of the ‘add-zsh-hook’ function above. It needs to be
     # re-enabled as soon as that static definition is removed again.
     #autoload -Uz add-zsh-hook
-    add-zsh-hook precmd prompt_$1_precmd
+    # EDITED(quark): only call precmd hook once so PS1 can be set by things
+    # like virtualenv
+    #add-zsh-hook precmd prompt_$1_precmd
+    prompt_$1_precmd
 }
 
 function prompt_grml_setup () {
