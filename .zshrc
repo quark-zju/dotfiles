@@ -119,3 +119,7 @@ if [[ -d "$HOME/.bun" ]]; then
   export PATH="$BUN_INSTALL/bin:$PATH"
 fi
 # }}}
+
+# local zshrc {{{
+[[ -f ~/.zshrc.local ]] && source ~/.zshrc.local
+# }}}
