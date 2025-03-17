@@ -1,14 +1,25 @@
+[AC][Display]
+TurnOffDisplayIdleTimeoutSec=900
+
 [AC][Performance]
 PowerProfile=balanced
+
+[AC][SuspendAndShutdown]
+AutoSuspendAction=8
+AutoSuspendIdleTimeoutSec=7200
 
 [Battery][Performance]
 PowerProfile=power-saver
 
-[Battery][RunScript]
-ProfileLoadCommand=bash -c "loginctl terminate-session $XDG_SESSION_ID"
+[Battery][SuspendAndShutdown]
+AutoSuspendAction=8
+AutoSuspendIdleTimeoutSec=900
 
 [BatteryManagement]
 BatteryCriticalAction=8
 
 [LowBattery][Performance]
 PowerProfile=power-saver
+
+[LowBattery][SuspendAndShutdown]
+AutoSuspendAction=8
