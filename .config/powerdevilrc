@@ -1,0 +1,14 @@
+[AC][Performance]
+PowerProfile=balanced
+
+[Battery][Performance]
+PowerProfile=power-saver
+
+[Battery][RunScript]
+ProfileLoadCommand=bash -c "loginctl terminate-session $XDG_SESSION_ID"
+
+[BatteryManagement]
+BatteryCriticalAction=8
+
+[LowBattery][Performance]
+PowerProfile=power-saver
