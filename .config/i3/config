@@ -20,14 +20,12 @@ floating_modifier Mod4
 
 # change border style
 bindsym Mod4+b border toggle
-bindsym Mod1+b border toggle
 
 # Mod4+Enter starts a new terminal
 bindsym Mod4+Return exec xfce4-terminal
 bindsym Mod4+semicolon exec xfce4-terminal
 bindsym Mod1+Return exec xfce4-terminal
 bindsym Mod1+semicolon exec xfce4-terminal
-bindsym Mod1+X exec xterm
 
 # kill focused window
 bindsym Mod4+c kill
@@ -36,20 +34,11 @@ bindsym Mod1+F4 kill
 # xflock4
 bindsym Mod4+x exec xflock4
 
-# start rofi (a program launcher) via Alt+p, F2, m
-bindsym Mod1+p exec rofi -show run
-bindsym Mod1+F2 exec rofi -show run
-bindsym Mod1+m exec rofi -show window
-
 # start demu via Win+p, Win+m
 bindsym Mod4+p exec dmenu_run
 bindsym Mod4+m exec i3-selwin
 
 # change focus
-bindsym Mod1+h focus left
-bindsym Mod1+j focus down
-bindsym Mod1+k focus up
-bindsym Mod1+l focus right
 bindsym Mod4+h focus left
 bindsym Mod4+j focus down
 bindsym Mod4+k focus up
@@ -178,7 +167,6 @@ mode "resize" {
 # }
 
 bindsym Mod4+r mode "resize"
-bindsym Mod1+r mode "resize"
 
 # specific windows rules
 for_window [class="MPlayer"] border 1pixel 
