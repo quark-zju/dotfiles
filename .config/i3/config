@@ -9,8 +9,7 @@
 # layout, use the i3-config-wizard
 #
 
-# font for window titles. ISO 10646 = Unicode
-font -misc-fixed-medium-r-normal--13-120-75-75-C-70-iso10646-1
+font pango:Noto Sans CJK 10
 
 # Mod1: Alt
 # Mod4: Windows
@@ -184,6 +183,10 @@ for_window [class="xfreerdp"] floating enable
 for_window [class="Wine"] floating enable
 for_window [class="Lazarus"] floating enable
 for_window [class="Nm-connection-editor"] floating enable
+
+# display icon
+for_window [all] title_window_icon on
+for_window [all] title_window_icon padding 4px
 
 # xcompmgr & background color
 exec hsetroot -solid '#111111'
