@@ -183,6 +183,7 @@ for_window [class="rdesktop"] border none
 for_window [class="xfreerdp"] floating enable 
 for_window [class="Wine"] floating enable
 for_window [class="Lazarus"] floating enable
+for_window [class="Nm-connection-editor"] floating enable
 
 # xcompmgr & background color
 exec hsetroot -solid '#111111'
