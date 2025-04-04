@@ -36,7 +36,9 @@ bindsym Mod4+x exec xflock4
 # start demu via Win+p, Win+m
 bindsym Mod4+p exec dmenu_run
 # https://github.com/quark-zju/i3-selwin
-bindsym Mod4+m exec i3-selwin
+bindsym Mod4+comma exec i3-selwin
+bindsym Mod4+m exec i3-input -F 'mark %s' -l 1 -P 'Mark: '
+bindsym Mod4+g exec i3-input -F '[con_mark="%s"] focus' -l 1 -P 'Goto: '
 
 # change focus
 bindsym Mod4+h focus left
