@@ -194,5 +194,5 @@ for_window [class="Lazarus"] floating enable
 
 # xcompmgr & background color
 exec hsetroot -solid '#111111'
-exec xcompmgr -CnF
+exec picom --backend glx -b
 
