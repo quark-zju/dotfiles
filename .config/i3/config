@@ -186,8 +186,7 @@ for_window [class="Wine"] floating enable
 for_window [class="Lazarus"] floating enable
 for_window [class="Nm-connection-editor"] floating enable
 
-# display icon
-for_window [all] title_window_icon on
+# display icon in title
 for_window [all] title_window_icon padding 4px
 
 # xcompmgr & background color
