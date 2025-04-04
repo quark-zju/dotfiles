@@ -168,11 +168,14 @@ mode "resize" {
         bindsym Escape mode "default"
 }
 
-# Start i3bar to display a workspace bar (plus the system information i3status
-# finds out, if available)
-bar {
-    status_command i3status
-}
+# Skip i3bar. Expect xfce4-panel instead. To configure xfce session:
+#   # replace "xfwm4" with "i3"
+#   xfconf-query --channel xfce4-session --property /sessions/Failsafe/Client0_Command --set i3 --force-array
+#   # drop "xfdesktop"
+#   xfconf-query --channel xfce4-session --property /sessions/Failsafe/Count --set 4
+# bar {
+#     status_command i3status
+# }
 
 bindsym Mod4+r mode "resize"
 bindsym Mod1+r mode "resize"
