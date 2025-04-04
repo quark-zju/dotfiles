@@ -33,8 +33,8 @@ bindsym Mod1+X exec xterm
 bindsym Mod4+c kill
 bindsym Mod1+F4 kill
 
-# i3lock -d
-bindsym Mod4+x exec i3lock -d
+# xflock4
+bindsym Mod4+x exec xflock4
 
 # start rofi (a program launcher) via Alt+p, F2, m
 bindsym Mod1+p exec rofi -show run
