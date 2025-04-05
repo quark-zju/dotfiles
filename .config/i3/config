@@ -193,5 +193,5 @@ for_window [all] title_window_icon padding 4px
 
 # xcompmgr & background color
 exec hsetroot -solid '#111111'
-exec picom --backend glx -b
+exec picom --backend glx --vsync -b
 
