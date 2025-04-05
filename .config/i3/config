@@ -186,7 +186,7 @@ for_window [class="xfreerdp"] floating enable
 for_window [class="Wine"] floating enable
 for_window [class="Lazarus"] floating enable
 for_window [class="Nm-connection-editor"] floating enable
-for_window [class="FooNote"] sticky enable
+for_window [class="FooNote"] sticky enable, border none, move right, move right, move right, move right
 
 # display icon in title
 for_window [all] title_window_icon padding 4px
