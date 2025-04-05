@@ -45,6 +45,7 @@ bindsym Mod4+h focus left
 bindsym Mod4+j focus down
 bindsym Mod4+k focus up
 bindsym Mod4+l focus right
+bindsym Mod4+u focus parent
 
 # alternatively, you can use the cursor keys:
 bindsym Mod4+Left focus left
@@ -185,6 +186,7 @@ for_window [class="xfreerdp"] floating enable
 for_window [class="Wine"] floating enable
 for_window [class="Lazarus"] floating enable
 for_window [class="Nm-connection-editor"] floating enable
+for_window [class="FooNote"] sticky enable
 
 # display icon in title
 for_window [all] title_window_icon padding 4px
