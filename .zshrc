@@ -120,6 +120,13 @@ if [[ -d "$HOME/.bun" ]]; then
 fi
 # }}}
 
+# android {{{
+if [[ -d "$HOME/Android/Sdk" ]]; then
+  export ANDROID_HOME="$HOME/Android/Sdk"
+  export PATH="$PATH:$ANDROID_HOME/emulator:$ANDROID_HOME/platform-tools:/opt/android-studio/jbr/bin"
+fi
+# }}}
+
 # local zshrc {{{
 [[ -f ~/.zshrc.local ]] && source ~/.zshrc.local
 # }}}
