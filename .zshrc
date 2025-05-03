@@ -105,6 +105,11 @@ done
 # https://bugs.launchpad.net/ubuntu-gnome/+bug/1193993
 [ -f /etc/profile.d/vte.sh ] && source /etc/profile.d/vte.sh
 
+# Prefer "Noto Sans CJK SC" to "Noto Sans CJK JP".
+# This affects characters like "复". Repro command:
+# pango-view --text='复' --font='Noto Sans CJK' [--language=zh-CN | --language=ja]
+export LC_CTYPE=zh_CN.UTF-8
+
 # cargo target
 if grep -q /tmp/cargo-target ~/.cargo/config 2>/dev/null; then
   mkdir -p /tmp/cargo-target
