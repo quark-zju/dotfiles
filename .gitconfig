@@ -1,6 +1,5 @@
-[user]
-	name = [TODO]
-	email = [TODO]
+[include]
+  path = ~/.gitconfig.local
 [alias]
 	a = add
 	b = branch
