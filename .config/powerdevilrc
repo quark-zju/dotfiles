@@ -1,4 +1,6 @@
 [AC][Display]
+DimDisplayIdleTimeoutSec=-1
+DimDisplayWhenIdle=false
 TurnOffDisplayIdleTimeoutSec=900
 
 [AC][Performance]
@@ -23,3 +25,4 @@ PowerProfile=power-saver
 
 [LowBattery][SuspendAndShutdown]
 AutoSuspendAction=8
+AutoSuspendIdleTimeoutSec=900
