@@ -190,6 +190,7 @@ for_window [class="FooNote"] sticky enable, border none, move right, move right,
 for_window [class="Xfce4-appfinder"] floating enable
 for_window [class="zoom"] floating enable
 for_window [title="Live Caption"] floating enable
+for_window [class="Blueman-manager"] floating enable
 
 # display icon in title
 for_window [all] title_window_icon padding 4px
