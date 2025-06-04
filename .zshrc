@@ -132,6 +132,12 @@ if [[ -d "$HOME/Android/Sdk" ]]; then
 fi
 # }}}
 
+# ibus {{{
+export GTK_IM_MODULE=ibus
+export QT_IM_MODULE=ibus
+export XMODIFIERS=@im=ibus
+# }}}
+
 # local zshrc {{{
 [[ -f ~/.zshrc.local ]] && source ~/.zshrc.local
 # }}}
