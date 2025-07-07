@@ -8,7 +8,15 @@
 -- Ctrl+G: Search current word or selection
 vim.keymap.set({ "n", "v" }, "<C-g>", function()
   local selection = vim.fn.visualmode() == "V" and vim.fn.getreg('"') or vim.fn.expand("<cword>")
-  require("fzf-lua").live_grep({ query = selection })
+  local fzf = require("fzf-lua")
+  fzf.live_grep({
+    query = selection,
+    winopts = { split = "belowright new" },
+    -- actions = {
+    --   true,
+    --   ["enter"] = fzf.actions.file_edit,
+    -- },
+  })
 end)
 
 -- Ctrl+K: Move up vertically to the first non-space character.
