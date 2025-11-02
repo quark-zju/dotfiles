@@ -145,6 +145,14 @@ if [ -d "$FNM_PATH" ]; then
   eval "`fnm env`"
 fi
 
+# pyenv {{{
+if hash pyenv 2>/dev/null; then
+  export PYENV_ROOT="$HOME/.pyenv"
+  [[ -d $PYENV_ROOT/bin ]] && export PATH="$PYENV_ROOT/bin:$PATH"
+  eval "$(pyenv init - zsh)"
+fi
+# }}}
+
 # local zshrc {{{
 [[ -f ~/.zshrc.local ]] && source ~/.zshrc.local
 # }}}
