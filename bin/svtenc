@@ -1,0 +1,25 @@
+#!/bin/sh
+
+# CPU ST1-AV1 encode
+mkdir -p av1
+set -x -e
+for i in "$@"; do
+  TMP="av1/WIP-$i.mkv"
+  OUT="av1/$i.mkv"
+  if [[ -f "$OUT" ]]; then
+    echo Skipping "$i" "=>" "$OUT" '(already encoded)'
+  elif [[ -f "$i" ]]; then
+    echo Encoding "$i" "=>" "$OUT"
+    ffmpeg -i "$i" \
+      -c:v libsvtav1 \
+      -preset 6 \
+      -crf 32 \
+      -g 600 \
+      -vf "hqdn3d=4.0:3.0:6.0:4.5" \
+      -c:a libopus -b:a 64k \
+      "$TMP"
+    mv "$TMP" "$OUT"
+  else
+    echo Skipping "$i" "=>" "$OUT" '(input file missing)'
+  fi
+done
