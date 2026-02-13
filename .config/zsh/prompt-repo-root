@@ -1,0 +1,20 @@
+# works with bin/repo-switch
+
+_repo_root_prompt_token() {
+  REPLY=''
+  [[ -z "$MAIN_REPO_ROOT" ]] && return
+
+  local target_link="$HOME/.local/state/repo-symlinks/${MAIN_REPO_ROOT:t}/target"
+  [[ -L "$target_link" ]] || return
+
+  local actual=${$(readlink "$target_link" 2>/dev/null):t}
+  [[ -n "$actual" && "$actual" != "${MAIN_REPO_ROOT:t}" ]] && REPLY="%F{yellow}[${actual}]%f "
+}
+
+grml_theme_add_token repo-root -f _repo_root_prompt_token
+
+# Prepend repo-root to the left prompt items
+zstyle ':prompt:grml:left:setup' items rc change-root repo-root user at host path vcs percent
+
+# Rebuild PS1 once now (precmd rebuild is disabled for virtualenv compat)
+prompt_grml_precmd

@@ -117,6 +117,10 @@ fi
 
 # }}}
 
+# prompts {{{
+xsource ~/.config/zsh/prompt-repo-root
+# }}}
+
 # bun {{{
 if [[ -d "$HOME/.bun" ]]; then
   export BUN_INSTALL="$HOME/.bun"
