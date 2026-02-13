@@ -2,10 +2,24 @@
 
 import hashlib
 import os
+import re
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from shlex import quote as sh_quote
+
+_VALID_VAR = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def write_env_file():
+    """Serialize current environment to a sourceable shell script."""
+    fd, path = tempfile.mkstemp(prefix="repo-switch-env-", suffix=".sh")
+    with os.fdopen(fd, "w") as f:
+        for key, value in os.environ.items():
+            if _VALID_VAR.match(key):
+                f.write(f"export {key}={sh_quote(value)}\n")
+    return path
 
 
 def ensure_symlink(path, target):
@@ -37,7 +51,7 @@ def main():
     cache_dir = Path.home() / ".cache" / "repo-symlinks"
 
     # Ensure MAIN_REPO_ROOT uses the indirection structure:
-    #   ~/mainrepo -> ~/.local/state/repo-symlinks/mainrepo/target -> <real root>
+    #   ~/fbsource -> ~/.local/state/repo-symlinks/fbsource/target -> <real root>
     if not repo_root.is_symlink():
         print(f"Error: MAIN_REPO_ROOT={repo_root} is not a symlink")
         sys.exit(1)
@@ -66,26 +80,37 @@ def main():
 
     shell = os.environ.get("SHELL", "/bin/zsh")
     pwd = os.getcwd()
-    home = os.environ.get("HOME", str(Path.home()))
     uid, gid = os.getuid(), os.getgid()
 
-    # Bind mount the cache dir over state_dir, then drop back to user
+    # Persist full environment across sudo/setpriv boundary
+    env_file = write_env_file()
+
+    # Bind mount the cache dir over state_dir, restore env, drop back to user
     inner = (
         f"set -e; "
         f"mount --bind {sh_quote(str(mount_src))} {sh_quote(str(state_dir))}; "
         f"cd {sh_quote(pwd)}; "
-        f"export HOME={sh_quote(home)}; "
+        f". {sh_quote(env_file)}; "
+        f"rm -f {sh_quote(env_file)}; "
         f"exec setpriv --reuid={uid} --regid={gid} --init-groups {sh_quote(shell)} -i"
     )
 
-    subprocess.run(
-        [
-            "sudo", "-E",
-            "unshare", "--mount", "--propagation", "private",
-            "/bin/sh", "-c", inner,
-        ],
-        check=False,
-    )
+    try:
+        subprocess.run(
+            [
+                "sudo",
+                "unshare",
+                "--mount",
+                "--propagation",
+                "private",
+                "/bin/sh",
+                "-c",
+                inner,
+            ],
+            check=False,
+        )
+    finally:
+        Path(env_file).unlink(missing_ok=True)
 
 
 if __name__ == "__main__":
