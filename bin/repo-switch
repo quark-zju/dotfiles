@@ -1,0 +1,92 @@
+#!/usr/bin/env python3
+
+import hashlib
+import os
+import subprocess
+import sys
+from pathlib import Path
+from shlex import quote as sh_quote
+
+
+def ensure_symlink(path, target):
+    """Atomically create or update a symlink."""
+    target = str(target)
+    if path.is_symlink() and os.readlink(path) == target:
+        return
+    tmp = path.with_suffix(".tmp")
+    tmp.unlink(missing_ok=True)
+    tmp.symlink_to(target)
+    tmp.rename(path)
+
+
+def main():
+    if len(sys.argv) != 2:
+        print(f"Usage: {sys.argv[0]} <target-path>")
+        sys.exit(1)
+
+    target = Path(sys.argv[1]).resolve()
+    repo_root_env = os.environ.get("MAIN_REPO_ROOT")
+    if not repo_root_env:
+        print("Error: MAIN_REPO_ROOT not set")
+        sys.exit(1)
+
+    repo_root = Path(repo_root_env).expanduser()
+    repo_name = repo_root.name
+    state_dir = Path.home() / ".local" / "state" / "repo-symlinks" / repo_name
+    expected_link = str(state_dir / "target")
+    cache_dir = Path.home() / ".cache" / "repo-symlinks"
+
+    # Ensure MAIN_REPO_ROOT uses the indirection structure:
+    #   ~/mainrepo -> ~/.local/state/repo-symlinks/mainrepo/target -> <real root>
+    if not repo_root.is_symlink():
+        print(f"Error: MAIN_REPO_ROOT={repo_root} is not a symlink")
+        sys.exit(1)
+
+    current_link = os.readlink(repo_root)
+    if current_link != expected_link:
+        # Resolve the real root before rewiring
+        real_root = repo_root.resolve()
+        state_dir.mkdir(parents=True, exist_ok=True)
+        ensure_symlink(state_dir / "target", real_root)
+        ensure_symlink(repo_root, expected_link)
+        print(f"Rewired {repo_root} -> {expected_link} -> {real_root}")
+    elif not (state_dir / "target").is_symlink():
+        # Indirection dir exists but missing target symlink
+        real_root = repo_root.resolve()
+        state_dir.mkdir(parents=True, exist_ok=True)
+        ensure_symlink(state_dir / "target", real_root)
+
+    # Prepare mount source: a directory containing a `target` symlink
+    h = hashlib.sha256(str(target).encode()).hexdigest()[:16]
+    mount_src = cache_dir / h
+    mount_src.mkdir(parents=True, exist_ok=True)
+    ensure_symlink(mount_src / "target", target)
+
+    state_dir.mkdir(parents=True, exist_ok=True)
+
+    shell = os.environ.get("SHELL", "/bin/zsh")
+    pwd = os.getcwd()
+    home = os.environ.get("HOME", str(Path.home()))
+    uid, gid = os.getuid(), os.getgid()
+
+    # Bind mount the cache dir over state_dir, then drop back to user
+    inner = (
+        f"set -e; "
+        f"mount --bind {sh_quote(str(mount_src))} {sh_quote(str(state_dir))}; "
+        f"cd {sh_quote(pwd)}; "
+        f"export HOME={sh_quote(home)}; "
+        f"exec setpriv --reuid={uid} --regid={gid} --init-groups {sh_quote(shell)} -i"
+    )
+
+    subprocess.run(
+        [
+            "sudo", "-E",
+            "unshare", "--mount", "--propagation", "private",
+            "/bin/sh", "-c", inner,
+        ],
+        check=False,
+    )
+
+
+if __name__ == "__main__":
+    main()
