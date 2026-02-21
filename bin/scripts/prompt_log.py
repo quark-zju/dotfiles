@@ -104,14 +104,13 @@ def search(pattern=None, cwd=None, session_id=None, limit=None):
 
 
 def print_row(row, output_file=None):
-    """Print prompt to stdout (or file), metadata to stderr."""
+    """Print prompt to stdout (and file if specified), metadata to stderr."""
+    sys.stderr.flush()
+    print(row["prompt"], end="")
+    sys.stdout.flush()
     if output_file:
         with open(output_file, "w") as f:
             f.write(row["prompt"])
-        print(f"Wrote prompt to {output_file}", file=sys.stderr)
-    else:
-        sys.stderr.flush()
-        print(row["prompt"], end="")
         sys.stdout.flush()
     meta = f"session_id: {row['session_id']}  cwd: {row['cwd']}  timestamp: {row['timestamp']}"
     if sys.stderr.isatty():
