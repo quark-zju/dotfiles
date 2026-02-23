@@ -20,6 +20,7 @@ if tmux has-session -t $SESSION_NAME 2>/dev/null; then
 	mkdir -p "$ET_SSH_DIR"
 	cat >"$ET_SSH_DIR/ssh" <<'EOF'
 #!/bin/bash
+[[ "$1" == "-G" ]] && exec /usr/bin/ssh "$@"
 tmux send-keys -t $SESSION_NAME " ${@: -1}" C-m
 sleep 0.5
 tmux capture-pane -t $SESSION_NAME -p | grep IDPASSKEY | tail -1
@@ -33,6 +34,7 @@ else
 	mkdir -p "$ET_SSH_DIR"
 	cat >"$ET_SSH_DIR/ssh" <<'EOF'
 #!/bin/bash
+[[ "$1" == "-G" ]] && exec /usr/bin/ssh "$@"
 {
   echo 'Run from client:'
   printf '  ssh %s %q\n\n' "${@: -2:1}" "${@: -1}"
@@ -47,7 +49,7 @@ EOF
 	chmod +x "$ET_SSH_DIR/ssh"
 	echo Run:
 	echo PATH="$ET_SSH_DIR:"'$'"PATH" tmux new-session -s $SESSION_NAME "'""$ET_BIN $@""'"
-	PATH="$ET_SSH_DIR:$PATH" tmux new-session -s $SESSION_NAME "$ET_BIN ${*} || sleep 3"
+	PATH="$ET_SSH_DIR:$PATH" tmux new-session -s $SESSION_NAME "$ET_BIN ${*} || sleep 30"
 fi
 
 # vim: set ts=2 sw=2 et
