@@ -20,13 +20,13 @@ if tmux has-session -t $SESSION_NAME 2>/dev/null; then
 	mkdir -p "$ET_SSH_DIR"
 	cat >"$ET_SSH_DIR/ssh" <<'EOF'
 #!/bin/bash
-tmux send-keys -t $SESSION_NAME " $2" C-m
+tmux send-keys -t $SESSION_NAME " ${@: -1}" C-m
 sleep 0.5
 tmux capture-pane -t $SESSION_NAME -p | grep IDPASSKEY | tail -1
 EOF
 	chmod +x "$ET_SSH_DIR/ssh"
 	export PATH="$ET_SSH_DIR:$PATH"
-	exec "$ET_BIN" "$@"
+	exec $ET_BIN "$@"
 else
 	echo Starting master session >/dev/stderr
 	ET_SSH_DIR="$HOME/.cache/et-ssh/new-session"
@@ -35,9 +35,9 @@ else
 #!/bin/bash
 {
   echo 'Run from client:'
-  printf '  ssh %s %q\n\n' "$1" "$2"
+  printf '  ssh %s %q\n\n' "${@: -2:1}" "${@: -1}"
   echo 'Or, run from a connected session:'
-  printf '  %s\n\n' "$2"
+  printf '  %s\n\n' "${@: -1}"
   echo
   echo 'Input output:'
 } >/dev/tty
