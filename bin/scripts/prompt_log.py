@@ -34,10 +34,17 @@ import io
 import json
 import os
 import shlex
+import shutil
 import sqlite3
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+
+
+def get_terminal_width():
+    """Get terminal width, defaulting to 80 if not a tty."""
+    return shutil.get_terminal_size().columns or 80
+
 
 DB_PATH = Path.home() / ".local" / "state" / "prompts" / "claude.sqlite3"
 
@@ -118,7 +125,7 @@ def print_row(row, output_file=None):
     print(f"\n{meta}", file=sys.stderr)
 
 
-def format_preview(row, max_width=80):
+def format_preview(row, max_width):
     """Single-line preview of prompt text (truncated, newlines collapsed)."""
     preview = row["prompt"].replace("\n", " ")
     if len(preview) > max_width:
@@ -126,7 +133,7 @@ def format_preview(row, max_width=80):
     return preview
 
 
-def format_match_context(row, query, max_width=80):
+def format_match_context(row, query, max_width):
     """Return a context snippet around the first match if it's beyond the truncated preview.
 
     Returns None if the match is already visible in the preview or there's no match.
@@ -166,9 +173,9 @@ def interactive_pick(rows, limit=20, output_file=None, query=None):
     """Show latest `limit` matches, let user pick one."""
     rows = rows[:limit]
     for i, row in enumerate(rows):
-        preview = format_preview(row)
+        preview = format_preview(row, get_terminal_width())
         meta = format_meta(row)
-        ctx = format_match_context(row, query)
+        ctx = format_match_context(row, query, get_terminal_width())
         ctx_line = f"\n    > {ctx}" if ctx else ""
         print(f"[{i}] {preview}{ctx_line}\n    {meta}", file=sys.stderr)
     print(file=sys.stderr)
@@ -260,9 +267,9 @@ def interactive_pick_pt(initial_args, rows, limit=20):
     def get_results_fragments():
         frags = []
         for i, row in enumerate(state["rows"]):
-            preview = format_preview(row)
+            preview = format_preview(row, get_terminal_width())
             meta = format_meta(row)
-            ctx = format_match_context(row, state["query"])
+            ctx = format_match_context(row, state["query"], get_terminal_width())
             is_selected = i == state["selected"]
             marker = "[*]" if is_selected else "[ ]"
             prefix_style = "class:selected" if is_selected else ""
