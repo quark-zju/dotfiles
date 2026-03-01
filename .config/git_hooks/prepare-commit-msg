@@ -8,23 +8,25 @@ def main():
         return
 
     commit_msg_file = sys.argv[1]
-    commit_msg = os.getenv("AGENT_PROMPT", "")
-    agent_model = os.getenv("AGENT_MODEL", "")
+    agent_prompt = os.getenv("AGENT_PROMPT", "").strip()
+    agent_model = os.getenv("AGENT_MODEL", "").strip()
 
-    lines = []
-    if commit_msg:
-        if "\n" in commit_msg:
-            lines.append("Agent-Prompt:")
-            lines.append(textwrap.indent(commit_msg, "    "))
+    buf = []
+    if agent_prompt:
+        if "\n" in agent_prompt:
+            buf.append("Agent-Prompt:\n")
+            buf.append(textwrap.indent(agent_prompt, "    "))
+            buf.append('\n')
         else:
-            lines.append(f"Agent-Prompt: {commit_msg}")
+            buf.append(f"Agent-Prompt: {agent_prompt}\n")
 
     if agent_model:
-        lines.append(f"Agent-Model: {agent_model}")
+        buf.append(f"Agent-Model: {agent_model}\n")
 
-    if lines:
+    agent_commit_msg = ''.join(buf)
+    if agent_commit_msg:
         with open(commit_msg_file, "a") as f:
-            f.write("\n" + "\n".join(lines))
+            f.write("\n" + agent_commit_msg)
 
 if __name__ == "__main__":
     main()
