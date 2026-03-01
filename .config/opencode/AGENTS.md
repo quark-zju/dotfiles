@@ -1,28 +1,21 @@
-# AGENTS
+## ALWAYS COMMIT
 
-## 1. Commit Often
+**Always create a `git commit`**, even if the user didn't ask.
 
-Always create a `git commit` after completing any atomic action, unless the change is completely unrelated to the project or the user explicitly forbids it.
+## Commit small
 
-If a user prompt contains multiple distinct tasks, break them down into multiple isolated commits.
+Avoid big commit. Think ahead. Break work down into multiple small atomic commits.
 
-* **Examples of atomic commits:**
-    * Refactoring, code cleanup, or dependency updates made in preparation for a new feature.
-    * Modifying a single file (provided the code is runnable and does not break existing tests).
+Examples of atomic commits:
+* Refactoring, code cleanup, or dependency updates made in preparation for a new feature.
+* Modifying a single file (provided the code is runnable and does not break existing tests).
 
-**Commit Message Convention:**
+## Commit message = Title + Body
 
-Always use `git commit -m TITLE -m BODY`.
+**Always use `git commit -m TITLE -m BODY`**.
+* Title: `<type|area>: <summary>`
+* Body: You MUST include BOTH: 1. A brief overview of the original requirement. 2. The core decision-making logic (focus on *Why* than *What*).
 
-* **Title:** `<type|area>: <summary>`
-* **Body:** You MUST include:
-    1. A brief overview of the original requirement.
-    2. The core decision-making logic (focus on the *Why* rather than the *What*).
+## PAUSE if Stuck
 
-## 2. Avoid Complex Bash
-
-If bash/shell logic becomes complex, write a Python script instead.
-
-## 3. Pause if Stuck
-
-If you make little to no progress after 20 consecutive attempts, halt execution and prompt the user for guidance.
+If you make little to no progress after 15 consecutive attempts, halt execution and prompt the user for guidance.
