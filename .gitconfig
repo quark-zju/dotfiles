@@ -13,7 +13,7 @@
 [core]
 	excludesfile = ~/.gitignore_global
 	autocrlf = false
-	hooksPath = ~/.config/git_hooks
+	hooksPath = ~/.config/git-hooks
 [color]
 	ui = true
 [fetch]
