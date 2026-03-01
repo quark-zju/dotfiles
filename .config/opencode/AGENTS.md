@@ -1,5 +1,7 @@
 # AGENTS
 
+## Source control
+
 每次完成一个操作后进行 git commit，除非当前项目不使用 git。
 
 用户 prompt 可能包含多个操作，应该使用多个 git commit 提交。例如：
@@ -9,3 +11,7 @@
 - 算法逻辑和对应界面，应分别提交
 
 每次提交前运行 `git status` 和 `git diff` 查看变更，确保提交内容正确。
+
+## Programming Language
+
+用户不喜欢复杂的 bash，复杂时使用 Python
