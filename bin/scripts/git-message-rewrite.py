@@ -100,8 +100,9 @@ def create_commit(tree, parent, author, committer, message):
     return result.stdout.strip().decode("utf-8")
 
 
-def call_message_edit(edit_script, message):
-    """Call the edit script with message on stdin, return new message or None."""
+def call_message_edit(edit_script, message, orig_commit):
+    """Call the edit script with message on stdin, return new message."""
+    env = {"ORIG_COMMIT": orig_commit}
     try:
         result = subprocess.run(
             [edit_script],
@@ -109,21 +110,16 @@ def call_message_edit(edit_script, message):
             capture_output=True,
             text=True,
             timeout=30,
+            env={**__import__("os").environ, **env},
         )
         if result.returncode != 0:
-            print(f"Warning: {edit_script} exited with code {result.returncode}", file=sys.stderr)
-            return None
+            raise RuntimeError(f"{edit_script} exited with code {result.returncode}")
         new_message = result.stdout.rstrip("\n")
         if not new_message:
-            print(f"Warning: {edit_script} returned empty message", file=sys.stderr)
-            return None
+            raise RuntimeError(f"{edit_script} returned empty message")
         return new_message
     except subprocess.TimeoutExpired:
-        print(f"Warning: {edit_script} timed out", file=sys.stderr)
-        return None
-    except Exception as e:
-        print(f"Warning: Error calling {edit_script}: {e}", file=sys.stderr)
-        return None
+        raise RuntimeError(f"{edit_script} timed out")
 
 
 def rewrite_commit_message(commit_hash, new_message, new_parent):
@@ -162,10 +158,10 @@ def main():
 
         new_parent = hash_mapping.get(old_parent, old_parent) if old_parent else None
 
-        new_message = call_message_edit(args.message_edit, old_message)
-        if new_message is None:
-            new_hash = old_hash
-        elif new_message == old_message and new_parent == old_parent:
+        orig_commit = old_hash.strip().lower()
+        new_message = call_message_edit(args.message_edit, old_message, orig_commit)
+
+        if new_message == old_message and new_parent == old_parent:
             new_hash = old_hash
         else:
             new_hash = rewrite_commit_message(old_hash, new_message, new_parent)
