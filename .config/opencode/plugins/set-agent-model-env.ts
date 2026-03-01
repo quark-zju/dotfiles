@@ -4,7 +4,7 @@ async function getModelName(client: ReturnType<typeof import("@opencode-ai/plugi
   try {
     const messages = await client.session.messages({
       path: { id: sessionID },
-      query: { limit: 10 },
+      query: { limit: 50 },
     })
 
     // Messages are newest-first after reverse(), findLast gets the latest
