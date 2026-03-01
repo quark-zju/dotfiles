@@ -22,24 +22,46 @@ async function getModelName(client: ReturnType<typeof import("@opencode-ai/plugi
   return undefined
 }
 
-async function getLastUserPrompt(client: ReturnType<typeof import("@opencode-ai/plugin")["createOpencodeClient"]>, sessionID: string): Promise<string | undefined> {
+function hasGitCommit(parts: any[]): boolean {
+  return parts.some((p) => {
+    if (p.type !== "tool") return false
+    const toolParts = p.state?.content || []
+    return toolParts.some((tp: any) => {
+      if (tp.type !== "text") return false
+      const text = tp.text?.toLowerCase() || ""
+      return text.includes("git") && (text.includes("commit") || text.includes("push"))
+    })
+  })
+}
+
+async function getPromptsUntilGitCommit(client: ReturnType<typeof import("@opencode-ai/plugin")["createOpencodeClient"]>, sessionID: string): Promise<string | undefined> {
   try {
     const messages = await client.session.messages({
       path: { id: sessionID },
       query: { limit: 100 },
     })
 
-    // Messages are newest-first, findLast gets the latest user message
-    const latestUserMessage = messages.data.findLast((m) => m.info.role === "user")
+    const prompts: string[] = []
 
-    if (latestUserMessage?.parts) {
-      const textParts = latestUserMessage.parts.filter((p: any) => p.type === "text")
-      if (textParts.length > 0) {
-        return (textParts[0] as any).text
+    // Messages are newest-first, iterate from newest to oldest
+    for (const msg of messages.data) {
+      // Check if this assistant message contains a git commit bash call
+      if (msg.info.role === "assistant" && msg.parts && hasGitCommit(msg.parts)) {
+        break // Stop at git commit/push
+      }
+
+      // Collect user prompts
+      if (msg.info.role === "user" && msg.parts) {
+        const textParts = msg.parts.filter((p: any) => p.type === "text")
+        if (textParts.length > 0) {
+          prompts.push((textParts[0] as any).text)
+        }
       }
     }
+
+    return prompts.length > 0 ? prompts.join("\n----\n") : undefined
   } catch (error) {
-    console.error("Failed to get prompt:", error)
+    console.error("Failed to get prompts:", error)
   }
   return undefined
 }
@@ -53,9 +75,9 @@ export const SetAgentModelEnv: Plugin = async ({ client }) => {
           output.env.AGENT_MODEL = modelName
         }
 
-        const prompt = await getLastUserPrompt(client, input.sessionID)
-        if (prompt) {
-          output.env.AGENT_PROMPT = prompt
+        const prompts = await getPromptsUntilGitCommit(client, input.sessionID)
+        if (prompts) {
+          output.env.AGENT_PROMPT = prompts
         }
       }
     },
