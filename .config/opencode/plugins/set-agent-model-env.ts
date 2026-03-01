@@ -4,16 +4,16 @@ async function getModelName(client: ReturnType<typeof import("@opencode-ai/plugi
   try {
     const messages = await client.session.messages({
       path: { id: sessionID },
-      query: { limit: 100 },
+      query: { limit: 10 },
     })
 
     // Messages are newest-first after reverse(), findLast gets the latest
-    const latestUserMessage = messages.data.findLast(
-      (m) => m.info.role === "user" && m.info.model,
+    const lastMessage = messages.data.findLast(
+      (m) => m.info?.model,
     )
 
-    if (latestUserMessage?.info.model) {
-      const { providerID, modelID } = latestUserMessage.info.model
+    if (lastMessage?.info.model) {
+      const { providerID, modelID } = lastMessage.info.model
       return `${providerID}/${modelID}`
     }
   } catch (error) {
@@ -24,30 +24,32 @@ async function getModelName(client: ReturnType<typeof import("@opencode-ai/plugi
 
 function hasGitCommit(parts: any[]): boolean {
   return parts.some((p) => {
-    if (p.type !== "tool") return false
-    const toolParts = p.state?.content || []
-    return toolParts.some((tp: any) => {
-      if (tp.type !== "text") return false
-      const text = tp.text?.toLowerCase() || ""
-      return text.includes("git") && (text.includes("commit") || text.includes("push"))
-    })
+    if (p.type !== "tool" || p.tool !== "bash") return false
+    const status = p.state?.status;
+    if (status === "running") {
+      return false;
+    }
+    const command = p.state?.input?.command?.toLowerCase() ?? ""
+    return command.includes("git commit")
   })
 }
 
 async function getPromptsUntilGitCommit(client: ReturnType<typeof import("@opencode-ai/plugin")["createOpencodeClient"]>, sessionID: string): Promise<string | undefined> {
   try {
-    const messages = await client.session.messages({
+    const messagesResponse = await client.session.messages({
       path: { id: sessionID },
       query: { limit: 100 },
-    })
+    });
 
     const prompts: string[] = []
 
-    // Messages are newest-first, iterate from newest to oldest
-    for (const msg of messages.data) {
-      // Check if this assistant message contains a git commit bash call
+    const messagesAsc = messagesResponse.data; // in ASC order
+    const messagesDesc = messagesAsc.reverse(); // in DESC order
+
+    for (const msg of messagesDesc) {
+      // Stop at completed 'git commit'.
       if (msg.info.role === "assistant" && msg.parts && hasGitCommit(msg.parts)) {
-        break // Stop at git commit/push
+        break;
       }
 
       // Collect user prompts
@@ -59,7 +61,11 @@ async function getPromptsUntilGitCommit(client: ReturnType<typeof import("@openc
       }
     }
 
-    return prompts.length > 0 ? prompts.join("\n----\n") : undefined
+    if (prompts.length === 0) {
+      return undefined;
+    }
+
+    return prompts.reverse().join("\n----\n");
   } catch (error) {
     console.error("Failed to get prompts:", error)
   }
