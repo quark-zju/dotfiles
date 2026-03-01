@@ -13,8 +13,8 @@ async function getModelName(client: ReturnType<typeof import("@opencode-ai/plugi
     )
 
     if (lastMessage?.info.model) {
-      const { providerID, modelID } = lastMessage.info.model
-      return `${providerID}/${modelID}`
+      const { modelID } = lastMessage.info.model
+      return `${modelID}`
     }
   } catch (error) {
     console.error("Failed to get model:", error)
