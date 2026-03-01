@@ -16,7 +16,7 @@ def main():
         if "\n" in agent_prompt:
             buf.append("Agent-Prompt:\n")
             buf.append(textwrap.indent(agent_prompt, "    "))
-            buf.append('\n')
+            buf.append('\n\n')
         else:
             buf.append(f"Agent-Prompt: {agent_prompt}\n")
 
