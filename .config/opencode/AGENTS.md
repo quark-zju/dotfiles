@@ -1,21 +1,25 @@
 # AGENTS
 
-## Commit often
+## 1. Commit Often
 
-每次完成一个操作后进行 git commit。除非修改和项目无关，或者用户显式说不要。
+Always create a `git commit` after completing any atomic action, unless the change is completely unrelated to the project or the user explicitly forbids it.
 
-用户 prompt 可能包含多个小操作，应该使用多个 git commit 提交。例如：
-- 添加一个依赖是一个提交
-- 为了后续功能进行的重构或清理是一个提交
-- 实现具体功能是一个提交
-- 算法逻辑和对应界面，应分别提交
+If a user prompt contains multiple distinct tasks, break them down into multiple isolated commits.
 
-Commit message 正文包含：原始需求概述，核心决策逻辑 (Why > What)
+* **Examples of atomic commits:**
+    * Refactoring, code cleanup, or dependency updates made in preparation for a new feature.
+    * Modifying a single file (provided the code is runnable and does not break existing tests).
 
-## Avoid bash
+**Commit Message Convention:**
+* **Title:** `<type|area>: <summary>`
+* **Body:** You MUST include:
+    1. A brief overview of the original requirement.
+    2. The core decision-making logic (focus on the *Why* rather than the *What*).
 
-如果 bash 逻辑复杂，则使用 Python
+## 2. Avoid Complex Bash
 
-## Pause if stuck
+If bash/shell logic becomes complex, write a Python script instead.
 
-如果 20 次尝试后依然进展缓慢，暂停，问用户要怎么办。
+## 3. Pause if Stuck
+
+If you make little to no progress after 20 consecutive attempts, halt execution and prompt the user for guidance.
