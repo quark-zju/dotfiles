@@ -11,6 +11,9 @@ If a user prompt contains multiple distinct tasks, break them down into multiple
     * Modifying a single file (provided the code is runnable and does not break existing tests).
 
 **Commit Message Convention:**
+
+Always use `git commit -m TITLE -m BODY`.
+
 * **Title:** `<type|area>: <summary>`
 * **Body:** You MUST include:
     1. A brief overview of the original requirement.
