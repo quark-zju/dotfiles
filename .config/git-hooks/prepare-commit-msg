@@ -11,6 +11,15 @@ def main():
     agent_prompt = os.getenv("AGENT_PROMPT", "").strip()
     agent_model = os.getenv("AGENT_MODEL", "").strip()
 
+    with open(commit_msg_file, "r") as f:
+        commit_msg = f.read()
+
+    commit_msg_lines = []
+    for line in commit_msg.splitlines():
+        if not line.startswith("Agent-Model:"):
+            commit_msg_lines.append(line)
+    commit_msg = "\n".join(commit_msg_lines)
+
     buf = []
     if agent_prompt:
         if "\n" in agent_prompt:
@@ -25,8 +34,8 @@ def main():
 
     agent_commit_msg = ''.join(buf)
     if agent_commit_msg:
-        with open(commit_msg_file, "a") as f:
-            f.write("\n" + agent_commit_msg)
+        with open(commit_msg_file, "w") as f:
+            f.write(commit_msg + "\n" + agent_commit_msg)
 
 if __name__ == "__main__":
     main()
