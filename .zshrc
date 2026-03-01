@@ -156,3 +156,10 @@ if hash pyenv 2>/dev/null; then
   eval "$(pyenv init - zsh)"
 fi
 # }}}
+
+# npm {{{
+# npm config set prefix '~/.npm/global'
+if [[ -d "$HOME/.npm/global/bin" ]]; then
+  export PATH="$HOME/.npm/global/bin:$PATH"
+fi
+# }}}
