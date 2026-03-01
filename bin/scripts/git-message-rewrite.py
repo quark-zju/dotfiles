@@ -16,7 +16,7 @@ import sys
 def get_commits():
     """Get all commit hashes and messages from current HEAD to the first commit."""
     result = subprocess.run(
-        ["git", "log", "--format=%H%n%s%n%b", "--reverse"],
+        ["git", "rev-list", "--reverse", "--format=%H", "HEAD"],
         capture_output=True,
         text=True,
         check=True,
@@ -25,22 +25,16 @@ def get_commits():
     lines = result.stdout.splitlines()
     i = 0
     while i < len(lines):
-        if not lines[i]:
+        if not lines[i].startswith("commit "):
             i += 1
             continue
-        commit_hash = lines[i]
+        commit_hash = lines[i][7:]
         i += 1
         if i >= len(lines):
             break
-        subject = lines[i]
-        i += 1
-        body_lines = []
-        while i < len(lines) and lines[i]:
-            body_lines.append(lines[i])
-            i += 1
-        message = subject
-        if body_lines:
-            message = subject + "\n\n" + "\n".join(body_lines)
+        raw = get_commit_raw(commit_hash)
+        parsed = parse_commit_raw(raw)
+        message = parsed["message"]
         commits.append((commit_hash, message))
     return commits
 
@@ -63,7 +57,7 @@ def parse_commit_raw(raw):
         i += 1
     header_lines = lines[:i]
     message_lines = lines[i + 1:] if i < len(lines) else []
-    message = b"\n".join(message_lines).decode("utf-8", errors="replace")
+    message = b"\n".join(message_lines).decode("utf-8", errors="replace").rstrip("\n")
     parent = None
     tree = None
     author = None
