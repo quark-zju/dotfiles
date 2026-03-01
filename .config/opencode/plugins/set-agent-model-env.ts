@@ -10,7 +10,7 @@ async function getModelNameAndPrompts(client: ReturnType<typeof import("@opencod
     const messagesAsc = messagesResponse.data
     const messagesDesc = messagesAsc.reverse()
 
-    const lastMessage = messagesDesc.findLast((m) => m.info?.model)
+    const lastMessage = messagesDesc.find((m) => m.info?.model)
     let modelName: string | undefined
     if (lastMessage?.info.model) {
       const { modelID } = lastMessage.info.model
