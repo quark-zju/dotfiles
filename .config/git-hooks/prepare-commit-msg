@@ -15,9 +15,10 @@ def main():
         commit_msg = f.read()
 
     commit_msg_lines = []
-    for line in commit_msg.splitlines():
-        if not line.startswith("Agent-Model:"):
-            commit_msg_lines.append(line)
+    if agent_model:
+        for line in commit_msg.splitlines():
+            if not line.startswith("Agent-Model:"):
+                commit_msg_lines.append(line)
     commit_msg = "\n".join(commit_msg_lines)
 
     buf = []
@@ -35,7 +36,7 @@ def main():
     agent_commit_msg = ''.join(buf)
     if agent_commit_msg:
         with open(commit_msg_file, "w") as f:
-            f.write(commit_msg + "\n" + agent_commit_msg)
+            f.write(commit_msg + "\n\n" + agent_commit_msg)
 
 if __name__ == "__main__":
     main()
