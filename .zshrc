@@ -157,6 +157,12 @@ if hash pyenv 2>/dev/null; then
 fi
 # }}}
 
+# pip install --user {{{
+if [[ -d "$HOME/.local/bin" ]]; then
+  export PATH="$HOME/.local/bin:$PATH"
+fi
+# }}}
+
 # npm {{{
 # npm config set prefix '~/.npm/global'
 if [[ -d "$HOME/.npm/global/bin" ]]; then
