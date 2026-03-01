@@ -1,58 +1,28 @@
 import type { Plugin } from "@opencode-ai/plugin"
 
-async function getModelName(client: ReturnType<typeof import("@opencode-ai/plugin")["createOpencodeClient"]>, sessionID: string): Promise<string | undefined> {
-  try {
-    const messages = await client.session.messages({
-      path: { id: sessionID },
-      query: { limit: 50 },
-    })
-
-    // Messages are newest-first after reverse(), findLast gets the latest
-    const lastMessage = messages.data.findLast(
-      (m) => m.info?.model,
-    )
-
-    if (lastMessage?.info.model) {
-      const { modelID } = lastMessage.info.model
-      return `${modelID}`
-    }
-  } catch (error) {
-    console.error("Failed to get model:", error)
-  }
-  return undefined
-}
-
-function hasGitCommit(parts: any[]): boolean {
-  return parts.some((p) => {
-    if (p.type !== "tool" || p.tool !== "bash") return false
-    const status = p.state?.status;
-    if (status === "running") {
-      return false;
-    }
-    const command = p.state?.input?.command?.toLowerCase() ?? ""
-    return command.includes("git commit")
-  })
-}
-
-async function getPromptsUntilGitCommit(client: ReturnType<typeof import("@opencode-ai/plugin")["createOpencodeClient"]>, sessionID: string): Promise<string | undefined> {
+async function getModelNameAndPrompts(client: ReturnType<typeof import("@opencode-ai/plugin")["createOpencodeClient"]>, sessionID: string): Promise<{ modelName: string | undefined; prompts: string | undefined }> {
   try {
     const messagesResponse = await client.session.messages({
       path: { id: sessionID },
       query: { limit: 100 },
-    });
+    })
+
+    const messagesAsc = messagesResponse.data
+    const messagesDesc = messagesAsc.reverse()
+
+    const lastMessage = messagesDesc.findLast((m) => m.info?.model)
+    let modelName: string | undefined
+    if (lastMessage?.info.model) {
+      const { modelID } = lastMessage.info.model
+      modelName = `${modelID}`
+    }
 
     const prompts: string[] = []
-
-    const messagesAsc = messagesResponse.data; // in ASC order
-    const messagesDesc = messagesAsc.reverse(); // in DESC order
-
     for (const msg of messagesDesc) {
-      // Stop at completed 'git commit'.
       if (msg.info.role === "assistant" && msg.parts && hasGitCommit(msg.parts)) {
-        break;
+        break
       }
 
-      // Collect user prompts
       if (msg.info.role === "user" && msg.parts) {
         const textParts = msg.parts.filter((p: any) => p.type === "text")
         if (textParts.length > 0) {
@@ -61,27 +31,35 @@ async function getPromptsUntilGitCommit(client: ReturnType<typeof import("@openc
       }
     }
 
-    if (prompts.length === 0) {
-      return undefined;
-    }
+    const promptStr = prompts.length > 0 ? prompts.reverse().join("\n----\n") : undefined
 
-    return prompts.reverse().join("\n----\n");
+    return { modelName, prompts: promptStr }
   } catch (error) {
-    console.error("Failed to get prompts:", error)
+    console.error("Failed to get messages:", error)
   }
-  return undefined
+  return { modelName: undefined, prompts: undefined }
+}
+
+function hasGitCommit(parts: any[]): boolean {
+  return parts.some((p) => {
+    if (p.type !== "tool" || p.tool !== "bash") return false
+    const status = p.state?.status
+    if (status === "running") {
+      return false
+    }
+    const command = p.state?.input?.command?.toLowerCase() ?? ""
+    return command.includes("git commit")
+  })
 }
 
 export const SetAgentModelEnv: Plugin = async ({ client }) => {
   return {
     "shell.env": async (input, output) => {
       if (input.sessionID) {
-        const modelName = await getModelName(client, input.sessionID)
+        const { modelName, prompts } = await getModelNameAndPrompts(client, input.sessionID)
         if (modelName) {
           output.env.AGENT_MODEL = modelName
         }
-
-        const prompts = await getPromptsUntilGitCommit(client, input.sessionID)
         if (prompts) {
           output.env.AGENT_PROMPT = prompts
         }
