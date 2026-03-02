@@ -14,7 +14,7 @@ Examples of atomic commits:
 
 **Always use `git commit -m TITLE -m BODY`**.
 * Title: `<type|area>: <summary>`
-* Body: You MUST include BOTH: 1. A brief overview of the USER REQUEST. 2. The core decision-making logic (focus on *Why* than *What*).
+* Body: You MUST include BOTH: 1. A brief overview of the USER REQUEST. 2. The core decision-making logic (focus on *Why* than *What*). Use `"\n"` not `"\\n"` for multi-line content.
 
 ## PAUSE if Stuck
 
