@@ -107,7 +107,9 @@ def get_codex_env() -> Dict[str, str]:
                 out,
             ):
                 arguments = out.get("$arguments", "")
-                if "git commit" in arguments:
+                # Only use git commit as a boundary after we've already seen
+                # at least one prompt message while scanning backwards.
+                if "git commit" in arguments and prompt:
                     seen_git_commit = True
         if model and seen_git_commit:
             break
