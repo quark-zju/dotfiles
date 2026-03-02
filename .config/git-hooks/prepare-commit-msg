@@ -2,14 +2,26 @@
 import os
 import sys
 import textwrap
+from typing import Dict
+
+
+def get_agent_env() -> Dict[str, str]:
+    env = {}
+    prompt = os.getenv("AGENT_PROMPT", "").strip()
+    model = os.getenv("AGENT_MODEL", "").strip()
+    if prompt:
+        env["Agent-Prompt"] = prompt
+    if model:
+        env["Agent-Model"] = model
+    return env
+
 
 def main():
     if not os.getenv("AGENT"):
         return
 
     commit_msg_file = sys.argv[1]
-    agent_prompt = os.getenv("AGENT_PROMPT", "").strip()
-    agent_model = os.getenv("AGENT_MODEL", "").strip()
+    agent_env = get_agent_env()
 
     with open(commit_msg_file, "r") as f:
         commit_msg = f.read()
@@ -21,7 +33,8 @@ def main():
     commit_msg = "\n".join(commit_msg_lines)
 
     buf = []
-    if agent_prompt:
+    if "Agent-Prompt" in agent_env:
+        agent_prompt = agent_env["Agent-Prompt"]
         if "\n" in agent_prompt:
             buf.append("Agent-Prompt:\n")
             buf.append(textwrap.indent(agent_prompt, "    "))
@@ -29,13 +42,14 @@ def main():
         else:
             buf.append(f"Agent-Prompt: {agent_prompt}\n")
 
-    if agent_model:
-        buf.append(f"Agent-Model: {agent_model}\n")
+    if "Agent-Model" in agent_env:
+        buf.append(f"Agent-Model: {agent_env['Agent-Model']}\n")
 
     agent_commit_msg = ''.join(buf)
     if agent_commit_msg:
         with open(commit_msg_file, "w") as f:
             f.write(commit_msg + "\n\n" + agent_commit_msg)
+
 
 if __name__ == "__main__":
     main()
