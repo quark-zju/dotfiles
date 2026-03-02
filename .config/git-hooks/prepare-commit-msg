@@ -1,12 +1,22 @@
 #!/usr/bin/env python3
+import glob
 import os
 import sys
 import textwrap
+import json
 from typing import Dict
 
 
 def get_agent_env() -> Dict[str, str]:
+    return get_opencode_env() or get_codex_env()
+
+
+def get_opencode_env() -> Dict[str, str]:
     env = {}
+    if not os.getenv("AGENT"):
+        return env
+    # Those env vars are written by the opencode plugin
+    # .config/opencode/plugins/set-agent-model-env.ts
     prompt = os.getenv("AGENT_PROMPT", "").strip()
     model = os.getenv("AGENT_MODEL", "").strip()
     if prompt:
@@ -16,39 +26,142 @@ def get_agent_env() -> Dict[str, str]:
     return env
 
 
-def main():
-    if not os.getenv("AGENT"):
-        return
+def match_obj(obj, template, matched_out) -> bool:
+    if (
+        isinstance(template, str)
+        and template.startswith("$")
+        and matched_out is not None
+    ):
+        matched_out[template] = obj
+        return True
+    if type(obj) != type(template):
+        return False
+    if isinstance(template, dict):
+        for key, val in template.items():
+            if key not in obj or not match_obj(obj[key], val, matched_out):
+                return False
+        return True
+    else:
+        return obj == template
 
-    commit_msg_file = sys.argv[1]
-    agent_env = get_agent_env()
+
+def get_codex_env() -> Dict[str, str]:
+    env = {}
+    if not os.getenv("CODEX_SHELL"):
+        return env
+    thread_id = os.getenv("CODEX_THREAD_ID")
+    if not thread_id:
+        return env
+    # Read from codex sessions
+    session_files = list(
+        glob.glob(
+            os.path.expanduser(f"~/.codex/sessions/**/*{thread_id}*.jsonl"),
+            recursive=True,
+        )
+    )
+    if not session_files:
+        return env
+    session_file = session_files[0]
+    with open(session_file, "r") as f:
+        lines = f.readlines()
+    model = None
+    prompt = []
+    seen_git_commit = False
+    for line in reversed(lines):
+        try:
+            data = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        out = {}
+        if not model:
+            # {"type":"turn_context","payload":{"turn_id":...,"model":"gpt-5.3-codex",...}}
+            if match_obj(
+                data, {"type": "turn_context", "payload": {"model": "$model"}}, out
+            ):
+                model = out.get("$model", "").strip()
+        if not seen_git_commit:
+            # {"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":...}]}}
+            # {"type":"event_msg","payload":{"type":"user_message","message":...}}
+            if match_obj(
+                data,
+                {
+                    "type": "event_msg",
+                    "payload": {"type": "user_message", "message": "$user_message"},
+                },
+                out,
+            ):
+                user_message = out.get("$user_message", "").strip()
+                if user_message:
+                    prompt.append(user_message)
+            # {"type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"{\"cmd\":\"git comitt -m ...\"}"}}
+            if match_obj(
+                data,
+                {
+                    "type": "response_item",
+                    "payload": {
+                        "type": "function_call",
+                        "name": "exec_command",
+                        "arguments": "$arguments",
+                    },
+                },
+                out,
+            ):
+                arguments = out.get("$arguments", "")
+                if "git commit" in arguments:
+                    seen_git_commit = True
+        if model and seen_git_commit:
+            break
+    if prompt:
+        prompt_text = "\n----\n".join(reversed(prompt))
+        env["Agent-Prompt"] = prompt_text
+    if model:
+        env["Agent-Model"] = model
+    return env
+
+
+def rewrite_commit_msg(commit_msg_file: str, agent_env: Dict[str, str]):
+    if not agent_env:
+        return
 
     with open(commit_msg_file, "r") as f:
         commit_msg = f.read()
 
     commit_msg_lines = []
     for line in commit_msg.splitlines():
-        if not line.startswith("Agent-Model:"):
-            commit_msg_lines.append(line)
+        if line.startswith("Agent-Model:") and agent_env.get("Agent-Model"):
+            # conflicting Agent-Model, remove the one in original commit message
+            continue
+        commit_msg_lines.append(line)
     commit_msg = "\n".join(commit_msg_lines)
 
     buf = []
     if "Agent-Prompt" in agent_env:
-        agent_prompt = agent_env["Agent-Prompt"]
+        agent_prompt = agent_env["Agent-Prompt"].strip()
         if "\n" in agent_prompt:
             buf.append("Agent-Prompt:\n")
             buf.append(textwrap.indent(agent_prompt, "    "))
-            buf.append('\n\n')
+            buf.append("\n\n")
         else:
             buf.append(f"Agent-Prompt: {agent_prompt}\n")
 
     if "Agent-Model" in agent_env:
         buf.append(f"Agent-Model: {agent_env['Agent-Model']}\n")
 
-    agent_commit_msg = ''.join(buf)
+    agent_commit_msg = "".join(buf)
     if agent_commit_msg:
         with open(commit_msg_file, "w") as f:
             f.write(commit_msg + "\n\n" + agent_commit_msg)
+
+
+def main():
+    if len(sys.argv) < 2:
+        # show detected environment variables for debugging
+        import pprint
+
+        pprint.pprint(get_agent_env())
+    else:
+        # used as git hook to rewrite commit message
+        rewrite_commit_msg(sys.argv[1], get_agent_env())
 
 
 if __name__ == "__main__":
