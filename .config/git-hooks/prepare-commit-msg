@@ -34,7 +34,7 @@ def match_obj(obj, template, matched_out) -> bool:
     ):
         matched_out[template] = obj
         return True
-    if type(obj) != type(template):
+    if type(obj) is not type(template):
         return False
     if isinstance(template, dict):
         for key, val in template.items():
