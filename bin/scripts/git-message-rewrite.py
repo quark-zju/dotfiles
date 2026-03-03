@@ -63,7 +63,7 @@ def parse_commit_raw(raw):
     header_lines = lines[:i]
     message_lines = lines[i + 1:] if i < len(lines) else []
     message = b"\n".join(message_lines).decode("utf-8", errors="replace").rstrip("\n")
-    parent = None
+    parents = []
     tree = None
     author = None
     committer = None
@@ -72,14 +72,14 @@ def parse_commit_raw(raw):
         if hl_str.startswith("tree "):
             tree = hl_str[5:]
         elif hl_str.startswith("parent "):
-            parent = hl_str[7:]
+            parents.append(hl_str[7:])
         elif hl_str.startswith("author "):
             author = hl_str[7:]
         elif hl_str.startswith("committer "):
             committer = hl_str[10:]
     return {
         "tree": tree,
-        "parents": [parent] if parent else [],
+        "parents": parents,
         "author": author,
         "committer": committer,
         "message": message,
