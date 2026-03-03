@@ -47,8 +47,6 @@ def match_obj(obj, template, matched_out) -> bool:
 
 def get_codex_env() -> Dict[str, str]:
     env = {}
-    if not os.getenv("CODEX_SHELL"):
-        return env
     thread_id = os.getenv("CODEX_THREAD_ID")
     if not thread_id:
         return env
