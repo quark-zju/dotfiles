@@ -2,10 +2,13 @@
 """Rewrite git commit messages using a custom editor script.
 
 Usage:
-    git-message-rewrite.py --message-edit /path/to/script
+    git-message-rewrite.py --message-edit /path/to/script [--since HASH]
 
 The script reads each commit message, passes it to the --message-edit script
 via stdin, and uses the stdout as the new commit message.
+
+Options:
+    --since HASH    Stop at the specified commit (will not include it)
 """
 
 import argparse
