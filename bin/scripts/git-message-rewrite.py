@@ -13,10 +13,15 @@ import subprocess
 import sys
 
 
-def get_commits():
+def get_commits(since=None):
     """Get all commit hashes and messages from current HEAD to the first commit."""
+    cmd = ["git", "rev-list", "--reverse", "--format=%H"]
+    if since:
+        cmd.append(f"{since}..HEAD")
+    else:
+        cmd.append("HEAD")
     result = subprocess.run(
-        ["git", "rev-list", "--reverse", "--format=%H", "HEAD"],
+        cmd,
         capture_output=True,
         text=True,
         check=True,
@@ -143,9 +148,13 @@ def main():
         required=True,
         help="Path to executable script that edits commit messages",
     )
+    parser.add_argument(
+        "--since",
+        help="Stop at the specified commit (will not include it)",
+    )
     args = parser.parse_args()
 
-    commits = get_commits()
+    commits = get_commits(args.since)
     if not commits:
         print("No commits found.", file=sys.stderr)
         sys.exit(1)
