@@ -79,19 +79,19 @@ def parse_commit_raw(raw):
             committer = hl_str[10:]
     return {
         "tree": tree,
-        "parent": parent,
+        "parents": [parent] if parent else [],
         "author": author,
         "committer": committer,
         "message": message,
     }
 
 
-def create_commit(tree, parent, author, committer, message):
+def create_commit(tree, parents, author, committer, message):
     """Create a new commit object and return its hash."""
-    parent_line = f"parent {parent}\n" if parent else ""
+    parent_lines = "".join(f"parent {p}\n" for p in parents)
     commit_data = (
         f"tree {tree}\n"
-        f"{parent_line}"
+        f"{parent_lines}"
         f"author {author}\n"
         f"committer {committer}\n"
         f"\n{message}"
@@ -127,13 +127,13 @@ def call_message_edit(edit_script, message, orig_commit):
         raise RuntimeError(f"{edit_script} timed out")
 
 
-def rewrite_commit_message(commit_hash, new_message, new_parent):
-    """Rewrite a commit with a new message and new parent, preserving other info."""
+def rewrite_commit_message(commit_hash, new_message, new_parents):
+    """Rewrite a commit with a new message and new parents, preserving other info."""
     raw = get_commit_raw(commit_hash)
     parsed = parse_commit_raw(raw)
     new_hash = create_commit(
         parsed["tree"],
-        new_parent,
+        new_parents,
         parsed["author"],
         parsed["committer"],
         new_message,
@@ -163,17 +163,17 @@ def main():
     for old_hash, old_message in commits:
         raw = get_commit_raw(old_hash)
         parsed = parse_commit_raw(raw)
-        old_parent = parsed["parent"]
+        old_parents = parsed["parents"]
 
-        new_parent = hash_mapping.get(old_parent, old_parent) if old_parent else None
+        new_parents = [hash_mapping.get(p, p) for p in old_parents]
 
         orig_commit = old_hash.strip().lower()
         new_message = call_message_edit(args.message_edit, old_message, orig_commit)
 
-        if new_message == old_message and new_parent == old_parent:
+        if new_message == old_message and new_parents == old_parents:
             new_hash = old_hash
         else:
-            new_hash = rewrite_commit_message(old_hash, new_message, new_parent)
+            new_hash = rewrite_commit_message(old_hash, new_message, new_parents)
             hash_mapping[old_hash] = new_hash
 
         if old_hash != new_hash:
