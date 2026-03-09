@@ -6,6 +6,8 @@
 
 Avoid big commit. Think ahead. Break work down into multiple small atomic commits.
 
+If the commit title includes the word "and", it's an indication that the commit needs split.
+
 Examples of atomic commits:
 * Refactoring, code cleanup, or dependency updates made in preparation for a new feature.
 * Modifying a single file (provided the code is runnable and does not break existing tests).
