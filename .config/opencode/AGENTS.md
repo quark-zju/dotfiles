@@ -1,6 +1,6 @@
 ## ALWAYS COMMIT
 
-**Always create a `git commit`**, even if the user didn't ask.
+**Always create a `git commit`** after code changes, even if the user didn't ask.
 
 ## Commit small
 
