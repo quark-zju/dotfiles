@@ -14,10 +14,10 @@ Examples of atomic commits:
 
 ## Commit message = Title + Body
 
-**Always use `git commit -m 'TITLE' -m 'BODY'`**.
+**Always use `git commit -m 'TITLE' -m 'User request: TEXT' -m 'Decision: TEXT'`**.
 * Title: `<type|area>: <summary>`
-* Body: You MUST include BOTH: 1. A brief overview of the USER REQUEST. 2. The core decision-making logic (focus on *Why* than *What*). Use `"\n"` not `"\\n"` for multi-line content.
-* Caution: Use single quotes with backticks (`) to prevent unintended shell command substitution.
+* Body: You MUST include BOTH: 1. A brief overview of the USER REQUEST. 2. The core decision-making logic (focus on *Why* than *What*).
+* Caution: Avoid backticks (`` ` ``) - they trigger shell command substitution! Use `"` or `'` instead.
 
 ## PAUSE if Stuck
 
