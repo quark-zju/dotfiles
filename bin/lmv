@@ -1,29 +1,42 @@
-#!/usr/bin/env bash
-set -euo pipefail
+#!/usr/bin/env python3
+import os
+import sys
+import shutil
 
-if [[ $# -ne 2 ]]; then
-  echo "Usage: lmv OLD NEW" >&2
-  exit 1
-fi
+def main():
+    if len(sys.argv) != 3:
+        print("Usage: lmv OLD NEW", file=sys.stderr)
+        sys.exit(1)
 
-OLD=$1
-NEW=$2
+    old = sys.argv[1]
+    new = sys.argv[2]
 
-if [[ ! -e "$OLD" ]]; then
-  echo "Error: OLD does not exist: $OLD" >&2
-  exit 1
-fi
+    if not os.path.exists(old):
+        print(f"Error: '{old}' does not exist", file=sys.stderr)
+        sys.exit(1)
 
-old_abs=$(realpath "$OLD")
+    old_abs = os.path.abspath(old)
 
-# 判断 mv 后真正的位置
-if [[ -d "$NEW" ]]; then
-  new_final="$NEW/$(basename "$OLD")"
-else
-  new_final="$NEW"
-fi
+    # 处理 mv 语义：如果 NEW 是目录
+    if os.path.isdir(new):
+        new_final = os.path.join(new, os.path.basename(old))
+    else:
+        new_final = new
 
-new_abs=$(realpath -m "$new_final")
+    new_abs = os.path.abspath(new_final)
 
-mv -- "$old_abs" "$NEW"
-ln -snrf -- "$new_abs" "$old_abs"
+    # 执行 mv
+    shutil.move(old_abs, new)
+
+    # 计算相对路径（这是关键，Python 稳得多）
+    rel = os.path.relpath(new_abs, os.path.dirname(old_abs))
+
+    # 创建 symlink
+    try:
+        os.symlink(rel, old_abs)
+    except FileExistsError:
+        os.remove(old_abs)
+        os.symlink(rel, old_abs)
+
+if __name__ == "__main__":
+    main()
