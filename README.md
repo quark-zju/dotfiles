@@ -1,33 +1,13 @@
-Here is some of my ([quark\_zju](https://twitter.com/Quark_zju)'s) dotfiles.
-
-About
-=====
-I use zsh, gvim, ruby, i3, git ....
-
-You may find these dotfiles useful if you use these tools as well.
-
-Any comments are welcome :p
+dotfiles for configuration in my `$HOME`.
 
 Usage
 =====
-Feel free to copy and edit these files.
+Cherry-pick parts that are useful and symlink to this dotfiles repo.
 
-`update_home.sh` updates non-existed or out-dated dotfiles in home. 
-If conflicts (home version is newer and different) are found,
-nothing will be written but filenames are printed.
+Use additional config files for local customization, like:
+- `.gitconfig.local`
+- `.zshrc.local`
 
-Notes
-=====
-vim
----
-* I use [Vundle](https://github.com/gmarik/vundle) to manage vim packages.
-  For Vundle to work properly, `git clone https://github.com/gmarik/vundle.git ~/.vim/bundle/Vundle.vim`
-* To install vim packages, start vim then `:BundleInstall`
-* To enable UltiSnips builtin snippets: 
-  `cd ~/.vim/ && ln -s bundle/ultisnips/UltiSnips snippets_basic` 
-
-fonts
------
-* Default UI font is Droid Sans. It contains CJK and Thai characters.
-* Default monospace font is JetBrains Mono.
-
+Related
+=======
+I also have a `etcfiles` repo for system configuration files.
