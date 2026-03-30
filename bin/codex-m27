@@ -1,0 +1,19 @@
+#!/bin/env python3
+
+import json
+import sys
+import os
+
+with open(os.path.expanduser("~/.local/share/opencode/auth.json")) as f:
+    keys = json.load(f)
+try:
+    mini_max_key = keys["minimax"]["key"]
+except KeyError:
+    sys.stderr.write("minimax key not set in opencode\n")
+    sys.exit(1)
+
+os.execvpe(
+    "codex",
+    ["--profile", "m27"] + sys.argv[1:],
+    {**os.environ, "MINIMAX_API_KEY": mini_max_key},
+)
