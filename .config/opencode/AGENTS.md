@@ -4,13 +4,14 @@
 
 ### Commit small
 
-Avoid big commit. Think ahead. Break work down into multiple small atomic commits.
+Break work down into multiple small atomic commits. One small step one commit.
 
-If the commit title includes the word "and", it's an indication that the commit needs split.
+If the user uses bullet points, then probably each bullet point is at least one commit.
 
-Examples of atomic commits:
-* Refactoring, code cleanup, or dependency updates made in preparation for a new feature.
-* Modifying a single file (provided the code is runnable and does not break existing tests).
+Even one line change, as long as a single logical unit, is a commit.
+
+Do: "reformat code", "move my_function from a.py to b.py", "modify my_function" as 3 commits.
+Do not: "reformat and move my_function and modify it".
 
 ### Commit message = Title + Body
 
