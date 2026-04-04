@@ -27,3 +27,8 @@ If you make little to no progress after 15 consecutive attempts, halt execution 
 ## SAVE CONTEXT
 
 Avoid large outputs. Prefer `git diff --stat` to `git diff`. Prefer `cargo test -q` to `cargo test`. Use `| head -n 30` to bound output length.
+
+## FORMAT CODE
+
+Run commands like `cargo fmt && cargo test -q`. Ensure code format before each commit.
+Use `black` to format Python code.
