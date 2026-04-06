@@ -4,7 +4,7 @@
 	a = add
 	b = branch
 	br = branch
-	bf = !sh -c 'git branch -f master && git branch -f master -u origin/master'
+	bf = !sh -c 'git branch -f master && git checkout master && git branch -f master -u origin/master'
 	c = commit
 	co = checkout
 	d = diff
