@@ -150,10 +150,10 @@ if [ -d "$FNM_PATH" ]; then
 fi
 
 # pyenv {{{
-if hash pyenv 2>/dev/null; then
+if [[ -f $HOME/.pyenv/bin/pyenv ]]; then
   export PYENV_ROOT="$HOME/.pyenv"
   [[ -d $PYENV_ROOT/bin ]] && export PATH="$PYENV_ROOT/bin:$PATH"
-  eval "$(pyenv init - zsh)"
+  eval "$($HOME/.pyenv/bin/pyenv init - zsh)"
 fi
 # }}}
 
