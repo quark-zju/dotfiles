@@ -8,7 +8,8 @@ export ET_NO_TELEMETRY=1
 
 ET_HOSTPORT="$1"
 ET_HOST="${ET_HOSTPORT%%:*}"                 # strip out ":port"
-export SESSION_NAME="et-ssh-${ET_HOST//./_}" # tmux session name cannot have "."
+ET_BIN_HASH="$(printf '%s' "$ET_BIN" | cksum | awk '{print $1}')"
+export SESSION_NAME="et-ssh-${ET_HOST//./_}-${ET_BIN_HASH}" # tmux session name cannot have "."
 
 if tmux has-session -t $SESSION_NAME 2>/dev/null; then
 	echo Authenticating via the existing master session >/dev/stderr
