@@ -3,6 +3,7 @@
 # et (eternalterminal.dev) wrapper to use a "master" connection for auth, instead of ssh.
 # The first "master" connection requires ssh auth or manul auth from another connected session.
 
+# Note: ET_BIN could be a shell sequence, like "LD_PRELOAD=force_ipv6.so my_ssh -et".
 export ET_BIN="${ET_BIN:-/bin/et}"
 export ET_NO_TELEMETRY=1
 
@@ -28,7 +29,7 @@ tmux capture-pane -t $SESSION_NAME -p | grep IDPASSKEY | tail -1
 EOF
 	chmod +x "$ET_SSH_DIR/ssh"
 	export PATH="$ET_SSH_DIR:$PATH"
-	exec $ET_BIN "$@"
+	bash -lc "$ET_BIN $@"
 else
 	echo Starting master session >/dev/stderr
 	ET_SSH_DIR="$HOME/.cache/et-ssh/new-session"
