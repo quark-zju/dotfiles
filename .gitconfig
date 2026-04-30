@@ -11,7 +11,7 @@
 	dc = diff --cached
 	push-master = push origin HEAD:refs/heads/master
 	st = status
-	set-local-cred = !sh -c 'git config --local credential.helper "store --file .git/credentials" && git config --local credential.useHttpPath true'
+	set-local-cred = "!git config --local credential.helper 'store --file=.git/credentials' && git config --local credential.useHttpPath true"
 [core]
 	excludesfile = ~/.gitignore_global
 	autocrlf = false
