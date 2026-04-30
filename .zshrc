@@ -125,14 +125,18 @@ xsource ~/.config/zsh/prompt-repo-root
 if [[ -d "$HOME/.bun" ]]; then
   export BUN_INSTALL="$HOME/.bun"
   [[ -d "$BUN_INSTALL/_bun" ]] && source "$BUN_INSTALL/_bun"
-  export PATH="$BUN_INSTALL/bin:$PATH"
+  path=("$BUN_INSTALL/bin"(N-/) $path)
 fi
 # }}}
 
 # android {{{
 if [[ -d "$HOME/Android/Sdk" ]]; then
   export ANDROID_HOME="$HOME/Android/Sdk"
-  export PATH="$PATH:$ANDROID_HOME/emulator:$ANDROID_HOME/platform-tools:/opt/android-studio/jbr/bin"
+  path+=(
+    "$ANDROID_HOME/emulator"(N-/)
+    "$ANDROID_HOME/platform-tools"(N-/)
+    /opt/android-studio/jbr/bin(N-/)
+  )
 fi
 # }}}
 
@@ -145,27 +149,23 @@ export XMODIFIERS=@im=ibus
 # fnm
 FNM_PATH="$HOME/.local/share/fnm"
 if [ -d "$FNM_PATH" ]; then
-  export PATH="$FNM_PATH:$PATH"
+  path=("$FNM_PATH"(N-/) $path)
   eval "`fnm env --use-on-cd`"
 fi
 
 # pyenv {{{
 if [[ -f $HOME/.pyenv/bin/pyenv ]]; then
   export PYENV_ROOT="$HOME/.pyenv"
-  [[ -d $PYENV_ROOT/bin ]] && export PATH="$PYENV_ROOT/bin:$PATH"
+  path=("$PYENV_ROOT/bin"(N-/) $path)
   eval "$($HOME/.pyenv/bin/pyenv init - zsh)"
 fi
 # }}}
 
 # pip install --user {{{
-if [[ -d "$HOME/.local/bin" ]]; then
-  export PATH="$HOME/.local/bin:$PATH"
-fi
+path=("$HOME/.local/bin"(N-/) $path)
 # }}}
 
 # npm {{{
 # npm config set prefix '~/.npm/global'
-if [[ -d "$HOME/.npm/global/bin" ]]; then
-  export PATH="$HOME/.npm/global/bin:$PATH"
-fi
+path=("$HOME/.npm/global/bin"(N-/) $path)
 # }}}
