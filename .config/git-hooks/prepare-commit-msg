@@ -168,6 +168,8 @@ def rewrite_commit_msg(commit_msg_file: str, agent_env: Dict[str, str]):
 
 
 def main():
+    if os.getenv("SKIP_GIT_AGENT_MESSAGE"):
+        return
     if len(sys.argv) < 2:
         # show detected environment variables for debugging
         import pprint
