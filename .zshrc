@@ -169,3 +169,9 @@ path=("$HOME/.local/bin"(N-/) $path)
 # npm config set prefix '~/.npm/global'
 path=("$HOME/.npm/global/bin"(N-/) $path)
 # }}}
+
+# fzf {{{
+if command -v fzf >/dev/null 2>&1; then
+  eval "$(fzf --zsh)"
+fi
+# }}}
