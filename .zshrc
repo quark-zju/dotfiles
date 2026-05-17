@@ -171,7 +171,7 @@ path=("$HOME/.npm/global/bin"(N-/) $path)
 # }}}
 
 # fzf {{{
-if command -v fzf >/dev/null 2>&1; then
+if command -v fzf 2>/dev/null; then
   eval "$(fzf --zsh)"
 fi
 # }}}
