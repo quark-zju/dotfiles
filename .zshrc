@@ -93,6 +93,15 @@ fi
 # Main zshrc
 source ~/.config/zsh/grml-zshrc
 
+# Auto logout idle Linux virtual consoles after 8 minutes.
+if [[ -o interactive ]]; then
+    case "$(tty 2>/dev/null)" in
+        /dev/tty[1-9]|/dev/tty[1-9][0-9])
+            TMOUT=$((8 * 60))
+            ;;
+    esac
+fi
+
 # Autojump
 PATH="$PATH:$HOME/.config/zsh/autojump/bin"
 source ~/.config/zsh/autojump/bin/autojump.zsh
