@@ -140,12 +140,6 @@ if [[ -d "$HOME/Android/Sdk" ]]; then
 fi
 # }}}
 
-# ibus {{{
-export GTK_IM_MODULE=ibus
-export QT_IM_MODULE=ibus
-export XMODIFIERS=@im=ibus
-# }}}
-
 # fnm
 FNM_PATH="$HOME/.local/share/fnm"
 if [ -d "$FNM_PATH" ]; then
