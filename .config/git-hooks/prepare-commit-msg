@@ -7,6 +7,8 @@ import textwrap
 import json
 from typing import Dict, Iterable
 
+SAME_AS_BEFORE_VALUES = {"(same as before)", "(同上)"}
+
 
 def get_agent_env() -> Dict[str, str]:
     return get_opencode_env() or get_codex_env()
@@ -163,15 +165,24 @@ def get_parent_commit_env(keys: Iterable[str]) -> Dict[str, str]:
         return {}
 
     try:
-        commit_msg = subprocess.check_output(
-            ["git", "show", "-s", "--format=%B", "HEAD"],
+        commit_msgs = subprocess.check_output(
+            ["git", "log", "--format=%B%x1e", "HEAD", "-n", "50"],
             stderr=subprocess.DEVNULL,
             text=True,
         )
     except subprocess.CalledProcessError:
         return {}
 
-    return parse_commit_env(commit_msg, key_list)
+    env = {}
+    for commit_msg in commit_msgs.split("\x1e"):
+        parsed_env = parse_commit_env(commit_msg, key_list)
+        for key in key_list:
+            value = parsed_env.get(key, "").strip()
+            if key not in env and value and value not in SAME_AS_BEFORE_VALUES:
+                env[key] = value
+        if len(env) == len(key_list):
+            break
+    return env
 
 
 def is_chinese_text(value: str) -> bool:
@@ -220,7 +231,7 @@ def rewrite_commit_msg(
         value = (raw_val or "").strip()
         if not key or not value:
             continue
-        if parent_commit_env.get(key, "").strip() == value:
+        if "\n" in value and parent_commit_env.get(key, "").strip() == value:
             value = same_as_before_value(value)
         if "\n" in value:
             buf.append(f"{key}:\n")
@@ -254,5 +265,115 @@ def main():
         )
 
 
+def run_self_tests():
+    import pathlib
+    import tempfile
+    import unittest
+
+    class PrepareCommitMsgTests(unittest.TestCase):
+        def rewrite(self, commit_msg, agent_env, parent_commit_env=None):
+            with tempfile.NamedTemporaryFile("w", delete=False) as f:
+                f.write(commit_msg)
+                commit_msg_file = f.name
+            try:
+                rewrite_commit_msg(commit_msg_file, agent_env, parent_commit_env or {})
+                with open(commit_msg_file, "r") as f:
+                    return f.read()
+            finally:
+                os.unlink(commit_msg_file)
+
+        def test_rewrite_replaces_existing_single_line_agent_headers(self):
+            output = self.rewrite(
+                "subject\n\nAgent-Prompt: old\nAgent-Model: old-model\n",
+                {"Agent-Prompt": "new", "Agent-Model": "new-model"},
+            )
+
+            self.assertEqual(
+                output,
+                "subject\n\nAgent-Prompt: new\nAgent-Model: new-model\n",
+            )
+
+        def test_rewrite_replaces_existing_multiline_agent_header(self):
+            output = self.rewrite(
+                "subject\n\nAgent-Prompt:\n    old line 1\n    old line 2\n\nbody\n",
+                {"Agent-Prompt": "new"},
+            )
+
+            self.assertEqual(output, "subject\n\nbody\n\nAgent-Prompt: new\n")
+
+        def test_rewrite_elides_multiline_value_matching_parent_commit(self):
+            output = self.rewrite(
+                "subject\n",
+                {"Agent-Prompt": "same\nprompt"},
+                {"Agent-Prompt": "same\nprompt"},
+            )
+
+            self.assertEqual(output, "subject\n\nAgent-Prompt: (same as before)\n")
+
+        def test_rewrite_keeps_single_line_value_matching_parent_commit(self):
+            output = self.rewrite(
+                "subject\n",
+                {"Agent-Model": "same-model"},
+                {"Agent-Model": "same-model"},
+            )
+
+            self.assertEqual(output, "subject\n\nAgent-Model: same-model\n")
+
+        def test_git_commit_hook_elides_repeated_agent_values(self):
+            hook_dir = pathlib.Path(__file__).resolve().parent
+            env = os.environ.copy()
+            env.pop("SKIP_GIT_AGENT_MESSAGE", None)
+            env.update(
+                {
+                    "AGENT": "1",
+                    "AGENT_PROMPT": "same prompt\nsecond line",
+                    "AGENT_MODEL": "same-model",
+                }
+            )
+
+            with tempfile.TemporaryDirectory() as tmpdir:
+                repo = pathlib.Path(tmpdir)
+                self.run_git(["init"], repo, env)
+                self.run_git(["config", "user.name", "Self Test"], repo, env)
+                self.run_git(
+                    ["config", "user.email", "self-test@example.com"], repo, env
+                )
+                self.run_git(["config", "core.hooksPath", str(hook_dir)], repo, env)
+
+                for index in range(1, 4):
+                    (repo / "file.txt").write_text(f"{index}\n")
+                    self.run_git(["add", "file.txt"], repo, env)
+                    self.run_git(["commit", "-m", f"commit {index}"], repo, env)
+
+                log = self.run_git(
+                    ["log", "--format=%B%x1e", "-n", "3"], repo, env
+                ).stdout
+
+            latest, previous, earliest, *_ = log.split("\x1e")
+            self.assertIn("Agent-Prompt: (same as before)", latest)
+            self.assertIn("Agent-Model: same-model", latest)
+            self.assertIn("Agent-Prompt: (same as before)", previous)
+            self.assertIn("Agent-Model: same-model", previous)
+            self.assertIn("Agent-Prompt:\n    same prompt\n    second line", earliest)
+            self.assertIn("Agent-Model: same-model", earliest)
+
+        def run_git(self, args, cwd, env):
+            return subprocess.run(
+                ["git", *args],
+                cwd=cwd,
+                env=env,
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+
+    suite = unittest.defaultTestLoader.loadTestsFromTestCase(PrepareCommitMsgTests)
+    unittest.TextTestRunner().run(suite)
+
+
 if __name__ == "__main__":
-    main()
+    if sys.argv[1:] == ["--self-test"]:
+        run_self_tests()
+    else:
+        main()
