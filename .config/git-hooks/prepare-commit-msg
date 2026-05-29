@@ -205,6 +205,10 @@ def same_as_before_value(value: str) -> str:
     return SAME_AS_BEFORE_EN
 
 
+def normalize_repeated_value(value: str) -> str:
+    return "\n".join(line.rstrip() for line in value.splitlines() if line.strip())
+
+
 def rewrite_commit_msg(
     commit_msg_file: str,
     agent_env: Dict[str, str],
@@ -241,11 +245,13 @@ def rewrite_commit_msg(
         value = (raw_val or "").strip()
         if not key or not value:
             continue
-        if "\n" in value and parent_commit_env.get(key, "").strip() == value:
+        if "\n" in value and normalize_repeated_value(
+            parent_commit_env.get(key, "")
+        ) == normalize_repeated_value(value):
             value = same_as_before_value(value)
         if "\n" in value:
             buf.append(f"{key}:\n")
-            buf.append(textwrap.indent(value, "    "))
+            buf.append(textwrap.indent(value, "    ", lambda line: True))
             buf.append("\n\n")
         else:
             buf.append(f"{key}: {value}\n")
@@ -331,12 +337,13 @@ def run_self_tests():
 
         def test_git_commit_hook_elides_repeated_agent_values(self):
             hook_dir = pathlib.Path(__file__).resolve().parent
+            agent_prompt = "same prompt\n\nsecond line\n   \nthird line"
             env = os.environ.copy()
             env.pop("SKIP_GIT_AGENT_MESSAGE", None)
             env.update(
                 {
                     "AGENT": "1",
-                    "AGENT_PROMPT": "same prompt\nsecond line",
+                    "AGENT_PROMPT": agent_prompt,
                     "AGENT_MODEL": "same-model",
                 }
             )
@@ -364,8 +371,17 @@ def run_self_tests():
             self.assertIn("Agent-Model: same-model", latest)
             self.assertIn("Agent-Prompt: (same as before)", previous)
             self.assertIn("Agent-Model: same-model", previous)
-            self.assertIn("Agent-Prompt:\n    same prompt\n    second line", earliest)
+            self.assertIn(
+                "Agent-Prompt:\n    same prompt\n\n    second line\n\n    third line",
+                earliest,
+            )
             self.assertIn("Agent-Model: same-model", earliest)
+            self.assertEqual(
+                normalize_repeated_value(
+                    parse_commit_env(earliest, ["Agent-Prompt"])["Agent-Prompt"]
+                ),
+                normalize_repeated_value(agent_prompt),
+            )
 
         def run_git(self, args, cwd, env):
             return subprocess.run(
