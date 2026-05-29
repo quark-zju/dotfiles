@@ -7,7 +7,10 @@ import textwrap
 import json
 from typing import Dict, Iterable
 
-SAME_AS_BEFORE_VALUES = {"(same as before)", "(同上)"}
+PARENT_COMMIT_SCAN_LIMIT = 16
+SAME_AS_BEFORE_EN = "(same as before)"
+SAME_AS_BEFORE_ZH = "(同上)"
+SAME_AS_BEFORE_VALUES = {SAME_AS_BEFORE_EN, SAME_AS_BEFORE_ZH}
 
 
 def get_agent_env() -> Dict[str, str]:
@@ -166,7 +169,14 @@ def get_parent_commit_env(keys: Iterable[str]) -> Dict[str, str]:
 
     try:
         commit_msgs = subprocess.check_output(
-            ["git", "log", "--format=%B%x1e", "HEAD", "-n", "50"],
+            [
+                "git",
+                "log",
+                "--format=%B%x1e",
+                "HEAD",
+                "-n",
+                str(PARENT_COMMIT_SCAN_LIMIT),
+            ],
             stderr=subprocess.DEVNULL,
             text=True,
         )
@@ -191,8 +201,8 @@ def is_chinese_text(value: str) -> bool:
 
 def same_as_before_value(value: str) -> str:
     if is_chinese_text(value):
-        return "(同上)"
-    return "(same as before)"
+        return SAME_AS_BEFORE_ZH
+    return SAME_AS_BEFORE_EN
 
 
 def rewrite_commit_msg(
