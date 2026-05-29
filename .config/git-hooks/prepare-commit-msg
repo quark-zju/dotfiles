@@ -240,13 +240,19 @@ def rewrite_commit_msg(
         commit_msg_lines.append(line)
     commit_msg = "\n".join(commit_msg_lines).rstrip()
 
+    normalized_parent_commit_env = {
+        key: normalize_repeated_value(value)
+        for key, value in parent_commit_env.items()
+        if key in keys and value
+    }
+
     buf = []
     for key, raw_val in agent_env.items():
         value = (raw_val or "").strip()
         if not key or not value:
             continue
-        if "\n" in value and normalize_repeated_value(
-            parent_commit_env.get(key, "")
+        if "\n" in value and normalized_parent_commit_env.get(
+            key, ""
         ) == normalize_repeated_value(value):
             value = same_as_before_value(value)
         if "\n" in value:
