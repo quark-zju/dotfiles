@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 import glob
 import os
+import subprocess
 import sys
 import textwrap
 import json
-from typing import Dict
+from typing import Dict, Iterable
 
 
 def get_agent_env() -> Dict[str, str]:
@@ -119,7 +120,75 @@ def get_codex_env() -> Dict[str, str]:
     return env
 
 
-def rewrite_commit_msg(commit_msg_file: str, agent_env: Dict[str, str]):
+def parse_commit_env(commit_msg: str, keys: Iterable[str]) -> Dict[str, str]:
+    env = {}
+    key_set = set(keys)
+    current_key = None
+    current_value_lines = []
+
+    def flush_current_key():
+        if current_key:
+            env[current_key] = "\n".join(current_value_lines).strip()
+
+    for line in commit_msg.splitlines():
+        if current_key:
+            if line.startswith("    "):
+                current_value_lines.append(line[4:])
+                continue
+            if line == "":
+                continue
+            flush_current_key()
+            current_key = None
+            current_value_lines = []
+
+        if ":" not in line:
+            continue
+
+        key, value = line.split(":", 1)
+        if key not in key_set:
+            continue
+
+        if value.strip():
+            env[key] = value.strip()
+        else:
+            current_key = key
+
+    flush_current_key()
+    return env
+
+
+def get_parent_commit_env(keys: Iterable[str]) -> Dict[str, str]:
+    key_list = [key for key in keys if key]
+    if not key_list:
+        return {}
+
+    try:
+        commit_msg = subprocess.check_output(
+            ["git", "show", "-s", "--format=%B", "HEAD"],
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+    except subprocess.CalledProcessError:
+        return {}
+
+    return parse_commit_env(commit_msg, key_list)
+
+
+def is_chinese_text(value: str) -> bool:
+    return any("\u4e00" <= char <= "\u9fff" for char in value)
+
+
+def same_as_before_value(value: str) -> str:
+    if is_chinese_text(value):
+        return "(同上)"
+    return "(same as before)"
+
+
+def rewrite_commit_msg(
+    commit_msg_file: str,
+    agent_env: Dict[str, str],
+    parent_commit_env: Dict[str, str],
+):
     if not agent_env:
         return
 
@@ -151,6 +220,8 @@ def rewrite_commit_msg(commit_msg_file: str, agent_env: Dict[str, str]):
         value = (raw_val or "").strip()
         if not key or not value:
             continue
+        if parent_commit_env.get(key, "").strip() == value:
+            value = same_as_before_value(value)
         if "\n" in value:
             buf.append(f"{key}:\n")
             buf.append(textwrap.indent(value, "    "))
@@ -177,7 +248,10 @@ def main():
         pprint.pprint(get_agent_env())
     else:
         # used as git hook to rewrite commit message
-        rewrite_commit_msg(sys.argv[1], get_agent_env())
+        agent_env = get_agent_env()
+        rewrite_commit_msg(
+            sys.argv[1], agent_env, get_parent_commit_env(agent_env.keys())
+        )
 
 
 if __name__ == "__main__":
