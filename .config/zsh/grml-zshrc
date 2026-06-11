@@ -2505,18 +2505,28 @@ function info_print () {
     printf '%s' "${esc_end}"
 }
 
+function grml_title_prefix () {
+    # EDITED(quark): Allow LTITLE to prepend a bracketed title prefix.
+    [[ -n ${LTITLE:-} ]] && print -rn -- "[${LTITLE}] "
+}
+
 function grml_reset_screen_title () {
     # adjust title of xterm
     # see http://www.faqs.org/docs/Linux-mini/Xterm-Title.html
     [[ ${NOTITLE:-} -gt 0 ]] && return 0
     case $TERM in
         (xterm*|rxvt*)
+            # EDITED(quark): Let TITLE override the idle terminal title.
+            local body
+            if [[ -n ${TITLE:-} ]]; then
+                body=$TITLE
             # EDITED(quark): Do not show user@host unless in ssh.
-            if [[ -z $SSH_CLIENT ]]; then
-                set_title ${(%):-"%~"}
+            elif [[ -z $SSH_CLIENT ]]; then
+                body=${(%):-%~}
             else
-                set_title ${(%):-"%n@%m: %~"}
+                body=${(%):-%n@%m: %~}
             fi
+            set_title "$(grml_title_prefix)$body"
             ;;
     esac
 }
@@ -2550,12 +2560,18 @@ function grml_cmd_to_screen_title () {
 function grml_control_xterm_title () {
     case $TERM in
         (xterm*|rxvt*)
+            # EDITED(quark): Let TITLE override the running-command terminal
+            # title, and LTITLE prepend a bracketed prefix.
+            local body
+            if [[ -n ${TITLE:-} ]]; then
+                body=$TITLE
             # EDITED(quark): Do not show user@host unless in ssh.
-            if [[ -z $SSH_CLIENT ]]; then
-                set_title "${(%):-""}" "$2"
+            elif [[ -z $SSH_CLIENT ]]; then
+                body=$2
             else
-                set_title "${(%):-"%n@%m:"}" "$2"
+                body="${(%):-%n@%m:}$2"
             fi
+            set_title "$(grml_title_prefix)$body"
             ;;
     esac
 }
