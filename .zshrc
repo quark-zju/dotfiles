@@ -93,6 +93,9 @@ fi
 # Main zshrc
 source ~/.config/zsh/grml-zshrc
 
+# Disable glob expand during path completion.
+zstyle ':completion:*' path-completion false
+
 # Auto logout idle Linux virtual consoles after 8 minutes.
 if [[ -o interactive ]]; then
     case "$(tty 2>/dev/null)" in
