@@ -1565,7 +1565,6 @@ bind2maps emacs viins vicmd -- -s '\e'${key[Left]}  backward-word
 # autoloading
 
 zrcautoload zmv
-zrcautoload zed
 
 # we don't want to quote/espace URLs on our own...
 # if autoload -U url-quote-magic ; then
@@ -3062,7 +3061,7 @@ compdef _aliases edalias
 
 #f1# Edit a function via zle
 function edfunc () {
-    [[ -z "$1" ]] && { echo "Usage: edfunc <function_to_edit>" ; return 1 } || zed -f "$1" ;
+    [[ -z "$1" ]] && { echo "Usage: edfunc <function_to_edit>" ; return 1 } || autoload -Uz zed && zed -f "$1" ;
 }
 compdef _functions edfunc
 
