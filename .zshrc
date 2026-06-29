@@ -9,7 +9,11 @@ alias d='git diff --no-index'
 # default parameters
 alias rm='rm -v'
 alias mv='mv -vi'
-alias cp='cp -aviu'
+case "$OSTYPE" in
+  darwin*) alias cp='cp -avi' ;;
+  linux*) alias cp='cp -aviu --reflink=auto' ;;
+  *) alias cp='cp -aviu' ;;
+esac
 alias scp='noglob scp -r'
 
 # suffix
