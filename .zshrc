@@ -78,8 +78,12 @@ select-word-style bash
 
 # Environments {{{
 # PATH - Include ~/bin.
-PATH="$HOME/bin:$HOME/.cargo/bin:$PATH"
-path=("/opt/homebrew/opt/rustup/bin"(N-/) $path)
+path=(
+  "$HOME/bin"
+  "$HOME/.cargo/bin"
+  "/opt/homebrew/opt/rustup/bin"(N-/)
+  $path
+)
 
 # Editor - Prefer gvim, nvim.
 if hash gvim 2>/dev/null; then
@@ -111,7 +115,7 @@ if [[ -o interactive ]]; then
 fi
 
 # Autojump
-PATH="$PATH:$HOME/.config/zsh/autojump/bin"
+path+=("$HOME/.config/zsh/autojump/bin")
 source ~/.config/zsh/autojump/bin/autojump.zsh
 
 # Plugins
