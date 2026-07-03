@@ -79,6 +79,7 @@ select-word-style bash
 # Environments {{{
 # PATH - Include ~/bin.
 PATH="$HOME/bin:$HOME/.cargo/bin:$PATH"
+path=("/opt/homebrew/opt/rustup/bin"(N-/) $path)
 
 # Editor - Prefer gvim, nvim.
 if hash gvim 2>/dev/null; then
