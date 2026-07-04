@@ -1,6 +1,6 @@
 ## ALWAYS COMMIT
 
-**Always create a `git commit`** after code changes, even if the user didn't ask.
+When inside a git repo, **always create a `git commit`** after code changes, even if the user didn't ask.
 
 ### Commit small
 
@@ -19,6 +19,10 @@ Do not: "reformat and move my_function and modify it".
 * Title: `<type|area>: <summary>`
 * Body: You MUST include BOTH: 1. A brief overview of the USER REQUEST. 2. The core decision-making logic (focus on *Why* than *What*).
 * Caution: Avoid backticks (`` ` ``) - they trigger shell command substitution! Use `"` or `'` instead.
+
+## ASK FOR MISSING TOOLS
+
+When certain tools are missing, ask the user to install, or provide the path. Do not search through broad directories like `~` or `/` just to find tools not in `PATH`.
 
 ## PAUSE IF STUCK
 
