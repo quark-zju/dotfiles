@@ -19,8 +19,6 @@ def get_agent_env() -> Dict[str, str]:
 
 def get_opencode_env() -> Dict[str, str]:
     env = {}
-    if not os.getenv("AGENT"):
-        return env
     # Those env vars are written by the opencode plugin
     # .config/opencode/plugins/set-agent-model-env.ts
     prompt = os.getenv("AGENT_PROMPT", "").strip()
@@ -334,6 +332,24 @@ def run_self_tests():
             )
 
             self.assertEqual(output, "subject\n\nAgent-Model: same-model\n")
+
+        def test_opencode_env_uses_plugin_vars_without_agent_sentinel(self):
+            old_env = os.environ.copy()
+            try:
+                os.environ.pop("AGENT", None)
+                os.environ["AGENT_PROMPT"] = "from opencode"
+                os.environ["AGENT_MODEL"] = "test-model"
+
+                self.assertEqual(
+                    get_opencode_env(),
+                    {
+                        "Agent-Prompt": "from opencode",
+                        "Agent-Model": "test-model",
+                    },
+                )
+            finally:
+                os.environ.clear()
+                os.environ.update(old_env)
 
         def test_git_commit_hook_elides_repeated_agent_values(self):
             hook_dir = pathlib.Path(__file__).resolve().parent

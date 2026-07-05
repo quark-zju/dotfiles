@@ -2,19 +2,30 @@ import type { Plugin } from "@opencode-ai/plugin"
 
 async function getModelNameAndPrompts(client: ReturnType<typeof import("@opencode-ai/plugin")["createOpencodeClient"]>, sessionID: string): Promise<{ modelName: string | undefined; prompts: string | undefined }> {
   try {
+    const sessionResponse = await client.session.get({
+      path: { id: sessionID },
+    })
+    const session = sessionResponse.data
+    let modelName: string | undefined
+    if (session?.model) {
+      const model = session.model as any
+      modelName = model.id ?? model.modelID
+    }
+
     const messagesResponse = await client.session.messages({
       path: { id: sessionID },
-      query: { limit: 100 },
+      query: { limit: 1000 },
     })
 
-    const messagesAsc = messagesResponse.data
+    const messagesAsc = messagesResponse.data ?? []
     const messagesDesc = messagesAsc.reverse()
 
-    const lastMessage = messagesDesc.find((m) => m.info?.model)
-    let modelName: string | undefined
-    if (lastMessage?.info.model) {
-      const { modelID } = lastMessage.info.model
-      modelName = `${modelID}`
+    if (!modelName) {
+      const lastMessage = messagesDesc.find((m) => m.info?.model)
+      if (lastMessage?.info.model) {
+        const model = lastMessage.info.model as any
+        modelName = model.id ?? model.modelID
+      }
     }
 
     const prompts: string[] = []
@@ -57,6 +68,7 @@ export const SetAgentModelEnv: Plugin = async ({ client }) => {
     "shell.env": async (input, output) => {
       if (input.sessionID) {
         const { modelName, prompts } = await getModelNameAndPrompts(client, input.sessionID)
+        output.env.OPENCODE_SESSION_ID = input.sessionID
         if (modelName) {
           output.env.AGENT_MODEL = modelName
         }
