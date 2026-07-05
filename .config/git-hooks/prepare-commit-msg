@@ -23,6 +23,8 @@ def get_opencode_env() -> Dict[str, str]:
     # .config/opencode/plugins/set-agent-model-env.ts
     prompt = os.getenv("AGENT_PROMPT", "").strip()
     model = os.getenv("AGENT_MODEL", "").strip()
+    if prompt or model or os.getenv("OPENCODE_SESSION_ID"):
+        env["Agent-Harness"] = "opencode"
     if prompt:
         env["Agent-Prompt"] = prompt
     if model:
@@ -117,8 +119,10 @@ def get_codex_env() -> Dict[str, str]:
             break
     if prompt:
         prompt_text = "\n----\n".join(reversed(prompt))
+        env["Agent-Harness"] = "codex"
         env["Agent-Prompt"] = prompt_text
     if model:
+        env["Agent-Harness"] = "codex"
         env["Agent-Model"] = model
     return env
 
@@ -343,6 +347,7 @@ def run_self_tests():
                 self.assertEqual(
                     get_opencode_env(),
                     {
+                        "Agent-Harness": "opencode",
                         "Agent-Prompt": "from opencode",
                         "Agent-Model": "test-model",
                     },
@@ -383,10 +388,13 @@ def run_self_tests():
                 ).stdout
 
             latest, previous, earliest, *_ = log.split("\x1e")
+            self.assertIn("Agent-Harness: opencode", latest)
             self.assertIn("Agent-Prompt: (same as before)", latest)
             self.assertIn("Agent-Model: same-model", latest)
+            self.assertIn("Agent-Harness: opencode", previous)
             self.assertIn("Agent-Prompt: (same as before)", previous)
             self.assertIn("Agent-Model: same-model", previous)
+            self.assertIn("Agent-Harness: opencode", earliest)
             self.assertIn(
                 "Agent-Prompt:\n    same prompt\n\n    second line\n\n    third line",
                 earliest,
