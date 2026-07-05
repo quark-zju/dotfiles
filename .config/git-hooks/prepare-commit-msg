@@ -5,6 +5,7 @@ import subprocess
 import sys
 import textwrap
 import json
+import sqlite3
 from typing import Dict, Iterable
 
 PARENT_COMMIT_SCAN_LIMIT = 16
@@ -14,7 +15,7 @@ SAME_AS_BEFORE_VALUES = {SAME_AS_BEFORE_EN, SAME_AS_BEFORE_ZH}
 
 
 def get_agent_env() -> Dict[str, str]:
-    return get_opencode_env() or get_codex_env()
+    return get_opencode_env() or get_codex_env() or get_zed_env()
 
 
 def get_opencode_env() -> Dict[str, str]:
@@ -125,6 +126,165 @@ def get_codex_env() -> Dict[str, str]:
     if prompt or model:
         env["Agent-Harness"] = "codex"
     return env
+
+
+def default_zed_threads_db() -> str:
+    return os.path.expanduser("~/Library/Application Support/Zed/threads/threads.db")
+
+
+def normalize_path(value: str) -> str:
+    if not value:
+        return ""
+    return os.path.realpath(os.path.expanduser(value))
+
+
+def decode_zed_thread_data(data_type: str, data: bytes):
+    if data_type == "json":
+        return json.loads(data.decode("utf-8"))
+    if data_type != "zstd":
+        return None
+    decoded = zstd_decompress(data)
+    if decoded is None:
+        return None
+    return json.loads(decoded.decode("utf-8"))
+
+
+def zstd_decompress(data: bytes):
+    try:
+        from compression import zstd
+
+        return zstd.decompress(data)
+    except (ImportError, ModuleNotFoundError):
+        pass
+    except Exception:
+        pass
+
+    try:
+        return subprocess.check_output(
+            ["zstd", "-dc"],
+            input=data,
+            stderr=subprocess.DEVNULL,
+        )
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        return None
+
+
+def zed_text_from_content(content) -> str:
+    if isinstance(content, str):
+        return content.strip()
+    if not isinstance(content, list):
+        return ""
+    parts = []
+    for item in content:
+        if not isinstance(item, dict):
+            continue
+        text = item.get("Text")
+        if isinstance(text, str) and text.strip():
+            parts.append(text.strip())
+    return "\n".join(parts).strip()
+
+
+def zed_agent_message_has_git_commit(message) -> bool:
+    if not isinstance(message, dict):
+        return False
+    agent = message.get("Agent")
+    if not isinstance(agent, dict):
+        return False
+    content = agent.get("content")
+    if not isinstance(content, list):
+        return False
+    for item in content:
+        if not isinstance(item, dict):
+            continue
+        tool_use = item.get("ToolUse")
+        if not isinstance(tool_use, dict):
+            continue
+        name = str(tool_use.get("name") or "")
+        if name not in {"terminal", "bash"}:
+            continue
+        raw_input = tool_use.get("raw_input")
+        input_obj = tool_use.get("input")
+        command = ""
+        if isinstance(input_obj, dict):
+            command = str(input_obj.get("command") or "")
+        if not command and isinstance(raw_input, str):
+            try:
+                command = str(json.loads(raw_input).get("command") or "")
+            except json.JSONDecodeError:
+                command = raw_input
+        if "git commit" in command.lower():
+            return True
+    return False
+
+
+def zed_env_from_thread(thread) -> Dict[str, str]:
+    env = {}
+    model = thread.get("model")
+    model_name = ""
+    if isinstance(model, dict):
+        model_name = str(model.get("model") or "").strip()
+
+    prompts = []
+    seen_git_commit = False
+    messages = thread.get("messages")
+    if not isinstance(messages, list):
+        messages = []
+    for message in reversed(messages):
+        if not seen_git_commit:
+            if "User" in message:
+                text = zed_text_from_content(message.get("User", {}).get("content"))
+                if text:
+                    prompts.append(text)
+            if zed_agent_message_has_git_commit(message) and prompts:
+                seen_git_commit = True
+        if model_name and seen_git_commit:
+            break
+
+    if prompts:
+        env["Agent-Prompt"] = "\n----\n".join(reversed(prompts))
+    if model_name:
+        env["Agent-Model"] = model_name
+    if env:
+        env["Agent-Harness"] = "zed"
+    return env
+
+
+def get_zed_env() -> Dict[str, str]:
+    tmpdir = os.getenv("TMPDIR") or os.getenv("TMP") or os.getenv("TEMP")
+    if not tmpdir:
+        return {}
+    if os.getenv("TERM_PROGRAM") != "zed" and not os.getenv("ZED_ENVIRONMENT"):
+        return {}
+
+    db_path = os.getenv("ZED_THREADS_DB") or default_zed_threads_db()
+    if not os.path.exists(db_path):
+        return {}
+
+    normalized_tmpdir = normalize_path(tmpdir)
+    try:
+        with sqlite3.connect(db_path) as conn:
+            rows = conn.execute(
+                """
+                select data_type, data
+                from threads
+                order by updated_at desc
+                limit 32
+                """
+            ).fetchall()
+    except sqlite3.Error:
+        return {}
+
+    for data_type, data in rows:
+        try:
+            thread = decode_zed_thread_data(data_type, data)
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            continue
+        if not isinstance(thread, dict):
+            continue
+        thread_tmpdir = normalize_path(str(thread.get("sandboxed_terminal_temp_dir") or ""))
+        if thread_tmpdir and thread_tmpdir == normalized_tmpdir:
+            return zed_env_from_thread(thread)
+    return {}
 
 
 def parse_commit_env(commit_msg: str, keys: Iterable[str]) -> Dict[str, str]:
@@ -373,6 +533,94 @@ def run_self_tests():
             finally:
                 os.environ.clear()
                 os.environ.update(old_env)
+
+        def test_zed_env_reads_matching_thread_until_git_commit(self):
+            old_env = os.environ.copy()
+            with tempfile.TemporaryDirectory() as tmpdir:
+                db_path = pathlib.Path(tmpdir) / "threads.db"
+                terminal_tmp = pathlib.Path(tmpdir) / "zed-agent-terminal-test"
+                terminal_tmp.mkdir()
+                thread = {
+                    "sandboxed_terminal_temp_dir": str(terminal_tmp),
+                    "model": {"provider": "deepseek", "model": "deepseek-v4-flash"},
+                    "messages": [
+                        {"User": {"content": [{"Text": "old prompt"}]}},
+                        {
+                            "Agent": {
+                                "content": [
+                                    {
+                                        "ToolUse": {
+                                            "name": "terminal",
+                                            "input": {"command": "git commit -m old"},
+                                        }
+                                    }
+                                ]
+                            }
+                        },
+                        {"User": {"content": [{"Text": "first prompt"}]}},
+                        {"Agent": {"content": [{"Text": "working"}]}},
+                        {"User": {"content": [{"Text": "second prompt"}]}},
+                        {
+                            "Agent": {
+                                "content": [
+                                    {
+                                        "ToolUse": {
+                                            "name": "terminal",
+                                            "input": {"command": "git commit -m new"},
+                                        }
+                                    }
+                                ]
+                            }
+                        },
+                    ],
+                }
+                with sqlite3.connect(db_path) as conn:
+                    conn.execute(
+                        """
+                        create table threads (
+                            id text primary key,
+                            summary text not null,
+                            updated_at text not null,
+                            data_type text not null,
+                            data blob not null
+                        )
+                        """
+                    )
+                    conn.execute(
+                        """
+                        insert into threads values (?, ?, ?, ?, ?)
+                        """,
+                        (
+                            "thread-1",
+                            "summary",
+                            "2026-07-05T00:00:00Z",
+                            "json",
+                            json.dumps(thread).encode("utf-8"),
+                        ),
+                    )
+
+                try:
+                    os.environ.clear()
+                    os.environ.update(
+                        {
+                            "TERM_PROGRAM": "zed",
+                            "ZED_ENVIRONMENT": "worktree-shell",
+                            "TMPDIR": str(terminal_tmp),
+                            "ZED_THREADS_DB": str(db_path),
+                        }
+                    )
+
+                    self.assertEqual(
+                        get_zed_env(),
+                        {
+                            "Agent-Prompt": "first prompt\n----\nsecond prompt",
+                            "Agent-Model": "deepseek-v4-flash",
+                            "Agent-Harness": "zed",
+                        },
+                    )
+                finally:
+                    os.environ.clear()
+                    os.environ.update(old_env)
 
         def test_git_commit_hook_elides_repeated_agent_values(self):
             hook_dir = pathlib.Path(__file__).resolve().parent
