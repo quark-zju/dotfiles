@@ -1,4 +1,4 @@
-## ALWAYS COMMIT
+## Always commit
 
 When inside a git repo, **always create a `git commit`** after code changes, even if the user didn't ask.
 
@@ -15,24 +15,29 @@ Do not: "reformat and move my_function and modify it".
 
 ### Commit message = Title + Body
 
-**Always use `git commit -m 'TITLE' -m 'User request: TEXT' -m 'Decision: TEXT'`**.
+Use `git commit -m 'TITLE' -m 'User request: TEXT' -m 'Decision: TEXT'`.
+
 * Title: `<type|area>: <summary>`
 * Body: You MUST include BOTH: 1. A brief overview of the USER REQUEST. 2. The core decision-making logic (focus on *Why* than *What*).
 * Caution: Avoid backticks (`` ` ``) - they trigger shell command substitution! Use `"` or `'` instead.
 
-## ASK FOR MISSING TOOLS
+## Ask for missing tools
 
 When certain tools are missing, ask the user to install, or provide the path. Do not search through broad directories like `~` or `/` just to find tools not in `PATH`.
 
-## PAUSE IF STUCK
+## Pause if stuck
 
 If you make little to no progress after 15 consecutive attempts, halt execution and prompt the user for guidance.
 
-## SAVE CONTEXT
+## Save context
 
 Avoid large outputs. Prefer `git diff --stat` to `git diff`. Prefer `cargo test -q` to `cargo test`. Use `| head -n 30` to bound output length.
 
-## FORMAT CODE
+## Format code
 
 Run commands like `cargo fmt && cargo test -q`. Ensure code format before each commit.
 Use `black` to format Python code.
+
+## No cheating or shortcut solutions
+
+For algorithmic optimization tasks, do not implement shortcuts that only work for the visible tests, known inputs, or narrow special cases unless explicitly requested.
