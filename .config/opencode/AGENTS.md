@@ -41,3 +41,5 @@ Use `black` to format Python code.
 ## No cheating or shortcut solutions
 
 For algorithmic optimization tasks, do not implement shortcuts that only work for the visible tests, known inputs, or narrow special cases unless explicitly requested.
+
+If a general optimization is not clear, say so instead of submitting a shortcut patch.
