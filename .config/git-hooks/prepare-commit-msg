@@ -371,6 +371,14 @@ def normalize_repeated_value(value: str) -> str:
     return "\n".join(line.rstrip() for line in value.splitlines() if line.strip())
 
 
+def keep_repeated_value(value: str) -> bool:
+    return (
+        "\n" not in value
+        and not any(char.isspace() for char in value)
+        and not is_chinese_text(value)
+    )
+
+
 def rewrite_commit_msg(
     commit_msg_file: str,
     agent_env: Dict[str, str],
@@ -407,7 +415,7 @@ def rewrite_commit_msg(
         value = (raw_val or "").strip()
         if not key or not value:
             continue
-        if "\n" in value and normalize_repeated_value(
+        if not keep_repeated_value(value) and normalize_repeated_value(
             parent_commit_env.get(key, "")
         ) == normalize_repeated_value(value):
             value = same_as_before_value(value)
@@ -496,6 +504,24 @@ def run_self_tests():
             )
 
             self.assertEqual(output, "subject\n\nAgent-Model: same-model\n")
+
+        def test_rewrite_elides_single_line_value_with_spaces_matching_parent(self):
+            output = self.rewrite(
+                "subject\n",
+                {"Agent-Prompt": "same prompt"},
+                {"Agent-Prompt": "same prompt"},
+            )
+
+            self.assertEqual(output, "subject\n\nAgent-Prompt: (same as before)\n")
+
+        def test_rewrite_elides_single_line_chinese_value_matching_parent(self):
+            output = self.rewrite(
+                "subject\n",
+                {"Agent-Prompt": "相同提示"},
+                {"Agent-Prompt": "相同提示"},
+            )
+
+            self.assertEqual(output, "subject\n\nAgent-Prompt: (同上)\n")
 
         def test_rewrite_places_agent_harness_last(self):
             output = self.rewrite(
