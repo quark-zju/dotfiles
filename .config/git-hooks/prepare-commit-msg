@@ -263,14 +263,12 @@ def get_zed_env() -> Dict[str, str]:
     normalized_tmpdir = normalize_path(tmpdir)
     try:
         with sqlite3.connect(db_path) as conn:
-            rows = conn.execute(
-                """
+            rows = conn.execute("""
                 select data_type, data
                 from threads
                 order by updated_at desc
                 limit 32
-                """
-            ).fetchall()
+                """).fetchall()
     except sqlite3.Error:
         return {}
 
@@ -281,7 +279,9 @@ def get_zed_env() -> Dict[str, str]:
             continue
         if not isinstance(thread, dict):
             continue
-        thread_tmpdir = normalize_path(str(thread.get("sandboxed_terminal_temp_dir") or ""))
+        thread_tmpdir = normalize_path(
+            str(thread.get("sandboxed_terminal_temp_dir") or "")
+        )
         if thread_tmpdir and thread_tmpdir == normalized_tmpdir:
             return zed_env_from_thread(thread)
     return {}
@@ -575,8 +575,7 @@ def run_self_tests():
                     ],
                 }
                 with sqlite3.connect(db_path) as conn:
-                    conn.execute(
-                        """
+                    conn.execute("""
                         create table threads (
                             id text primary key,
                             summary text not null,
@@ -584,8 +583,7 @@ def run_self_tests():
                             data_type text not null,
                             data blob not null
                         )
-                        """
-                    )
+                        """)
                     conn.execute(
                         """
                         insert into threads values (?, ?, ?, ?, ?)
