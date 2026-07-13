@@ -43,3 +43,7 @@ Use `black` to format Python code.
 For algorithmic optimization tasks, do not implement shortcuts that only work for the visible tests, known inputs, or narrow special cases unless explicitly requested.
 
 If a general optimization is not clear, say so instead of submitting a shortcut patch.
+
+## Environment instructions
+
+On Linux, the current process might be under `leash` sandbox, it can deny access based on process and path. Namely, `.git` is only fully visible and writable by the `git` process.
