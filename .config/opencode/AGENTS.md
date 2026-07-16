@@ -44,6 +44,12 @@ For algorithmic optimization tasks, do not implement shortcuts that only work fo
 
 If a general optimization is not clear, say so instead of submitting a shortcut patch.
 
-## Environment instructions
+## Environment-specific instructions
 
-On Linux, the current process might be under `leash` sandbox, it can deny access based on process and path. Namely, `.git` is only fully visible and writable by the `git` process.
+### Linux
+
+On Linux, the current process might be under `leash` sandbox (fuse mount), it can deny access based on process and path. Namely, `.git` is only fully visible and writable by the `git` process.
+
+### Codex
+
+Inside codex, `black`'s multi-file scheduler can get stuck due to the default codex sandbox policy, even with `--workers 1`, so only format one file at a time.
