@@ -98,7 +98,8 @@ def get_codex_env() -> Dict[str, str]:
                 user_message = out.get("$user_message", "").strip()
                 if user_message:
                     prompt.append(user_message)
-            # {"type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"{\"cmd\":\"git comitt -m ...\"}"}}
+            tool_input = ""
+            # {"type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"{\"cmd\":\"git commit -m ...\"}"}}
             if match_obj(
                 data,
                 {
@@ -106,15 +107,31 @@ def get_codex_env() -> Dict[str, str]:
                     "payload": {
                         "type": "function_call",
                         "name": "exec_command",
-                        "arguments": "$arguments",
+                        "arguments": "$tool_input",
                     },
                 },
                 out,
             ):
-                arguments = out.get("$arguments", "")
+                tool_input = out.get("$tool_input", "")
+            # {"type":"response_item","payload":{"type":"custom_tool_call","name":"exec","input":"const r = await tools.exec_command({\"cmd\":\"git commit -m ...\"});"}}
+            elif match_obj(
+                data,
+                {
+                    "type": "response_item",
+                    "payload": {
+                        "type": "custom_tool_call",
+                        "name": "exec",
+                        "input": "$tool_input",
+                    },
+                },
+                out,
+            ):
+                tool_input = out.get("$tool_input", "")
+
+            if "git commit" in tool_input:
                 # Only use git commit as a boundary after we've already seen
                 # at least one prompt message while scanning backwards.
-                if "git commit" in arguments and prompt:
+                if prompt:
                     seen_git_commit = True
         if model and seen_git_commit:
             break
@@ -467,6 +484,62 @@ def run_self_tests():
                     return f.read()
             finally:
                 os.unlink(commit_msg_file)
+
+        def test_codex_current_exec_call_separates_commit_prompts(self):
+            thread_id = "test-thread-id"
+            records = [
+                {
+                    "type": "event_msg",
+                    "payload": {"type": "user_message", "message": "old prompt"},
+                },
+                {
+                    "type": "response_item",
+                    "payload": {
+                        "type": "custom_tool_call",
+                        "name": "exec",
+                        "input": 'tools.exec_command({"cmd":"git commit -m old"})',
+                    },
+                },
+                {
+                    "type": "turn_context",
+                    "payload": {"model": "gpt-current"},
+                },
+                {
+                    "type": "event_msg",
+                    "payload": {"type": "user_message", "message": "new prompt"},
+                },
+                {
+                    "type": "response_item",
+                    "payload": {
+                        "type": "custom_tool_call",
+                        "name": "exec",
+                        "input": 'tools.exec_command({"cmd":"git commit -m current"})',
+                    },
+                },
+            ]
+            old_env = os.environ.copy()
+            try:
+                with tempfile.TemporaryDirectory() as home:
+                    session_dir = pathlib.Path(home) / ".codex" / "sessions" / "test"
+                    session_dir.mkdir(parents=True)
+                    session_file = session_dir / f"rollout-{thread_id}.jsonl"
+                    session_file.write_text(
+                        "\n".join(json.dumps(record) for record in records) + "\n"
+                    )
+                    os.environ["HOME"] = home
+                    os.environ["CODEX_THREAD_ID"] = thread_id
+
+                    self.assertEqual(
+                        get_codex_env(),
+                        {
+                            "Agent-Prompt": "new prompt",
+                            "Agent-Model": "gpt-current",
+                            "Agent-Harness": "codex",
+                        },
+                    )
+            finally:
+                os.environ.clear()
+                os.environ.update(old_env)
 
         def test_rewrite_replaces_existing_single_line_agent_headers(self):
             output = self.rewrite(
