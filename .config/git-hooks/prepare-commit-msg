@@ -9,9 +9,11 @@ import sqlite3
 import subprocess
 import sys
 import textwrap
+import time
 from typing import Dict, Iterable
 
 PARENT_COMMIT_SCAN_LIMIT = 16
+KIMI_SESSION_MAX_AGE_SECONDS = 3600
 SAME_AS_BEFORE_EN = "(same as before)"
 SAME_AS_BEFORE_ZH = "(同上)"
 SAME_AS_BEFORE_VALUES = {SAME_AS_BEFORE_EN, SAME_AS_BEFORE_ZH}
@@ -23,7 +25,11 @@ GIT_COMMIT_RE = re.compile(r"(?:^|&&|\|\||;)\s*git\s+commit\b")
 
 def get_agent_env() -> Dict[str, str]:
     return (
-        get_opencode_env() or get_codex_env() or get_zed_env() or get_claude_code_env()
+        get_opencode_env()
+        or get_codex_env()
+        or get_zed_env()
+        or get_claude_code_env()
+        or get_kimi_code_env()
     )
 
 
@@ -241,6 +247,176 @@ def get_claude_code_env() -> Dict[str, str]:
     return env
 
 
+def paths_overlap(a: str, b: str) -> bool:
+    try:
+        common = os.path.commonpath([a, b])
+    except ValueError:
+        return False
+    return common == a or common == b
+
+
+def kimi_wire_has_activity(wire_path: str) -> bool:
+    try:
+        with open(wire_path, "r") as f:
+            for line in f:
+                try:
+                    data = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if data.get("type") in {"turn.prompt", "llm.request"}:
+                    return True
+    except OSError:
+        pass
+    return False
+
+
+def find_kimi_code_wire_file(cwd: str):
+    # Kimi Code does not set env vars for its Bash tool subprocesses, so find
+    # the session by matching cwd against session workDir instead. Sessions
+    # live under ~/.kimi-code/sessions/<workspace>/session_*/ with the main
+    # transcript at agents/main/wire.jsonl.
+    now = time.time()
+    best = None
+    pattern = os.path.expanduser("~/.kimi-code/sessions/*/session_*/state.json")
+    for state_path in glob.glob(pattern):
+        try:
+            with open(state_path, "r") as f:
+                state = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            continue
+        work_dir = normalize_path(str(state.get("workDir") or ""))
+        if not work_dir or not paths_overlap(cwd, work_dir):
+            continue
+        wire_path = os.path.join(
+            os.path.dirname(state_path), "agents", "main", "wire.jsonl"
+        )
+        try:
+            mtime = os.path.getmtime(wire_path)
+        except OSError:
+            continue
+        # Without an env sentinel tying the hook to a live kimi process,
+        # require the transcript to be fresh so manual commits made long
+        # after a session ended are not misattributed.
+        if now - mtime > KIMI_SESSION_MAX_AGE_SECONDS:
+            continue
+        # Failed/overloaded starts can leave a newer initialization-only
+        # session behind. Do not let it hide the latest usable transcript.
+        if not kimi_wire_has_activity(wire_path):
+            continue
+        if best is None or mtime > best[0]:
+            best = (mtime, wire_path)
+    return best[1] if best else None
+
+
+def kimi_text_from_input(raw) -> str:
+    # Kimi Code currently stores content parts directly. Older pi-derived
+    # builds may store the same value as JSON text, so accept both forms.
+    if isinstance(raw, str):
+        if not raw.strip():
+            return ""
+        try:
+            raw = json.loads(raw)
+        except json.JSONDecodeError:
+            return raw.strip()
+    if raw is None:
+        return ""
+    if isinstance(raw, str):
+        return raw.strip()
+    if not isinstance(raw, list):
+        return ""
+    texts = [
+        part.get("text", "").strip()
+        for part in raw
+        if isinstance(part, dict) and part.get("type") == "text"
+    ]
+    return "\n".join(text for text in texts if text)
+
+
+def kimi_loop_event(data):
+    # Current Kimi Code stores event as an object; older pi-derived builds may
+    # contain a JSON-encoded object instead.
+    if data.get("type") != "context.append_loop_event":
+        return None
+    event = data.get("event")
+    if isinstance(event, dict):
+        return event
+    if not isinstance(event, str):
+        return None
+    try:
+        return json.loads(event)
+    except json.JSONDecodeError:
+        return None
+
+
+def get_kimi_code_env(cwd: str = None) -> Dict[str, str]:
+    env = {}
+    cwd = normalize_path(cwd or os.getcwd())
+    wire_path = find_kimi_code_wire_file(cwd)
+    if not wire_path:
+        return env
+    try:
+        with open(wire_path, "r") as f:
+            lines = f.readlines()
+    except OSError:
+        return env
+    model = None
+    prompt = []
+    seen_git_commit = False
+    for line in reversed(lines):
+        try:
+            data = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        out = {}
+        if not model:
+            # {"type":"llm.request","model":"kimi-k3","modelAlias":"moonshot-ai/kimi-k3",...}
+            if match_obj(data, {"type": "llm.request", "modelAlias": "$model"}, out):
+                model = out.get("$model", "").strip()
+        if not seen_git_commit:
+            # {"type":"turn.prompt","input":[{"type":"text","text":...}],
+            #  "origin":{"kind":"user"}}
+            if match_obj(
+                data,
+                {"type": "turn.prompt", "origin": "$origin", "input": "$input"},
+                out,
+            ):
+                origin = out.get("$origin")
+                if isinstance(origin, str):
+                    try:
+                        origin = json.loads(origin)
+                    except json.JSONDecodeError:
+                        origin = {}
+                if isinstance(origin, dict) and origin.get("kind") == "user":
+                    text = kimi_text_from_input(out.get("$input"))
+                    if text:
+                        prompt.append(text)
+            # Only use git commit as a boundary after we've already seen at least
+            # one prompt while scanning backwards (the in-flight commit that
+            # triggered this hook is not yet in the transcript).
+            event = kimi_loop_event(data)
+            if prompt and event:
+                cmd = {}
+                if match_obj(
+                    event,
+                    {
+                        "type": "tool.call",
+                        "name": "Bash",
+                        "args": {"command": "$command"},
+                    },
+                    cmd,
+                ) and GIT_COMMIT_RE.search(cmd.get("$command", "").lower()):
+                    seen_git_commit = True
+        if model and seen_git_commit:
+            break
+    if prompt:
+        env["Agent-Prompt"] = "\n----\n".join(reversed(prompt))
+    if model:
+        env["Agent-Model"] = model
+    if prompt or model:
+        env["Agent-Harness"] = "kimi-code"
+    return env
+
+
 def default_zed_threads_db() -> str:
     return os.path.expanduser("~/Library/Application Support/Zed/threads/threads.db")
 
@@ -376,14 +552,12 @@ def get_zed_env() -> Dict[str, str]:
     normalized_tmpdir = normalize_path(tmpdir)
     try:
         with sqlite3.connect(db_path) as conn:
-            rows = conn.execute(
-                """
+            rows = conn.execute("""
                 select data_type, data
                 from threads
                 order by updated_at desc
                 limit 32
-                """
-            ).fetchall()
+                """).fetchall()
     except sqlite3.Error:
         return {}
 
@@ -744,6 +918,167 @@ def run_self_tests():
                 os.environ.clear()
                 os.environ.update(old_env)
 
+        def write_kimi_session(self, home, session_id, work_dir, records):
+            session_dir = (
+                pathlib.Path(home)
+                / ".kimi-code"
+                / "sessions"
+                / "wd_repo_0123456789ab"
+                / session_id
+            )
+            wire_dir = session_dir / "agents" / "main"
+            wire_dir.mkdir(parents=True)
+            (session_dir / "state.json").write_text(
+                json.dumps({"workDir": str(work_dir)})
+            )
+            wire_file = wire_dir / "wire.jsonl"
+            wire_file.write_text(
+                "\n".join(json.dumps(record) for record in records) + "\n"
+            )
+            return wire_file
+
+        def kimi_prompt_record(self, text):
+            return {
+                "type": "turn.prompt",
+                "input": [{"type": "text", "text": text}],
+                "origin": {"kind": "user"},
+            }
+
+        def kimi_bash_record(self, command):
+            return {
+                "type": "context.append_loop_event",
+                "event": {
+                    "type": "tool.call",
+                    "name": "Bash",
+                    "args": {"command": command},
+                },
+            }
+
+        def test_kimi_code_accepts_json_encoded_pi_values(self):
+            prompt = json.dumps([{"type": "text", "text": "encoded prompt"}])
+            event = {
+                "type": "context.append_loop_event",
+                "event": json.dumps(
+                    {
+                        "type": "tool.call",
+                        "name": "Bash",
+                        "args": {"command": "git commit -m encoded"},
+                    }
+                ),
+            }
+
+            self.assertEqual(kimi_text_from_input(prompt), "encoded prompt")
+            self.assertEqual(kimi_loop_event(event)["name"], "Bash")
+
+        def test_kimi_code_env_reads_prompts_until_git_commit(self):
+            session_id = "session_01234567-89ab-cdef-0123-456789abcdef"
+            records = [
+                self.kimi_prompt_record("old prompt"),
+                self.kimi_bash_record("git commit -m old"),
+                {
+                    "type": "llm.request",
+                    "model": "kimi-k3",
+                    "modelAlias": "moonshot-ai/kimi-k3",
+                },
+                self.kimi_prompt_record("first prompt"),
+                self.kimi_prompt_record("second prompt"),
+                self.kimi_bash_record("git add . && git commit -m current"),
+            ]
+            old_env = os.environ.copy()
+            try:
+                with tempfile.TemporaryDirectory() as home:
+                    work_dir = pathlib.Path(home) / "repo"
+                    work_dir.mkdir()
+                    self.write_kimi_session(home, session_id, work_dir, records)
+                    os.environ["HOME"] = home
+
+                    self.assertEqual(
+                        get_kimi_code_env(str(work_dir)),
+                        {
+                            "Agent-Prompt": "first prompt\n----\nsecond prompt",
+                            "Agent-Model": "moonshot-ai/kimi-k3",
+                            "Agent-Harness": "kimi-code",
+                        },
+                    )
+            finally:
+                os.environ.clear()
+                os.environ.update(old_env)
+
+        def test_kimi_code_env_ignores_stale_and_unrelated_sessions(self):
+            session_id = "session_01234567-89ab-cdef-0123-456789abcdef"
+            records = [
+                self.kimi_prompt_record("prompt"),
+                {
+                    "type": "llm.request",
+                    "model": "kimi-k3",
+                    "modelAlias": "moonshot-ai/kimi-k3",
+                },
+            ]
+            old_env = os.environ.copy()
+            try:
+                with tempfile.TemporaryDirectory() as home:
+                    work_dir = pathlib.Path(home) / "repo"
+                    work_dir.mkdir()
+                    wire_file = self.write_kimi_session(
+                        home, session_id, work_dir, records
+                    )
+                    os.environ["HOME"] = home
+
+                    # Transcript older than the freshness window is ignored.
+                    stale = time.time() - KIMI_SESSION_MAX_AGE_SECONDS - 60
+                    os.utime(wire_file, (stale, stale))
+                    self.assertEqual(get_kimi_code_env(str(work_dir)), {})
+
+                    # Fresh transcript in an unrelated directory is ignored.
+                    fresh = time.time()
+                    os.utime(wire_file, (fresh, fresh))
+                    other_dir = pathlib.Path(home) / "other"
+                    other_dir.mkdir()
+                    self.assertEqual(get_kimi_code_env(str(other_dir)), {})
+            finally:
+                os.environ.clear()
+                os.environ.update(old_env)
+
+        def test_kimi_code_env_skips_newer_initialization_only_session(self):
+            records = [
+                self.kimi_prompt_record("usable prompt"),
+                {
+                    "type": "llm.request",
+                    "model": "kimi-k3",
+                    "modelAlias": "moonshot-ai/kimi-k3",
+                },
+            ]
+            old_env = os.environ.copy()
+            try:
+                with tempfile.TemporaryDirectory() as home:
+                    work_dir = pathlib.Path(home) / "repo"
+                    work_dir.mkdir()
+                    usable = self.write_kimi_session(
+                        home, "session_usable", work_dir, records
+                    )
+                    empty = self.write_kimi_session(
+                        home,
+                        "session_overloaded",
+                        work_dir,
+                        [{"type": "metadata"}, {"type": "config.update"}],
+                    )
+                    now = time.time()
+                    os.utime(usable, (now - 10, now - 10))
+                    os.utime(empty, (now, now))
+                    os.environ["HOME"] = home
+
+                    self.assertEqual(
+                        get_kimi_code_env(str(work_dir)),
+                        {
+                            "Agent-Prompt": "usable prompt",
+                            "Agent-Model": "moonshot-ai/kimi-k3",
+                            "Agent-Harness": "kimi-code",
+                        },
+                    )
+            finally:
+                os.environ.clear()
+                os.environ.update(old_env)
+
         def test_rewrite_replaces_existing_single_line_agent_headers(self):
             output = self.rewrite(
                 "subject\n\nAgent-Prompt: old\nAgent-Model: old-model\n",
@@ -877,8 +1212,7 @@ def run_self_tests():
                     ],
                 }
                 with sqlite3.connect(db_path) as conn:
-                    conn.execute(
-                        """
+                    conn.execute("""
                         create table threads (
                             id text primary key,
                             summary text not null,
@@ -886,8 +1220,7 @@ def run_self_tests():
                             data_type text not null,
                             data blob not null
                         )
-                        """
-                    )
+                        """)
                     conn.execute(
                         """
                         insert into threads values (?, ?, ?, ?, ?)
