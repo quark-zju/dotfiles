@@ -22,7 +22,12 @@ GIT_COMMIT_RE = re.compile(r"(?:^|&&|\|\||;)\s*git\s+commit\b")
 
 
 def get_agent_env() -> Dict[str, str]:
-    return get_opencode_env() or get_codex_env() or get_zed_env()
+    return (
+        get_claude_code_env()
+        or get_opencode_env()
+        or get_codex_env()
+        or get_zed_env()
+    )
 
 
 def get_opencode_env() -> Dict[str, str]:
@@ -154,6 +159,83 @@ def get_codex_env() -> Dict[str, str]:
         env["Agent-Model"] = model
     if prompt or model:
         env["Agent-Harness"] = "codex"
+    return env
+
+
+def get_claude_code_env() -> Dict[str, str]:
+    env = {}
+    session_id = os.getenv("CLAUDE_CODE_SESSION_ID")
+    if not session_id:
+        return env
+    # Claude Code writes one transcript per session under a cwd-munged dir;
+    # glob by session id to avoid replicating the dir-munging rule.
+    session_files = list(
+        glob.glob(
+            os.path.expanduser(f"~/.claude/projects/**/*{session_id}*.jsonl"),
+            recursive=True,
+        )
+    )
+    if not session_files:
+        return env
+    with open(session_files[0], "r") as f:
+        lines = f.readlines()
+    model = None
+    prompt = []
+    seen_git_commit = False
+    for line in reversed(lines):
+        try:
+            data = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        out = {}
+        if not model:
+            if match_obj(data, {"type": "assistant", "message": {"model": "$model"}}, out):
+                model = out.get("$model", "").strip()
+        if not seen_git_commit:
+            # Real typed/queued prompts carry origin {"kind":"human"} and a string
+            # content; tool results have origin=None and a list content.
+            if match_obj(
+                data,
+                {
+                    "type": "user",
+                    "origin": {"kind": "human"},
+                    "message": {"role": "user", "content": "$content"},
+                },
+                out,
+            ):
+                content = out.get("$content")
+                if isinstance(content, str) and content.strip():
+                    prompt.append(content.strip())
+            # Only use git commit as a boundary after we've already seen at least
+            # one prompt while scanning backwards (the in-flight commit that
+            # triggered this hook is not yet in the transcript).
+            turn = {}
+            if prompt and match_obj(
+                data, {"type": "assistant", "message": {"content": "$content"}}, turn
+            ):
+                content = turn["$content"]
+                if isinstance(content, list):
+                    for item in content:
+                        cmd = {}
+                        if match_obj(
+                            item,
+                            {
+                                "type": "tool_use",
+                                "name": "Bash",
+                                "input": {"command": "$command"},
+                            },
+                            cmd,
+                        ) and "git commit" in cmd.get("$command", "").lower():
+                            seen_git_commit = True
+                            break
+        if model and seen_git_commit:
+            break
+    if prompt:
+        env["Agent-Prompt"] = "\n----\n".join(reversed(prompt))
+    if model:
+        env["Agent-Model"] = model
+    if prompt or model:
+        env["Agent-Harness"] = "claude-code"
     return env
 
 
@@ -579,6 +661,83 @@ def run_self_tests():
                 os.environ.clear()
                 os.environ.update(old_env)
 
+        def test_claude_code_env_reads_prompts_until_git_commit(self):
+            session_id = "test-session-id"
+            records = [
+                {
+                    "type": "user",
+                    "origin": {"kind": "human"},
+                    "message": {"role": "user", "content": "old prompt"},
+                },
+                {
+                    "type": "assistant",
+                    "message": {
+                        "model": "claude-old",
+                        "content": [
+                            {
+                                "type": "tool_use",
+                                "name": "Bash",
+                                "input": {"command": "git commit -m old"},
+                            }
+                        ],
+                    },
+                },
+                {
+                    "type": "user",
+                    "origin": {"kind": "human"},
+                    "message": {"role": "user", "content": "first prompt"},
+                },
+                {
+                    "type": "user",
+                    "message": {
+                        "role": "user",
+                        "content": [{"type": "tool_result", "content": "git commit output"}],
+                    },
+                },
+                {
+                    "type": "user",
+                    "origin": {"kind": "human"},
+                    "message": {"role": "user", "content": "second prompt"},
+                },
+                {
+                    "type": "assistant",
+                    "message": {
+                        "model": "claude-current",
+                        "content": [
+                            {
+                                "type": "tool_use",
+                                "name": "Bash",
+                                "input": {"command": "git add . && git commit -m current"},
+                            }
+                        ],
+                    },
+                },
+            ]
+            old_env = os.environ.copy()
+            try:
+                with tempfile.TemporaryDirectory() as home:
+                    session_dir = (
+                        pathlib.Path(home) / ".claude" / "projects" / "-repo"
+                    )
+                    session_dir.mkdir(parents=True)
+                    (session_dir / f"{session_id}.jsonl").write_text(
+                        "\n".join(json.dumps(record) for record in records) + "\n"
+                    )
+                    os.environ["HOME"] = home
+                    os.environ["CLAUDE_CODE_SESSION_ID"] = session_id
+
+                    self.assertEqual(
+                        get_claude_code_env(),
+                        {
+                            "Agent-Prompt": "first prompt\n----\nsecond prompt",
+                            "Agent-Model": "claude-current",
+                            "Agent-Harness": "claude-code",
+                        },
+                    )
+            finally:
+                os.environ.clear()
+                os.environ.update(old_env)
+
         def test_rewrite_replaces_existing_single_line_agent_headers(self):
             output = self.rewrite(
                 "subject\n\nAgent-Prompt: old\nAgent-Model: old-model\n",
@@ -762,6 +921,9 @@ def run_self_tests():
             agent_prompt = "same prompt\n\nsecond line\n   \nthird line"
             env = os.environ.copy()
             env.pop("SKIP_GIT_AGENT_MESSAGE", None)
+            # Isolate the opencode path from a real Claude Code session, which
+            # would otherwise win the get_agent_env() precedence chain.
+            env.pop("CLAUDE_CODE_SESSION_ID", None)
             env.update(
                 {
                     "AGENT": "1",
