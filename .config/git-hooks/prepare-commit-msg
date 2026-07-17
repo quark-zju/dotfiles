@@ -2,13 +2,13 @@
 """Append agent metadata (model, harness, prompt) to git commit messages"""
 
 import glob
+import json
 import os
 import re
+import sqlite3
 import subprocess
 import sys
 import textwrap
-import json
-import sqlite3
 from typing import Dict, Iterable
 
 PARENT_COMMIT_SCAN_LIMIT = 16
@@ -23,10 +23,7 @@ GIT_COMMIT_RE = re.compile(r"(?:^|&&|\|\||;)\s*git\s+commit\b")
 
 def get_agent_env() -> Dict[str, str]:
     return (
-        get_claude_code_env()
-        or get_opencode_env()
-        or get_codex_env()
-        or get_zed_env()
+        get_opencode_env() or get_codex_env() or get_zed_env() or get_claude_code_env()
     )
 
 
@@ -189,7 +186,9 @@ def get_claude_code_env() -> Dict[str, str]:
             continue
         out = {}
         if not model:
-            if match_obj(data, {"type": "assistant", "message": {"model": "$model"}}, out):
+            if match_obj(
+                data, {"type": "assistant", "message": {"model": "$model"}}, out
+            ):
                 model = out.get("$model", "").strip()
         if not seen_git_commit:
             # Real typed/queued prompts carry origin {"kind":"human"} and a string
@@ -217,15 +216,18 @@ def get_claude_code_env() -> Dict[str, str]:
                 if isinstance(content, list):
                     for item in content:
                         cmd = {}
-                        if match_obj(
-                            item,
-                            {
-                                "type": "tool_use",
-                                "name": "Bash",
-                                "input": {"command": "$command"},
-                            },
-                            cmd,
-                        ) and "git commit" in cmd.get("$command", "").lower():
+                        if (
+                            match_obj(
+                                item,
+                                {
+                                    "type": "tool_use",
+                                    "name": "Bash",
+                                    "input": {"command": "$command"},
+                                },
+                                cmd,
+                            )
+                            and "git commit" in cmd.get("$command", "").lower()
+                        ):
                             seen_git_commit = True
                             break
         if model and seen_git_commit:
@@ -374,12 +376,14 @@ def get_zed_env() -> Dict[str, str]:
     normalized_tmpdir = normalize_path(tmpdir)
     try:
         with sqlite3.connect(db_path) as conn:
-            rows = conn.execute("""
+            rows = conn.execute(
+                """
                 select data_type, data
                 from threads
                 order by updated_at desc
                 limit 32
-                """).fetchall()
+                """
+            ).fetchall()
     except sqlite3.Error:
         return {}
 
@@ -691,7 +695,9 @@ def run_self_tests():
                     "type": "user",
                     "message": {
                         "role": "user",
-                        "content": [{"type": "tool_result", "content": "git commit output"}],
+                        "content": [
+                            {"type": "tool_result", "content": "git commit output"}
+                        ],
                     },
                 },
                 {
@@ -707,7 +713,9 @@ def run_self_tests():
                             {
                                 "type": "tool_use",
                                 "name": "Bash",
-                                "input": {"command": "git add . && git commit -m current"},
+                                "input": {
+                                    "command": "git add . && git commit -m current"
+                                },
                             }
                         ],
                     },
@@ -716,9 +724,7 @@ def run_self_tests():
             old_env = os.environ.copy()
             try:
                 with tempfile.TemporaryDirectory() as home:
-                    session_dir = (
-                        pathlib.Path(home) / ".claude" / "projects" / "-repo"
-                    )
+                    session_dir = pathlib.Path(home) / ".claude" / "projects" / "-repo"
                     session_dir.mkdir(parents=True)
                     (session_dir / f"{session_id}.jsonl").write_text(
                         "\n".join(json.dumps(record) for record in records) + "\n"
@@ -871,7 +877,8 @@ def run_self_tests():
                     ],
                 }
                 with sqlite3.connect(db_path) as conn:
-                    conn.execute("""
+                    conn.execute(
+                        """
                         create table threads (
                             id text primary key,
                             summary text not null,
@@ -879,7 +886,8 @@ def run_self_tests():
                             data_type text not null,
                             data blob not null
                         )
-                        """)
+                        """
+                    )
                     conn.execute(
                         """
                         insert into threads values (?, ?, ?, ?, ?)
