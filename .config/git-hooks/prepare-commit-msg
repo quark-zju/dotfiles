@@ -275,10 +275,25 @@ def find_kimi_code_wire_file(cwd: str):
     # the session by matching cwd against session workDir instead. Sessions
     # live under ~/.kimi-code/sessions/<workspace>/session_*/ with the main
     # transcript at agents/main/wire.jsonl.
+    cwd = normalize_path(cwd)
     now = time.time()
-    best = None
-    pattern = os.path.expanduser("~/.kimi-code/sessions/*/session_*/state.json")
-    for state_path in glob.glob(pattern):
+    pattern = os.path.expanduser(
+        "~/.kimi-code/sessions/*/session_*/agents/main/wire.jsonl"
+    )
+    candidates = []
+    for wire_path in glob.glob(pattern):
+        try:
+            candidates.append((os.path.getmtime(wire_path), wire_path))
+        except OSError:
+            continue
+
+    for mtime, wire_path in sorted(candidates, reverse=True):
+        # Since candidates are newest-first, every remaining transcript is
+        # stale once this one is stale.
+        if now - mtime > KIMI_SESSION_MAX_AGE_SECONDS:
+            break
+        session_dir = os.path.dirname(os.path.dirname(os.path.dirname(wire_path)))
+        state_path = os.path.join(session_dir, "state.json")
         try:
             with open(state_path, "r") as f:
                 state = json.load(f)
@@ -287,25 +302,12 @@ def find_kimi_code_wire_file(cwd: str):
         work_dir = normalize_path(str(state.get("workDir") or ""))
         if not work_dir or not paths_overlap(cwd, work_dir):
             continue
-        wire_path = os.path.join(
-            os.path.dirname(state_path), "agents", "main", "wire.jsonl"
-        )
-        try:
-            mtime = os.path.getmtime(wire_path)
-        except OSError:
-            continue
-        # Without an env sentinel tying the hook to a live kimi process,
-        # require the transcript to be fresh so manual commits made long
-        # after a session ended are not misattributed.
-        if now - mtime > KIMI_SESSION_MAX_AGE_SECONDS:
-            continue
         # Failed/overloaded starts can leave a newer initialization-only
         # session behind. Do not let it hide the latest usable transcript.
         if not kimi_wire_has_activity(wire_path):
             continue
-        if best is None or mtime > best[0]:
-            best = (mtime, wire_path)
-    return best[1] if best else None
+        return wire_path
+    return None
 
 
 def kimi_text_from_input(raw) -> str:
@@ -1075,6 +1077,38 @@ def run_self_tests():
                             "Agent-Harness": "kimi-code",
                         },
                     )
+            finally:
+                os.environ.clear()
+                os.environ.update(old_env)
+
+        def test_kimi_code_session_search_prefers_newest_match(self):
+            records = [
+                self.kimi_prompt_record("prompt"),
+                {
+                    "type": "llm.request",
+                    "model": "kimi-k3",
+                    "modelAlias": "moonshot-ai/kimi-k3",
+                },
+            ]
+            old_env = os.environ.copy()
+            try:
+                with tempfile.TemporaryDirectory() as home:
+                    work_dir = pathlib.Path(home) / "repo"
+                    work_dir.mkdir()
+                    older = self.write_kimi_session(
+                        home, "session_older", work_dir, records
+                    )
+                    newer = self.write_kimi_session(
+                        home, "session_newer", work_dir, records
+                    )
+                    now = time.time()
+                    os.utime(older, (now - 10, now - 10))
+                    os.utime(newer, (now, now))
+                    os.environ["HOME"] = home
+
+                    selected = find_kimi_code_wire_file(str(work_dir))
+
+                    self.assertEqual(selected, str(newer))
             finally:
                 os.environ.clear()
                 os.environ.update(old_env)
