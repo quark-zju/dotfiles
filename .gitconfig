@@ -12,6 +12,9 @@
 	push-master = push origin HEAD:refs/heads/master
 	st = status
 	set-local-cred = "!git config --local credential.helper 'store --file=.git/credentials' && git config --local credential.useHttpPath true"
+	set-global-cred = "!git config unset --local credential.helper; git config --local credential.useHttpPath false; mkdir -p ~/.config/git/ && touch ~/.config/git/credentials"
+[credential]
+	helper = store
 [core]
 	excludesfile = ~/.gitignore_global
 	autocrlf = false
