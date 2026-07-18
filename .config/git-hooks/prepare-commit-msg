@@ -272,8 +272,8 @@ def kimi_wire_has_activity(wire_path: str) -> bool:
 
 def find_kimi_code_wire_file(cwd: str):
     # Kimi Code does not set env vars for its Bash tool subprocesses, so find
-    # the session by matching cwd against session workDir instead. Sessions
-    # live under ~/.kimi-code/sessions/<workspace>/session_*/ with the main
+    # the session by matching cwd against the session cwd (or legacy workDir).
+    # Sessions live under ~/.kimi-code/sessions/<workspace>/session_*/ with the main
     # transcript at agents/main/wire.jsonl.
     cwd = normalize_path(cwd)
     now = time.time()
@@ -299,7 +299,7 @@ def find_kimi_code_wire_file(cwd: str):
                 state = json.load(f)
         except (OSError, json.JSONDecodeError):
             continue
-        work_dir = normalize_path(str(state.get("workDir") or ""))
+        work_dir = normalize_path(str(state.get("cwd") or state.get("workDir") or ""))
         if not work_dir or not paths_overlap(cwd, work_dir):
             continue
         # Failed/overloaded starts can leave a newer initialization-only
@@ -920,7 +920,9 @@ def run_self_tests():
                 os.environ.clear()
                 os.environ.update(old_env)
 
-        def write_kimi_session(self, home, session_id, work_dir, records):
+        def write_kimi_session(
+            self, home, session_id, work_dir, records, cwd_key="workDir"
+        ):
             session_dir = (
                 pathlib.Path(home)
                 / ".kimi-code"
@@ -931,7 +933,7 @@ def run_self_tests():
             wire_dir = session_dir / "agents" / "main"
             wire_dir.mkdir(parents=True)
             (session_dir / "state.json").write_text(
-                json.dumps({"workDir": str(work_dir)})
+                json.dumps({cwd_key: str(work_dir)})
             )
             wire_file = wire_dir / "wire.jsonl"
             wire_file.write_text(
@@ -998,6 +1000,38 @@ def run_self_tests():
                         get_kimi_code_env(str(work_dir)),
                         {
                             "Agent-Prompt": "first prompt\n----\nsecond prompt",
+                            "Agent-Model": "moonshot-ai/kimi-k3",
+                            "Agent-Harness": "kimi-code",
+                        },
+                    )
+            finally:
+                os.environ.clear()
+                os.environ.update(old_env)
+
+        def test_kimi_code_env_accepts_current_cwd_state_field(self):
+            session_id = "session_01234567-89ab-cdef-0123-456789abcdef"
+            records = [
+                self.kimi_prompt_record("current prompt"),
+                {
+                    "type": "llm.request",
+                    "model": "kimi-k3",
+                    "modelAlias": "moonshot-ai/kimi-k3",
+                },
+            ]
+            old_env = os.environ.copy()
+            try:
+                with tempfile.TemporaryDirectory() as home:
+                    work_dir = pathlib.Path(home) / "repo"
+                    work_dir.mkdir()
+                    self.write_kimi_session(
+                        home, session_id, work_dir, records, cwd_key="cwd"
+                    )
+                    os.environ["HOME"] = home
+
+                    self.assertEqual(
+                        get_kimi_code_env(str(work_dir)),
+                        {
+                            "Agent-Prompt": "current prompt",
                             "Agent-Model": "moonshot-ai/kimi-k3",
                             "Agent-Harness": "kimi-code",
                         },
