@@ -23,7 +23,6 @@
 [gui]
 	encoding = utf-8
 [pull]
-	rebase = false
 	ff = only
 [init]
 	defaultBranch = master
