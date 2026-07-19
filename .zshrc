@@ -176,13 +176,13 @@ if command -v pyenv >/dev/null 2>&1; then
 fi
 # }}}
 
-# pip install --user {{{
-path=("$HOME/.local/bin"(N-/) $path)
-# }}}
-
 # npm {{{
 # npm config set prefix '~/.npm/global'
 path=("$HOME/.npm/global/bin"(N-/) $path)
+# }}}
+
+# pip install --user, and others {{{
+path=("$HOME/.local/bin"(N-/) $path)
 # }}}
 
 # fzf {{{
