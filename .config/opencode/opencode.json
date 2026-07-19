@@ -8,13 +8,31 @@
   "autoupdate": false,
   "agent": {
     "explore": {
-      "model": "deepseek/deepseek-v4-pro"
+      "model": "deepseek/deepseek-v4-flash"
     },
     "general": {
-      "model": "deepseek/deepseek-v4-pro"
+      "model": "deepseek/deepseek-v4-flash"
     },
     "scout": {
-      "model": "deepseek/deepseek-v4-pro"
+      "model": "deepseek/deepseek-v4-flash"
+    },
+    "consult-kimi": {
+      "mode": "subagent",
+      "description": "Consult Kimi K3 (very strong) for a second opinion. Kimi K3 info: 2026-07-14 release, 2.8T params, text+image, expensive.",
+      "model": "moonshotai/kimi-k3",
+      "prompt": "Analyze the assigned task independently. Return findings, reasoning, and concrete recommendations.",
+    },
+    "consult-deepseek": {
+      "mode": "subagent",
+      "description": "Consult DeepSeek v4 Pro (decent) for a second opinion. DeepSeek v4 Pro info: 2026-04-24 release, 1.6T params, text only, very cheap.",
+      "model": "deepseek/deepseek-v4-pro",
+      "prompt": "Analyze the assigned task independently. Return findings, reasoning, and concrete recommendations.",
+    },
+    "consult-minimax": {
+      "mode": "subagent",
+      "description": "Consult MiniMax M3 (okay) for a second opinion. MiniMax M3 info: 2026-06-01 release, 0.4T params, text+image, cheap.",
+      "model": "minimax/MiniMax-M3",
+      "prompt": "Analyze the assigned task independently. Return findings, reasoning, and concrete recommendations.",
     },
   },
 }
