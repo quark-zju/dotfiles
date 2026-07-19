@@ -5,5 +5,16 @@
   "snapshot": false,
   "small_model": "deepseek/deepseek-v4-flash",
   "share": "disabled",
-  "autoupdate": false
+  "autoupdate": false,
+  "agent": {
+    "explore": {
+      "model": "deepseek/deepseek-v4-pro"
+    },
+    "general": {
+      "model": "deepseek/deepseek-v4-pro"
+    },
+    "scout": {
+      "model": "deepseek/deepseek-v4-pro"
+    },
+  },
 }
