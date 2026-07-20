@@ -35,4 +35,10 @@
       "prompt": "Analyze the assigned task independently. Return findings, reasoning, and concrete recommendations.",
     },
   },
+  "enabled_providers": [
+    "deepseek",
+    "minimax",
+    "moonshotai",
+    "openai",
+  ]
 }
