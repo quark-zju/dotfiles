@@ -1,4 +1,7 @@
-#!/usr/bin/env python3
+#!/bin/sh
+""":"
+exec python3 "$0" "$@"
+":"""
 """Append agent metadata (model, harness, prompt) to git commit messages"""
 
 import glob
