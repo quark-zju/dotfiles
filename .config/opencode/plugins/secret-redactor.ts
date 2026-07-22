@@ -160,12 +160,7 @@ function redactString(
 	const seen = new Set<string>();
 
 	for (const [type, pattern] of PATTERNS) {
-		const regex = new RegExp(pattern.source, pattern.flags);
-		for (
-			let match = regex.exec(result);
-			match !== null;
-			match = regex.exec(result)
-		) {
+		for (const match of result.matchAll(pattern)) {
 			const value = match[1] ?? match[0];
 			if (value.length < 8 || seen.has(value) || vault.tokenByValue.has(value))
 				continue;
