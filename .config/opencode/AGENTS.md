@@ -19,6 +19,7 @@ Use `git commit -m 'TITLE' -m 'User request: TEXT' -m 'Decision: TEXT'`.
 
 * Title: `<type|area>: <summary>`
 * Body: You MUST include BOTH: 1. A brief overview of the USER REQUEST. 2. The core decision-making logic (focus on *Why* than *What*).
+* Extra body: If the commit includes performance or correctness changes, add `-m 'Result: TEXT'` section.
 * Caution: Avoid backticks (`` ` ``) - they trigger shell command substitution! Use `"` or `'` instead.
 
 ## Ask for missing tools
