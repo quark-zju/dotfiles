@@ -2,6 +2,7 @@
 """:"
 exec python3 "$0" "$@"
 ":"""
+
 """Append agent metadata (model, harness, prompt) to git commit messages"""
 
 import glob
@@ -684,6 +685,17 @@ def rewrite_commit_msg(
     with open(commit_msg_file, "r") as f:
         commit_msg = f.read()
 
+    existing_headers = {
+        key
+        for key in agent_env
+        if any(line.startswith(f"{key}:") for line in commit_msg.splitlines())
+    }
+    agent_env = {
+        key: value for key, value in agent_env.items() if key not in existing_headers
+    }
+    if not agent_env:
+        return
+
     # Remove conflicting existing headers for any key in agent_env.
     keys = [k for k, v in agent_env.items() if k and (v or "").strip()]
     key_prefixes = tuple(f"{k}:" for k in keys)
@@ -741,7 +753,9 @@ def main():
         # used as git hook to rewrite commit message
         agent_env = get_agent_env()
         rewrite_commit_msg(
-            sys.argv[1], agent_env, get_parent_commit_env(agent_env.keys())
+            sys.argv[1],
+            agent_env,
+            get_parent_commit_env(agent_env.keys()),
         )
 
 
@@ -756,7 +770,11 @@ def run_self_tests():
                 f.write(commit_msg)
                 commit_msg_file = f.name
             try:
-                rewrite_commit_msg(commit_msg_file, agent_env, parent_commit_env or {})
+                rewrite_commit_msg(
+                    commit_msg_file,
+                    agent_env,
+                    parent_commit_env or {},
+                )
                 with open(commit_msg_file, "r") as f:
                     return f.read()
             finally:
@@ -1150,24 +1168,52 @@ def run_self_tests():
                 os.environ.clear()
                 os.environ.update(old_env)
 
-        def test_rewrite_replaces_existing_single_line_agent_headers(self):
+        def test_rewrite_preserves_existing_single_line_agent_headers(self):
             output = self.rewrite(
                 "subject\n\nAgent-Prompt: old\nAgent-Model: old-model\n",
                 {"Agent-Prompt": "new", "Agent-Model": "new-model"},
             )
 
             self.assertEqual(
-                output,
-                "subject\n\nAgent-Prompt: new\nAgent-Model: new-model\n",
+                output, "subject\n\nAgent-Prompt: old\nAgent-Model: old-model\n"
             )
 
-        def test_rewrite_replaces_existing_multiline_agent_header(self):
+        def test_rewrite_preserves_existing_multiline_agent_header(self):
             output = self.rewrite(
                 "subject\n\nAgent-Prompt:\n    old line 1\n    old line 2\n\nbody\n",
                 {"Agent-Prompt": "new"},
             )
 
-            self.assertEqual(output, "subject\n\nbody\n\nAgent-Prompt: new\n")
+            self.assertEqual(
+                output,
+                "subject\n\nAgent-Prompt:\n    old line 1\n    old line 2\n\nbody\n",
+            )
+
+        def test_rewrite_preserves_existing_headers(self):
+            output = self.rewrite(
+                "subject\n\nAgent-Prompt: original prompt\nAgent-Model: original-model\n",
+                {"Agent-Prompt": "new prompt", "Agent-Model": "new-model"},
+            )
+
+            self.assertEqual(
+                output,
+                "subject\n\n"
+                "Agent-Prompt: original prompt\n"
+                "Agent-Model: original-model\n",
+            )
+
+        def test_rewrite_adds_missing_headers(self):
+            output = self.rewrite(
+                "subject\n\nAgent-Prompt: original prompt\n",
+                {"Agent-Prompt": "new prompt", "Agent-Model": "new-model"},
+            )
+
+            self.assertEqual(
+                output,
+                "subject\n\n"
+                "Agent-Prompt: original prompt\n\n"
+                "Agent-Model: new-model\n",
+            )
 
         def test_rewrite_elides_multiline_value_matching_parent_commit(self):
             output = self.rewrite(
