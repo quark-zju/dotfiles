@@ -190,3 +190,10 @@ if command -v fzf >/dev/null 2>&1; then
   eval "$(fzf --zsh)"
 fi
 # }}}
+
+# bun completions
+[ -s "/home/quark/.bun/_bun" ] && source "/home/quark/.bun/_bun"
+
+# bun
+export BUN_INSTALL="$HOME/.bun"
+export PATH="$BUN_INSTALL/bin:$PATH"
