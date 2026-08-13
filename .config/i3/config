@@ -30,8 +30,8 @@ bindsym Mod1+semicolon exec xfce4-terminal
 bindsym Mod4+c kill
 bindsym Mod1+F4 kill
 
-# xflock4
-bindsym Mod4+x exec xflock4
+# lock screen
+bindsym Mod4+x exec dm-tool lock
 
 # start demu via Win+p, Win+m
 bindsym Mod4+p exec dmenu_run
