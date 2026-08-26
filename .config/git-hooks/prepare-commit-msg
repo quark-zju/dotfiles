@@ -117,6 +117,37 @@ def get_codex_env() -> Dict[str, str]:
                 user_message = out.get("$user_message", "").strip()
                 if user_message:
                     prompt.append(user_message)
+            elif match_obj(
+                data,
+                {
+                    "type": "response_item",
+                    "payload": {
+                        "type": "message",
+                        "role": "user",
+                        "content": "$content",
+                        "internal_chat_message_metadata_passthrough": {
+                            "content_item_kinds": "$content_item_kinds"
+                        },
+                    },
+                },
+                out,
+            ):
+                content = out.get("$content")
+                content_item_kinds = out.get("$content_item_kinds")
+                if isinstance(content, list) and isinstance(content_item_kinds, list):
+                    user_text_parts = []
+                    for item, kind in zip(content, content_item_kinds):
+                        text_match = {}
+                        if kind == "user.text" and match_obj(
+                            item,
+                            {"type": "input_text", "text": "$text"},
+                            text_match,
+                        ):
+                            text = text_match.get("$text", "").strip()
+                            if text:
+                                user_text_parts.append(text)
+                    if user_text_parts:
+                        prompt.append("\n".join(user_text_parts))
             git_commit = False
             # {"type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"{\"cmd\":\"git commit -m ...\"}"}}
             if match_obj(
@@ -803,8 +834,23 @@ def run_self_tests():
                     "payload": {"model": "gpt-current"},
                 },
                 {
-                    "type": "event_msg",
-                    "payload": {"type": "user_message", "message": "first prompt"},
+                    "type": "response_item",
+                    "payload": {
+                        "type": "message",
+                        "role": "user",
+                        "content": [
+                            {"type": "input_text", "text": "AGENTS instructions"},
+                            {"type": "input_text", "text": "first prompt"},
+                            {"type": "input_text", "text": "environment context"},
+                        ],
+                        "internal_chat_message_metadata_passthrough": {
+                            "content_item_kinds": [
+                                "agents_md.instructions",
+                                "user.text",
+                                "environments.environment_context",
+                            ]
+                        },
+                    },
                 },
                 {
                     "type": "response_item",
@@ -826,8 +872,17 @@ def run_self_tests():
                     },
                 },
                 {
-                    "type": "event_msg",
-                    "payload": {"type": "user_message", "message": "second prompt"},
+                    "type": "response_item",
+                    "payload": {
+                        "type": "message",
+                        "role": "user",
+                        "content": [
+                            {"type": "input_text", "text": "second prompt"},
+                        ],
+                        "internal_chat_message_metadata_passthrough": {
+                            "content_item_kinds": ["user.text"]
+                        },
+                    },
                 },
                 {
                     "type": "response_item",
