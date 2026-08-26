@@ -45,6 +45,10 @@ For algorithmic optimization tasks, do not implement shortcuts that only work fo
 
 If a general optimization is not clear, say so instead of submitting a shortcut patch.
 
+## Code investigation
+
+For tasks about understanding a 3rd-party project that require reading or searching a bunch of files, `git clone` the repo to `~/src/3p/` then read locally. For large repos, use `--filter=blob:none`, never use `--depth`.
+
 ## Environment-specific instructions
 
 ### Linux
