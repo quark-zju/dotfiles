@@ -47,7 +47,7 @@ If a general optimization is not clear, say so instead of submitting a shortcut 
 
 ## Code investigation
 
-For tasks about understanding a 3rd-party project that require reading or searching a bunch of files, `git clone` the repo to `~/src/3p/` then read locally. For large repos, use `--filter=blob:none`, never use `--depth`.
+For tasks about understanding a 3rd-party project that require reading or searching a bunch of files, `git clone` the repo to `~/src/3p/` then read locally. For large (e.g. >2GB, or takes >10 minutes) repos, use `--filter=blob:none`, never use `--depth`. By default, try non-lazy clone first.
 
 ## Environment-specific instructions
 
