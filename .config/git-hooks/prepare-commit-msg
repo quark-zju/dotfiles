@@ -24,7 +24,7 @@ SAME_AS_BEFORE_VALUES = {SAME_AS_BEFORE_EN, SAME_AS_BEFORE_ZH}
 EXEC_CMD_RE = re.compile(
     r'(?:\{|,)\s*(?:"cmd"|cmd)\s*:\s*"(?P<exec_cmd>(?:\\.|[^"\\])*)"'
 )
-GIT_COMMIT_RE = re.compile(r"(?:^|&&|\|\||;)\s*git\s+commit\b")
+GIT_COMMIT_RE = re.compile(r"(?:^|&&|\|\||;|\n|\\n)\s*git\s+commit\b")
 
 
 def get_agent_env() -> Dict[str, str]:
@@ -889,7 +889,10 @@ def run_self_tests():
                     "payload": {
                         "type": "custom_tool_call",
                         "name": "exec",
-                        "input": 'tools.exec_command({"cmd":"git commit -m current"})',
+                        "input": (
+                            'tools.exec_command({"cmd":"git add file\\n'
+                            'git commit -m current"})'
+                        ),
                     },
                 },
             ]
