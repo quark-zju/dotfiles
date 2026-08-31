@@ -44,6 +44,7 @@ import subprocess
 import sys
 import tempfile
 import textwrap
+import threading
 import time
 import traceback
 import tty
@@ -254,6 +255,112 @@ class _FrameReader:
             if not chunk:
                 raise EOFError("connection closed")
             self.buffer.extend(chunk)
+
+
+class _PendingResponse:
+    def __init__(self):
+        self.event = threading.Event()
+        self.response = None
+        self.error = None
+
+
+class _Multiplexer:
+    def __init__(self, reader, write_fd, max_frame, call_handler=None):
+        self.reader = reader
+        self.write_fd = write_fd
+        self.max_frame = max_frame
+        self.call_handler = call_handler
+        self.pending = {}
+        self.pending_lock = threading.Lock()
+        self.write_lock = threading.Lock()
+        self.closed = threading.Event()
+        self.reader_thread = threading.Thread(target=self._read, daemon=True)
+        self.reader_thread.start()
+
+    def request(self, request, deadline=None):
+        request_id = request["request_id"]
+        pending = _PendingResponse()
+        with self.pending_lock:
+            if request_id in self.pending:
+                raise ValueError("duplicate request id")
+            self.pending[request_id] = pending
+        try:
+            self._send(request)
+        except BaseException:
+            with self.pending_lock:
+                self.pending.pop(request_id, None)
+            raise
+
+        timeout = None if deadline is None else max(deadline - time.monotonic(), 0)
+        completed = pending.event.wait(timeout)
+        with self.pending_lock:
+            if not completed and pending.event.is_set():
+                completed = True
+            self.pending.pop(request_id, None)
+        if not completed:
+            raise TimeoutError("timed out waiting for remote output")
+        if pending.error is not None:
+            raise pending.error
+        return pending.response
+
+    def wait_closed(self):
+        self.closed.wait()
+
+    def _send(self, value):
+        with self.write_lock:
+            _send_frame(self.write_fd, value, self.max_frame)
+
+    def _read(self):
+        try:
+            while True:
+                message = self.reader.recv()
+                if message.get("operation") == "call":
+                    if self.call_handler is not None:
+                        threading.Thread(
+                            target=self._handle_call,
+                            args=(message,),
+                            daemon=True,
+                        ).start()
+                    continue
+                request_id = message.get("request_id")
+                with self.pending_lock:
+                    pending = self.pending.get(request_id)
+                    if pending is not None:
+                        pending.response = message
+                        pending.event.set()
+        except BaseException as exc:
+            with self.pending_lock:
+                pending = list(self.pending.values())
+                self.pending.clear()
+                for response in pending:
+                    response.error = exc
+                    response.event.set()
+        finally:
+            self.closed.set()
+
+    def _handle_call(self, request):
+        try:
+            response = self.call_handler(request)
+        except BaseException as exc:
+            response = {"ok": False, "error": _exception_data(exc)}
+        response["request_id"] = request["request_id"]
+        try:
+            self._send(response)
+        except FrameTooLarge:
+            self._send(
+                {
+                    "request_id": request["request_id"],
+                    "ok": False,
+                    "error": {
+                        "module": "ssh_sync",
+                        "qualname": "RemoteResultTooLarge",
+                        "message": "remote result and output exceed SSH_SYNC_MAX_FRAME",
+                        "repr": "RemoteResultTooLarge()",
+                        "args": None,
+                        "traceback": "",
+                    },
+                }
+            )
 
 
 def _runtime_dir():
@@ -579,6 +686,7 @@ class _Session:
             hello = self.reader.recv(deadline)
             if hello.get("operation") != "hello" or hello.get("agent_digest") != digest:
                 raise RuntimeError("invalid remote agent hello")
+            self.multiplexer = _Multiplexer(self.reader, self.fd, self.max_frame)
         except BaseException:
             self.close()
             raise
@@ -592,11 +700,7 @@ class _Session:
             "kwargs": request["kwargs"],
             "timeout": worker_timeout,
         }
-        _send_frame(self.fd, wire_request, self.max_frame)
-        while True:
-            response = self.reader.recv(deadline)
-            if response.get("request_id") == request["request_id"]:
-                return response
+        return self.multiplexer.request(wire_request, deadline)
 
     def close(self):
         fd = getattr(self, "fd", None)
@@ -668,13 +772,8 @@ def _remote_agent():
         },
         max_frame,
     )
-    while True:
-        try:
-            request = reader.recv()
-        except EOFError:
-            return
-        if request.get("operation") != "call":
-            continue
+
+    def handle_call(request):
         with tempfile.TemporaryDirectory(prefix="ssh-sync-") as temp_dir:
             result_path = os.path.join(temp_dir, "result.json")
             try:
@@ -714,25 +813,10 @@ def _remote_agent():
             response["request_id"] = request["request_id"]
             response["stdout"] = stdout
             response["stderr"] = stderr
-            try:
-                _send_frame(1, response, max_frame)
-            except FrameTooLarge:
-                _send_frame(
-                    1,
-                    {
-                        "request_id": request["request_id"],
-                        "ok": False,
-                        "error": {
-                            "module": "ssh_sync",
-                            "qualname": "RemoteResultTooLarge",
-                            "message": "remote result and output exceed SSH_SYNC_MAX_FRAME",
-                            "repr": "RemoteResultTooLarge()",
-                            "args": None,
-                            "traceback": "",
-                        },
-                    },
-                    max_frame,
-                )
+            return response
+
+    multiplexer = _Multiplexer(reader, 1, max_frame, handle_call)
+    multiplexer.wait_closed()
 
 
 def _run_daemon(host, code_hash):
