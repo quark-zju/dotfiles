@@ -30,6 +30,9 @@ EOF
 	chmod +x "$ET_SSH_DIR/ssh"
 	export PATH="$ET_SSH_DIR:$PATH"
 	bash -lc "$ET_BIN $@"
+elif [[ "${ET_REQUIRE_MASTER:-}" == 1 ]]; then
+	echo "No ET master session named $SESSION_NAME; run the interactive wrapper first" >/dev/stderr
+	exit 1
 else
 	echo Starting master session >/dev/stderr
 	ET_SSH_DIR="$HOME/.cache/et-ssh/new-session"
