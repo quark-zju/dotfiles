@@ -12,6 +12,8 @@ Execute source from the command line::
 The flags override ``SSH_SYNC_ET_COMMAND``, ``SSH_SYNC_REMOTE_PYTHON``,
 ``SSH_SYNC_TIMEOUT``, and ``SSH_SYNC_MAX_FRAME`` respectively.  Use
 ``ssh_sync.py list`` and ``ssh_sync.py stop [HOST ...]`` to manage daemons.
+Run ``ssh_sync.py install`` to symlink this file into the current Python
+interpreter's user site-packages.
 
 For library use::
 
@@ -35,6 +37,7 @@ import pty
 import select
 import shlex
 import signal
+import site
 import socket
 import struct
 import subprocess
@@ -937,6 +940,7 @@ def _command_parser():
     commands.add_parser("list", help="show running daemons")
     stop = commands.add_parser("stop", help="stop daemons")
     stop.add_argument("hosts", nargs="*")
+    commands.add_parser("install", help="symlink this module into user site-packages")
     return parser
 
 
@@ -954,6 +958,20 @@ def _exec_main(args):
     )
     if result is not None:
         print(repr(result))
+
+
+def _install_main():
+    source = os.path.realpath(__file__)
+    site_packages = site.getusersitepackages()
+    os.makedirs(site_packages, exist_ok=True)
+    destination = os.path.join(site_packages, "ssh_sync.py")
+    if os.path.lexists(destination):
+        if os.path.islink(destination) and os.path.realpath(destination) == source:
+            print(destination + " already points to " + source)
+            return
+        raise FileExistsError(destination + " already exists")
+    os.symlink(source, destination)
+    print(destination + " -> " + source)
 
 
 def _main():
@@ -975,8 +993,10 @@ def _main():
             _exec_main(args)
         elif args.command == "list":
             _control_main("list", [])
-        else:
+        elif args.command == "stop":
             _control_main("stop", args.hosts)
+        else:
+            _install_main()
 
 
 if __name__ == "__main__":
