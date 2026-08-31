@@ -1,7 +1,8 @@
 #!/bin/bash
 
 # et (eternalterminal.dev) wrapper to use a "master" connection for auth, instead of ssh.
-# The first "master" connection requires ssh auth or manul auth from another connected session.
+# The first "master" connection requires ssh auth or manual auth from another connected session.
+# Set ET_AUTO_SSH_AUTH=1 to run ssh directly, using a GUI SSH_ASKPASS when needed.
 
 # Note: ET_BIN could be a shell sequence, like "LD_PRELOAD=force_ipv6.so my_ssh -et".
 export ET_BIN="${ET_BIN:-/bin/et}"
@@ -31,16 +32,20 @@ EOF
 	chmod +x "$ET_SSH_DIR/ssh"
 	export PATH="$ET_SSH_DIR:$PATH"
 	bash -lc "$ET_BIN$ET_ARGS"
-elif [[ "${ET_REQUIRE_MASTER:-}" == 1 ]]; then
+elif [[ "${ET_REQUIRE_MASTER:-}" == 1 && "${ET_AUTO_SSH_AUTH:-}" != 1 ]]; then
 	echo "No ET master session named $SESSION_NAME; run the interactive wrapper first" >/dev/stderr
 	exit 1
 else
-	echo Starting master session >/dev/stderr
 	ET_SSH_DIR="$HOME/.cache/et-ssh/new-session"
 	mkdir -p "$ET_SSH_DIR"
 	cat >"$ET_SSH_DIR/ssh" <<'EOF'
 #!/bin/bash
 [[ "$1" == "-G" ]] && exec /usr/bin/ssh "$@"
+if [[ "${ET_AUTO_SSH_AUTH:-}" == 1 ]]; then
+  export SSH_ASKPASS="${SSH_ASKPASS:-${BASH_SOURCE[0]%/*}/ssh-askpass}"
+  export SSH_ASKPASS_REQUIRE=force
+  exec /usr/bin/ssh "$@"
+fi
 {
   echo 'Run from client:'
   printf '  ssh %s %q\n\n' "${@: -2:1}" "${@: -1}"
@@ -53,6 +58,22 @@ read i
 echo "$i"
 EOF
 	chmod +x "$ET_SSH_DIR/ssh"
+	cat >"$ET_SSH_DIR/ssh-askpass" <<'EOF'
+#!/bin/bash
+if [[ "$SSH_ASKPASS_PROMPT" == confirm ]]; then
+  /usr/bin/zenity --question --title='SSH confirmation' --text="$1" || exit
+  echo yes
+else
+  exec /usr/bin/zenity --password --title='SSH authentication' --text="$1"
+fi
+EOF
+	chmod +x "$ET_SSH_DIR/ssh-askpass"
+	if [[ "${ET_AUTO_SSH_AUTH:-}" == 1 && ! -t 0 ]]; then
+		echo Authenticating directly via ssh >/dev/stderr
+		export PATH="$ET_SSH_DIR:$PATH"
+		exec bash -lc "$ET_BIN$ET_ARGS"
+	fi
+	echo Starting master session >/dev/stderr
 	echo Run:
 	echo PATH="$ET_SSH_DIR:"'$'"PATH" tmux new-session -s $SESSION_NAME "'""$ET_BIN$ET_ARGS""'"
 	PATH="$ET_SSH_DIR:$PATH" tmux new-session -s $SESSION_NAME "$ET_BIN$ET_ARGS || sleep 30"
