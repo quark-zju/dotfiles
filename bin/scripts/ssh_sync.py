@@ -466,13 +466,16 @@ def _read_daemon_hash(host):
         return None
 
 
-def _connect_daemon(host, code_hash):
+def _connect_daemon(host, code_hash, transport_factory):
     address = _socket_path(host)
     info = _daemon_command(address, "info")
     if info is not None:
         endpoint_hash = info.get("code_hash") or _read_daemon_hash(host)
         if endpoint_hash == code_hash:
-            return Client(address, family="AF_UNIX"), info
+            transport = None
+            if info.get("kind", "outbound") == "outbound":
+                transport = transport_factory()
+            return Client(address, family="AF_UNIX"), info, transport
         if info.get("kind") == "peer":
             raise RuntimeError(
                 "ssh-sync peer %s uses a different code version" % host
@@ -484,6 +487,7 @@ def _connect_daemon(host, code_hash):
         if os.path.exists(address):
             os.unlink(address)
 
+    transport = transport_factory()
     log = open(_log_path(host), "ab", buffering=0)
     try:
         subprocess.Popen(
@@ -507,11 +511,15 @@ def _connect_daemon(host, code_hash):
     while True:
         try:
             connection = Client(address, family="AF_UNIX")
-            return connection, {
-                "kind": "outbound",
-                "code_hash": code_hash,
-                "protocol_version": _PROTOCOL_VERSION,
-            }
+            return (
+                connection,
+                {
+                    "kind": "outbound",
+                    "code_hash": code_hash,
+                    "protocol_version": _PROTOCOL_VERSION,
+                },
+                transport,
+            )
         except OSError:
             if time.monotonic() >= deadline:
                 raise RuntimeError("ssh-sync daemon did not start; see %s" % _log_path(host))
@@ -586,12 +594,15 @@ def call_remote(host, script, *args, call_timeout=None, **kwargs):
         "kwargs": kwargs,
         "agent_digest": hashlib.sha256(agent_source).hexdigest(),
         "agent_source": agent_source,
-        "transport_command": _transport_command(),
         "remote_python": _remote_python(),
         "max_frame": _max_frame(),
         "timeout": timeout,
     }
-    connection, _endpoint = _connect_daemon(host, request["agent_digest"])
+    connection, _endpoint, transport = _connect_daemon(
+        host, request["agent_digest"], _transport_command
+    )
+    if transport is not None:
+        request["transport_command"] = transport
     try:
         connection.send(request)
         # The daemon enforces the timeout and reports it as an error; only give
