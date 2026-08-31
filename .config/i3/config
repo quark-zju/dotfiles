@@ -160,14 +160,18 @@ mode "resize" {
         bindsym Escape mode "default"
 }
 
-# Skip i3bar. Expect xfce4-panel instead. To configure xfce session:
+# Use i3bar instead of xfce4-panel. To configure xfce session:
 #   # replace "xfwm4" with "i3"
 #   xfconf-query --channel xfce4-session --property /sessions/Failsafe/Client0_Command --set i3 --force-array
-#   # drop "xfdesktop"
-#   xfconf-query --channel xfce4-session --property /sessions/Failsafe/Count --set 4
-# bar {
-#     status_command i3status
-# }
+#   # keep xfsettingsd and Thunar, but drop xfce4-panel and xfdesktop
+#   xfconf-query --channel xfce4-session --property /sessions/Failsafe/Client2_Command --type string --type string --set Thunar --set=--daemon --force-array
+#   xfconf-query --channel xfce4-session --property /sessions/Failsafe/Count --set 3
+bar {
+    status_command i3status
+    position bottom
+    tray_output primary
+    tray_padding 4
+}
 
 bindsym Mod4+r mode "resize"
 
@@ -198,4 +202,3 @@ for_window [all] title_window_icon padding 4px
 # xcompmgr & background color
 exec hsetroot -solid '#111111'
 exec picom --backend glx --vsync -b
-
