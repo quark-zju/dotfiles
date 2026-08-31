@@ -58,6 +58,7 @@ _READY = b"\nSSH_SYNC_STAGE0_READY_V1\n"
 _DEFAULT_MAX_FRAME = 16 * 1024 * 1024
 _DEFAULT_TIMEOUT = 300.0
 _MAX_AGENT = 4 * 1024 * 1024
+_PROTOCOL_VERSION = 1
 
 _STAGE0_SOURCE = r'''
 import hashlib
@@ -467,23 +468,16 @@ def _read_daemon_hash(host):
 
 def _connect_daemon(host, code_hash):
     address = _socket_path(host)
-    try:
-        connection = Client(address, family="AF_UNIX")
-    except OSError:
-        connection = None
-
-    if connection is not None:
-        if _read_daemon_hash(host) == code_hash:
-            return connection
-        try:
-            try:
-                connection.send({"operation": "stop"})
-                if connection.poll(2):
-                    connection.recv()
-            except (EOFError, OSError):
-                pass
-        finally:
-            connection.close()
+    info = _daemon_command(address, "info")
+    if info is not None:
+        endpoint_hash = info.get("code_hash") or _read_daemon_hash(host)
+        if endpoint_hash == code_hash:
+            return Client(address, family="AF_UNIX"), info
+        if info.get("kind") == "peer":
+            raise RuntimeError(
+                "ssh-sync peer %s uses a different code version" % host
+            )
+        _daemon_command(address, "stop")
         deadline = time.monotonic() + 2
         while os.path.exists(address) and time.monotonic() < deadline:
             time.sleep(0.05)
@@ -512,7 +506,12 @@ def _connect_daemon(host, code_hash):
     deadline = time.monotonic() + 5
     while True:
         try:
-            return Client(address, family="AF_UNIX")
+            connection = Client(address, family="AF_UNIX")
+            return connection, {
+                "kind": "outbound",
+                "code_hash": code_hash,
+                "protocol_version": _PROTOCOL_VERSION,
+            }
         except OSError:
             if time.monotonic() >= deadline:
                 raise RuntimeError("ssh-sync daemon did not start; see %s" % _log_path(host))
@@ -592,7 +591,7 @@ def call_remote(host, script, *args, call_timeout=None, **kwargs):
         "max_frame": _max_frame(),
         "timeout": timeout,
     }
-    connection = _connect_daemon(host, request["agent_digest"])
+    connection, _endpoint = _connect_daemon(host, request["agent_digest"])
     try:
         connection.send(request)
         # The daemon enforces the timeout and reports it as an error; only give
@@ -875,7 +874,16 @@ def _run_daemon(host, code_hash):
                 operation = request.get("operation")
                 if operation in ("info", "stop"):
                     running = operation != "stop"
-                    connection.send({"ok": True, "host": host, "pid": os.getpid()})
+                    connection.send(
+                        {
+                            "ok": True,
+                            "host": host,
+                            "pid": os.getpid(),
+                            "kind": "outbound",
+                            "code_hash": code_hash,
+                            "protocol_version": _PROTOCOL_VERSION,
+                        }
+                    )
                     continue
                 if operation != "call" or request.get("host") != host:
                     raise ValueError("invalid daemon request")
