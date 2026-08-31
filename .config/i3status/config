@@ -16,13 +16,13 @@ order += "load"
 order += "time"
 
 wireless _first_ {
-  format_up = "W: (%quality at %essid, %bitrate) %ip"
+  format_up = "W: %quality at %essid, %bitrate"
   format_down = "W: down"
 }
 
 ethernet _first_ {
   # if you use %speed, i3status requires root privileges
-  format_up = "E: %ip (%speed)"
+  format_up = "E: %speed"
   format_down = "E: down"
 }
 
