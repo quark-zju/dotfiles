@@ -94,6 +94,7 @@ namespace = {
     "__ssh_sync_digest__": header[4:].hex(),
     "__ssh_sync_python_argv__": __SSH_SYNC_PYTHON_ARGV__,
     "__ssh_sync_max_frame__": __SSH_SYNC_MAX_FRAME__,
+    "__ssh_sync_peer_name__": __SSH_SYNC_PEER_NAME__,
 }
 exec(compile(source, "<ssh-sync-agent>", "exec"), namespace, namespace)
 '''
@@ -376,6 +377,10 @@ def _runtime_dir():
 
 def _host_key(host):
     return hashlib.sha256(host.encode("utf-8")).hexdigest()[:24]
+
+
+def _peer_name():
+    return socket.gethostname()
 
 
 def _socket_path(host):
@@ -662,7 +667,9 @@ class _Session:
             raise ValueError("SSH_SYNC_REMOTE_PYTHON is empty")
         stage0_source = _STAGE0_SOURCE.replace(
             "__SSH_SYNC_PYTHON_ARGV__", repr(python_argv)
-        ).replace("__SSH_SYNC_MAX_FRAME__", repr(int(max_frame)))
+        ).replace("__SSH_SYNC_MAX_FRAME__", repr(int(max_frame))).replace(
+            "__SSH_SYNC_PEER_NAME__", repr(_peer_name())
+        )
         loader = base64.b64encode(stage0_source.encode("utf-8")).decode("ascii")
         loader_code = "import base64;exec(base64.b64decode('%s'))" % loader
         command = "exec " + shlex.join(python_argv + ["-c", loader_code])
@@ -696,7 +703,17 @@ class _Session:
             hello = self.reader.recv(deadline)
             if hello.get("operation") != "hello" or hello.get("agent_digest") != digest:
                 raise RuntimeError("invalid remote agent hello")
-            self.multiplexer = _Multiplexer(self.reader, self.fd, self.max_frame)
+            if hello.get("error"):
+                raise RuntimeError(hello["error"])
+            self.multiplexer = _Multiplexer(
+                self.reader,
+                self.fd,
+                self.max_frame,
+                lambda request: _run_worker(
+                    request,
+                    [sys.executable, os.path.abspath(__file__), "_remote_worker"],
+                ),
+            )
         except BaseException:
             self.close()
             raise
@@ -810,11 +827,136 @@ def _run_worker(request, worker_argv):
         return response
 
 
+def _bind_server(address):
+    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        server.bind(address)
+    except OSError as exc:
+        if exc.errno != errno.EADDRINUSE:
+            server.close()
+            raise
+        server.close()
+        try:
+            existing = Client(address, family="AF_UNIX")
+            existing.close()
+            return None
+        except OSError:
+            os.unlink(address)
+            server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            server.bind(address)
+    server.listen(8)
+    stat = os.stat(address)
+    return server, (stat.st_dev, stat.st_ino)
+
+
+def _serve_peer(server, socket_identity, peer_name, code_hash, multiplexer):
+    address = _socket_path(peer_name)
+    hash_path = _daemon_hash_path(peer_name)
+    with open(hash_path, "w", encoding="ascii") as hash_file:
+        hash_file.write(code_hash + "\n")
+    server.settimeout(1)
+    running = True
+    try:
+        while running and not multiplexer.closed.is_set():
+            try:
+                current = os.stat(address)
+            except FileNotFoundError:
+                return
+            if (current.st_dev, current.st_ino) != socket_identity:
+                return
+            try:
+                client, _ = server.accept()
+            except socket.timeout:
+                continue
+            connection = Connection(client.detach())
+            try:
+                try:
+                    request = connection.recv()
+                except EOFError:
+                    continue
+                operation = request.get("operation")
+                if operation in ("info", "stop"):
+                    running = operation != "stop"
+                    connection.send(
+                        {
+                            "ok": True,
+                            "host": peer_name,
+                            "pid": os.getpid(),
+                            "kind": "peer",
+                            "code_hash": code_hash,
+                            "protocol_version": _PROTOCOL_VERSION,
+                        }
+                    )
+                    continue
+                if operation != "call" or request.get("host") != peer_name:
+                    raise ValueError("invalid peer request")
+                timeout = request.get("timeout")
+                deadline = None if timeout is None else time.monotonic() + timeout
+                if deadline is None:
+                    worker_timeout = None
+                    response_deadline = None
+                else:
+                    worker_timeout = deadline - time.monotonic()
+                    if worker_timeout <= 0:
+                        raise TimeoutError("remote call timed out")
+                    response_deadline = deadline + 1
+                wire_request = {
+                    "operation": "call",
+                    "request_id": request["request_id"],
+                    "function": request["function"],
+                    "args": request["args"],
+                    "kwargs": request["kwargs"],
+                    "timeout": worker_timeout,
+                }
+                response = multiplexer.request(wire_request, response_deadline)
+                connection.send(response)
+            except TimeoutError as exc:
+                try:
+                    connection.send({"timeout_error": str(exc)})
+                except OSError:
+                    pass
+            except Exception:
+                try:
+                    connection.send({"daemon_error": traceback.format_exc()})
+                except OSError:
+                    pass
+            finally:
+                connection.close()
+    finally:
+        server.close()
+        try:
+            current = os.stat(address)
+        except FileNotFoundError:
+            pass
+        else:
+            if (current.st_dev, current.st_ino) == socket_identity:
+                os.unlink(address)
+                try:
+                    os.unlink(hash_path)
+                except FileNotFoundError:
+                    pass
+
+
 def _remote_agent():
     source = globals()["__ssh_sync_source__"]
     digest = globals()["__ssh_sync_digest__"]
     python_argv = globals()["__ssh_sync_python_argv__"]
     max_frame = globals()["__ssh_sync_max_frame__"]
+    peer_name = globals()["__ssh_sync_peer_name__"]
+    address = _socket_path(peer_name)
+    bound = _bind_server(address)
+    if bound is None:
+        _send_frame(
+            1,
+            {
+                "operation": "hello",
+                "agent_digest": digest,
+                "error": "ssh-sync endpoint %s is already running" % peer_name,
+            },
+            max_frame,
+        )
+        return
+    server, socket_identity = bound
     reader = _FrameReader(0, max_frame=max_frame)
     _send_frame(
         1,
@@ -832,7 +974,13 @@ def _remote_agent():
         )
 
     multiplexer = _Multiplexer(reader, 1, max_frame, handle_call)
-    multiplexer.wait_closed()
+    _serve_peer(
+        server,
+        socket_identity,
+        peer_name,
+        digest,
+        multiplexer,
+    )
 
 
 def _run_daemon(host, code_hash):
@@ -842,25 +990,10 @@ def _run_daemon(host, code_hash):
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)
     address = _socket_path(host)
-    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    try:
-        server.bind(address)
-    except OSError as exc:
-        if exc.errno != errno.EADDRINUSE:
-            server.close()
-            raise
-        server.close()
-        try:
-            existing = Client(address, family="AF_UNIX")
-            existing.close()
-            return
-        except OSError:
-            os.unlink(address)
-            server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-            server.bind(address)
-    server.listen(8)
-    stat = os.stat(address)
-    socket_identity = (stat.st_dev, stat.st_ino)
+    bound = _bind_server(address)
+    if bound is None:
+        return
+    server, socket_identity = bound
     with open(_daemon_hash_path(host), "w", encoding="ascii") as hash_file:
         hash_file.write(code_hash + "\n")
 
