@@ -767,6 +767,49 @@ def _remote_worker(result_path):
         result_file.write(_json_dumps(response))
 
 
+def _run_worker(request, worker_argv):
+    with tempfile.TemporaryDirectory(prefix="ssh-sync-") as temp_dir:
+        result_path = os.path.join(temp_dir, "result.json")
+        try:
+            completed = subprocess.run(
+                worker_argv + [result_path],
+                input=_json_dumps(request),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=request.get("timeout"),
+            )
+            stdout = completed.stdout
+            stderr = completed.stderr
+            try:
+                with open(result_path, "rb") as result_file:
+                    response = _json_loads(result_file.read())
+            except (OSError, ValueError, json.JSONDecodeError) as exc:
+                response = {"ok": False, "error": _exception_data(exc)}
+                response["error"]["qualname"] = "RemoteWorkerError"
+                response["error"]["message"] = (
+                    "worker exited with status %d" % completed.returncode
+                )
+        except subprocess.TimeoutExpired as exc:
+            stdout = exc.stdout or b""
+            stderr = exc.stderr or b""
+            response = {
+                "ok": False,
+                "timeout": True,
+                "error": {
+                    "module": "builtins",
+                    "qualname": "TimeoutError",
+                    "message": "remote call timed out",
+                    "repr": "TimeoutError('remote call timed out')",
+                    "args": ("remote call timed out",),
+                    "traceback": "",
+                },
+            }
+        response["request_id"] = request["request_id"]
+        response["stdout"] = stdout
+        response["stderr"] = stderr
+        return response
+
+
 def _remote_agent():
     source = globals()["__ssh_sync_source__"]
     digest = globals()["__ssh_sync_digest__"]
@@ -784,46 +827,9 @@ def _remote_agent():
     )
 
     def handle_call(request):
-        with tempfile.TemporaryDirectory(prefix="ssh-sync-") as temp_dir:
-            result_path = os.path.join(temp_dir, "result.json")
-            try:
-                completed = subprocess.run(
-                    python_argv + ["-c", source, "_remote_worker", result_path],
-                    input=_json_dumps(request),
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    timeout=request.get("timeout"),
-                )
-                stdout = completed.stdout
-                stderr = completed.stderr
-                try:
-                    with open(result_path, "rb") as result_file:
-                        response = _json_loads(result_file.read())
-                except (OSError, ValueError, json.JSONDecodeError) as exc:
-                    response = {"ok": False, "error": _exception_data(exc)}
-                    response["error"]["qualname"] = "RemoteWorkerError"
-                    response["error"]["message"] = (
-                        "worker exited with status %d" % completed.returncode
-                    )
-            except subprocess.TimeoutExpired as exc:
-                stdout = exc.stdout or b""
-                stderr = exc.stderr or b""
-                response = {
-                    "ok": False,
-                    "timeout": True,
-                    "error": {
-                        "module": "builtins",
-                        "qualname": "TimeoutError",
-                        "message": "remote call timed out",
-                        "repr": "TimeoutError('remote call timed out')",
-                        "args": ("remote call timed out",),
-                        "traceback": "",
-                    },
-                }
-            response["request_id"] = request["request_id"]
-            response["stdout"] = stdout
-            response["stderr"] = stderr
-            return response
+        return _run_worker(
+            request, python_argv + ["-c", source, "_remote_worker"]
+        )
 
     multiplexer = _Multiplexer(reader, 1, max_frame, handle_call)
     multiplexer.wait_closed()
