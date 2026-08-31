@@ -69,9 +69,32 @@ fi
 EOF
 	chmod +x "$ET_SSH_DIR/ssh-askpass"
 	if [[ "${ET_AUTO_SSH_AUTH:-}" == 1 && ! -t 0 ]]; then
-		echo Authenticating directly via ssh >/dev/stderr
-		export PATH="$ET_SSH_DIR:$PATH"
-		exec bash -lc "$ET_BIN$ET_ARGS"
+		echo Starting detached master session >/dev/stderr
+		MASTER_ARGS=()
+		SKIP_ARG=0
+		for arg in "$@"; do
+			if ((SKIP_ARG)); then
+				SKIP_ARG=0
+			elif [[ "$arg" == -c || "$arg" == --command ]]; then
+				SKIP_ARG=1
+			elif [[ "$arg" != --command=* ]]; then
+				MASTER_ARGS+=("$arg")
+			fi
+		done
+		MASTER_READY=ETT_MASTER_READY
+		MASTER_ARGS+=(-c "echo $MASTER_READY; exec \"\${SHELL:-/bin/sh}\" -l")
+		printf -v MASTER_ET_ARGS ' %q' "${MASTER_ARGS[@]}"
+		printf -v MASTER_PATH %q "$ET_SSH_DIR:$PATH"
+		tmux new-session -d -s "$SESSION_NAME" \
+			"ET_AUTO_SSH_AUTH=1 PATH=$MASTER_PATH $ET_BIN$MASTER_ET_ARGS" 2>/dev/null || true
+		while tmux has-session -t "$SESSION_NAME" 2>/dev/null; do
+			if tmux capture-pane -t "$SESSION_NAME" -p | grep -Fq "$MASTER_READY"; then
+				exec "$0" "$@"
+			fi
+			sleep 0.1
+		done
+		echo "ET master session exited before becoming ready" >/dev/stderr
+		exit 1
 	fi
 	echo Starting master session >/dev/stderr
 	echo Run:
