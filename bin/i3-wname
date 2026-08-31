@@ -1,0 +1,36 @@
+#!/usr/bin/env python3
+
+import json
+import re
+import subprocess
+import sys
+
+
+def i3_message(*args):
+    result = subprocess.run(
+        ["i3-msg", *args],
+        check=True,
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    return json.loads(result.stdout)
+
+
+workspaces = i3_message("-t", "get_workspaces")
+current = next(workspace for workspace in workspaces if workspace["focused"])
+number = current["num"]
+
+if len(sys.argv) == 1:
+    name = current["name"]
+    if number >= 0:
+        name = re.sub(rf"^{number}(?::\s*|\s+)?", "", name)
+    print(name)
+else:
+    name = " ".join(sys.argv[1:]).strip()
+    if not name:
+        sys.exit("workspace name cannot be empty")
+    if number >= 0:
+        name = f"{number}: {name}"
+    response = i3_message(f"rename workspace to {json.dumps(name, ensure_ascii=False)}")
+    if not all(item.get("success") for item in response):
+        sys.exit(response[0].get("error", "failed to rename workspace"))
