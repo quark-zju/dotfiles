@@ -170,7 +170,8 @@ bar {
     status_command i3status
     position bottom
     tray_output primary
-    tray_padding 4
+    tray_output eDP-1
+    tray_padding 2
 }
 
 bindsym Mod4+r mode "resize"
