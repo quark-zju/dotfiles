@@ -20,9 +20,12 @@ For library use::
 
     import ssh_sync
     value = ssh_sync.call_remote(host, function, *args, call_timeout=30)
+    for item in ssh_sync.iter_remote(host, generator_function, call_timeout=30):
+        print(item)
 
-See :func:`call_remote` for complete function and source examples, supported
-values, timeout behavior, and stdout/stderr handling.
+See :func:`call_remote` and :func:`iter_remote` for complete function and
+source examples, supported values, timeout behavior, and stdout/stderr
+handling.
 """
 
 import ast
@@ -261,15 +264,60 @@ class _PendingResponse:
         self.response = None
         self.error = None
 
+    def deliver(self, message):
+        self.response = message
+        self.event.set()
+
+    def fail(self, error):
+        self.error = error
+        self.event.set()
+
+
+class _PendingStream:
+    def __init__(self):
+        import queue
+
+        self.queue = queue.Queue(maxsize=16)
+
+    def deliver(self, message):
+        self.queue.put((message, None))
+
+    def fail(self, error):
+        self.queue.put((None, error))
+
+    def receive(self, timeout=None):
+        import queue
+
+        try:
+            message, error = self.queue.get(timeout=timeout)
+        except queue.Empty:
+            return None
+        if error is not None:
+            raise error
+        return message
+
+
+class _IncomingStream:
+    def __init__(self):
+        self.cancelled = threading.Event()
+
+    def deliver(self, message):
+        if message["operation"] == "stream_cancel":
+            self.cancelled.set()
+
 
 class _Multiplexer:
-    def __init__(self, reader, write_fd, max_frame, call_handler=None):
+    def __init__(
+        self, reader, write_fd, max_frame, call_handler=None, stream_handler=None
+    ):
         self.reader = reader
         self.write_fd = write_fd
         self.max_frame = max_frame
         self.call_handler = call_handler
+        self.stream_handler = stream_handler
         self.pending = {}
         self.pending_lock = threading.Lock()
+        self.incoming_streams = {}
         self.write_lock = threading.Lock()
         self.closed = threading.Event()
         self.reader_thread = threading.Thread(target=self._read, daemon=True)
@@ -304,6 +352,21 @@ class _Multiplexer:
     def wait_closed(self):
         self.closed.wait()
 
+    def open_stream(self, request):
+        request_id = request["request_id"]
+        pending = _PendingStream()
+        with self.pending_lock:
+            if request_id in self.pending:
+                raise ValueError("duplicate request id")
+            self.pending[request_id] = pending
+        try:
+            self._send(request)
+        except BaseException:
+            with self.pending_lock:
+                self.pending.pop(request_id, None)
+            raise
+        return _MultiplexedStream(self, request_id, pending)
+
     def _send(self, value):
         with self.write_lock:
             _send_frame(self.write_fd, value, self.max_frame)
@@ -320,21 +383,59 @@ class _Multiplexer:
                             daemon=True,
                         ).start()
                     continue
+                if message.get("operation") == "iterate":
+                    if self.stream_handler is not None:
+                        request_id = message["request_id"]
+                        stream = _IncomingStream()
+                        with self.pending_lock:
+                            self.incoming_streams[request_id] = stream
+                        threading.Thread(
+                            target=self._handle_stream,
+                            args=(message, stream),
+                            daemon=True,
+                        ).start()
+                    continue
+                if message.get("operation", "").startswith("stream_"):
+                    with self.pending_lock:
+                        stream = self.incoming_streams.get(message.get("request_id"))
+                    if stream is not None:
+                        stream.deliver(message)
+                    continue
                 request_id = message.get("request_id")
                 with self.pending_lock:
                     pending = self.pending.get(request_id)
                     if pending is not None:
-                        pending.response = message
-                        pending.event.set()
+                        pending.deliver(message)
         except BaseException as exc:
             with self.pending_lock:
                 pending = list(self.pending.values())
                 self.pending.clear()
                 for response in pending:
-                    response.error = exc
-                    response.event.set()
+                    response.fail(exc)
+                incoming = list(self.incoming_streams.values())
+                self.incoming_streams.clear()
+                for stream in incoming:
+                    stream.cancelled.set()
         finally:
             self.closed.set()
+
+    def _handle_stream(self, request, stream):
+        try:
+            for response in self.stream_handler(request, stream):
+                response["request_id"] = request["request_id"]
+                self._send(response)
+        except BaseException as exc:
+            self._send(
+                {
+                    "request_id": request["request_id"],
+                    "stream_event": "end",
+                    "ok": False,
+                    "error": _exception_data(exc),
+                }
+            )
+        finally:
+            with self.pending_lock:
+                self.incoming_streams.pop(request["request_id"], None)
 
     def _handle_call(self, request):
         try:
@@ -359,6 +460,35 @@ class _Multiplexer:
                     },
                 }
             )
+
+
+class _MultiplexedStream:
+    def __init__(self, multiplexer, request_id, pending):
+        self.multiplexer = multiplexer
+        self.request_id = request_id
+        self.pending = pending
+        self.closed = False
+
+    def receive(self, timeout=None):
+        return self.pending.receive(timeout)
+
+    def send(self, operation, **values):
+        if self.closed:
+            raise ValueError("stream is closed")
+        self.multiplexer._send(
+            {"operation": operation, "request_id": self.request_id, **values}
+        )
+
+    def close(self, cancel=False):
+        if self.closed:
+            return
+        self.closed = True
+        if cancel:
+            self.multiplexer._send(
+                {"operation": "stream_cancel", "request_id": self.request_id}
+            )
+        with self.multiplexer.pending_lock:
+            self.multiplexer.pending.pop(self.request_id, None)
 
 
 def _runtime_dir():
@@ -677,6 +807,105 @@ def call_remote(host, script, *args, call_timeout=None, **kwargs):
     return response.get("value")
 
 
+class _RemoteIterator:
+    def __init__(self, connection, timeout):
+        self.connection = connection
+        self.deadline = None if timeout is None else time.monotonic() + timeout + 10
+        self.return_value = None
+        self.closed = False
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        if self.closed:
+            raise StopIteration
+        if self.deadline is not None:
+            remaining = self.deadline - time.monotonic()
+            if remaining <= 0 or not self.connection.poll(remaining):
+                self.close()
+                raise TimeoutError("ssh-sync daemon did not answer before the deadline")
+        try:
+            response = self.connection.recv()
+        except EOFError:
+            self.close(send_cancel=False)
+            raise RuntimeError("ssh-sync daemon closed the stream") from None
+        if response.get("stream_event") == "yield":
+            return response.get("value")
+        self.close(send_cancel=False)
+        if response.get("timeout_error"):
+            raise TimeoutError(response["timeout_error"])
+        if response.get("daemon_error"):
+            raise RuntimeError(response["daemon_error"])
+        _write_captured(sys.stdout, response.get("stdout", b""))
+        _write_captured(sys.stderr, response.get("stderr", b""))
+        if response.get("timeout"):
+            raise TimeoutError(response["error"]["message"])
+        if not response.get("ok"):
+            if response.get("cancelled"):
+                raise StopIteration
+            raise RemoteError(response["error"])
+        self.return_value = response.get("value")
+        raise StopIteration
+
+    def close(self, send_cancel=True):
+        if self.closed:
+            return
+        self.closed = True
+        if send_cancel:
+            try:
+                self.connection.send({"operation": "stream_cancel"})
+            except OSError:
+                pass
+        self.connection.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, _exc_type, _exc_value, _traceback):
+        self.close()
+
+
+def iter_remote(host, function, *args, call_timeout=None, **kwargs):
+    """Iterate over values yielded by a remote generator function.
+
+    The function follows the same source and argument restrictions as
+    :func:`call_remote`, but must be a generator function. Closing the returned
+    iterator asks the remote worker to stop.
+    """
+    if not inspect.isgeneratorfunction(function):
+        raise TypeError("function must be a generator function")
+    timeout = _resolve_timeout(call_timeout)
+    spec = _function_spec(function)
+    _encode_value(args)
+    _encode_value(kwargs)
+    agent_source = _current_source()
+    request = {
+        "operation": "iterate",
+        "host": host,
+        "request_id": uuid.uuid4().hex,
+        "function": spec,
+        "args": args,
+        "kwargs": kwargs,
+        "agent_digest": hashlib.sha256(agent_source).hexdigest(),
+        "agent_source": agent_source,
+        "remote_python": _remote_python(),
+        "max_frame": _max_frame(),
+        "timeout": timeout,
+    }
+    connection, _endpoint, transport = _connect_daemon(
+        host, request["agent_digest"], _transport_command
+    )
+    if transport is not None:
+        request["transport_command"] = transport
+    try:
+        connection.send(request)
+    except BaseException:
+        connection.close()
+        raise
+    return _RemoteIterator(connection, timeout)
+
+
 def _read_until(fd, marker, deadline=None):
     data = bytearray()
     while True:
@@ -765,6 +994,11 @@ class _Session:
                     request,
                     [sys.executable, os.path.abspath(__file__), "_remote_worker"],
                 ),
+                lambda request, control: _run_iterator(
+                    request,
+                    [sys.executable, os.path.abspath(__file__), "_remote_iterator"],
+                    control,
+                ),
             )
         except BaseException:
             self.close()
@@ -780,6 +1014,11 @@ class _Session:
             "timeout": worker_timeout,
         }
         return self.multiplexer.request(wire_request, deadline)
+
+    def iterate(self, request, worker_timeout=None):
+        return self.multiplexer.open_stream(
+            _iteration_wire_request(request, worker_timeout)
+        )
 
     def close(self):
         import signal
@@ -802,6 +1041,37 @@ class _Session:
                 os.waitpid(pid, 0)
             except ChildProcessError:
                 pass
+
+
+def _iteration_wire_request(request, worker_timeout=None):
+    return {
+        "operation": "iterate",
+        "request_id": request["request_id"],
+        "function": request["function"],
+        "args": request["args"],
+        "kwargs": request["kwargs"],
+        "timeout": worker_timeout,
+        "max_frame": request["max_frame"],
+    }
+
+
+def _forward_stream(connection, stream):
+    try:
+        while True:
+            if connection.poll():
+                command = connection.recv()
+                if command.get("operation") == "stream_cancel":
+                    stream.close(cancel=True)
+                    return
+            response = stream.receive(0.05)
+            if response is None:
+                continue
+            connection.send(response)
+            if response.get("stream_event") == "end":
+                stream.close()
+                return
+    except (EOFError, OSError):
+        stream.close(cancel=True)
 
 
 def _exception_data(exc):
@@ -838,6 +1108,131 @@ def _remote_worker(result_path):
         response = {"ok": False, "error": _exception_data(exc)}
     with open(result_path, "wb") as result_file:
         result_file.write(_json_dumps(response))
+
+
+def _remote_iterator_worker(event_fd):
+    request = _json_loads(sys.stdin.buffer.read())
+    try:
+        namespace = {"__name__": "__ssh_sync_call__"}
+        function = request["function"]
+        exec(compile(function["source"], "<ssh-sync-call>", "exec"), namespace, namespace)
+        iterator = namespace[function["name"]](*request["args"], **request["kwargs"])
+        while True:
+            try:
+                value = next(iterator)
+            except StopIteration as stopped:
+                _send_frame(
+                    event_fd,
+                    {
+                        "stream_event": "end",
+                        "ok": True,
+                        "value": stopped.value,
+                    },
+                    request["max_frame"],
+                )
+                return
+            _send_frame(
+                event_fd,
+                {"stream_event": "yield", "value": value},
+                request["max_frame"],
+            )
+    except BaseException as exc:
+        _send_frame(
+            event_fd,
+            {
+                "stream_event": "end",
+                "ok": False,
+                "error": _exception_data(exc),
+            },
+            request["max_frame"],
+        )
+
+
+def _terminate_process(process):
+    if process.poll() is not None:
+        return
+    process.terminate()
+    try:
+        process.wait(timeout=1)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait()
+
+
+def _run_iterator(request, worker_argv, control):
+    import tempfile
+
+    deadline = (
+        None
+        if request.get("timeout") is None
+        else time.monotonic() + request["timeout"]
+    )
+    with tempfile.TemporaryDirectory(prefix="ssh-sync-") as temp_dir:
+        stdout_path = os.path.join(temp_dir, "stdout")
+        stderr_path = os.path.join(temp_dir, "stderr")
+        read_fd, write_fd = os.pipe()
+        try:
+            with open(stdout_path, "wb") as stdout, open(stderr_path, "wb") as stderr:
+                process = subprocess.Popen(
+                    worker_argv + [str(write_fd)],
+                    stdin=subprocess.PIPE,
+                    stdout=stdout,
+                    stderr=stderr,
+                    pass_fds=(write_fd,),
+                )
+            os.close(write_fd)
+            write_fd = None
+            try:
+                process.stdin.write(_json_dumps(request))
+                process.stdin.close()
+                reader = _FrameReader(read_fd, max_frame=request["max_frame"])
+                while True:
+                    if control.cancelled.is_set():
+                        _terminate_process(process)
+                        yield {
+                            "stream_event": "end",
+                            "ok": False,
+                            "cancelled": True,
+                        }
+                        return
+                    poll_deadline = time.monotonic() + 0.1
+                    if deadline is not None:
+                        poll_deadline = min(poll_deadline, deadline)
+                    try:
+                        response = reader.recv(poll_deadline)
+                    except TimeoutError:
+                        if deadline is None or time.monotonic() < deadline:
+                            continue
+                        _terminate_process(process)
+                        yield {
+                            "stream_event": "end",
+                            "ok": False,
+                            "timeout": True,
+                            "error": {
+                                "module": "builtins",
+                                "qualname": "TimeoutError",
+                                "message": "remote iteration timed out",
+                                "repr": "TimeoutError('remote iteration timed out')",
+                                "args": ("remote iteration timed out",),
+                                "traceback": "",
+                            },
+                        }
+                        return
+                    if response.get("stream_event") == "end":
+                        process.wait()
+                        with open(stdout_path, "rb") as stdout:
+                            response["stdout"] = stdout.read()
+                        with open(stderr_path, "rb") as stderr:
+                            response["stderr"] = stderr.read()
+                        yield response
+                        return
+                    yield response
+            finally:
+                _terminate_process(process)
+        finally:
+            os.close(read_fd)
+            if write_fd is not None:
+                os.close(write_fd)
 
 
 def _run_worker(request, worker_argv):
@@ -1009,7 +1404,7 @@ def _serve_peer(server, socket_identity, peer_name, code_hash, multiplexer):
                         }
                     )
                     continue
-                if operation != "call" or request.get("host") != peer_name:
+                if operation not in ("call", "iterate") or request.get("host") != peer_name:
                     raise ValueError("invalid peer request")
                 timeout = request.get("timeout")
                 deadline = None if timeout is None else time.monotonic() + timeout
@@ -1021,16 +1416,22 @@ def _serve_peer(server, socket_identity, peer_name, code_hash, multiplexer):
                     if worker_timeout <= 0:
                         raise TimeoutError("remote call timed out")
                     response_deadline = deadline + 1
-                wire_request = {
-                    "operation": "call",
-                    "request_id": request["request_id"],
-                    "function": request["function"],
-                    "args": request["args"],
-                    "kwargs": request["kwargs"],
-                    "timeout": worker_timeout,
-                }
-                response = multiplexer.request(wire_request, response_deadline)
-                connection.send(response)
+                if operation == "iterate":
+                    stream = multiplexer.open_stream(
+                        _iteration_wire_request(request, worker_timeout)
+                    )
+                    _forward_stream(connection, stream)
+                else:
+                    wire_request = {
+                        "operation": "call",
+                        "request_id": request["request_id"],
+                        "function": request["function"],
+                        "args": request["args"],
+                        "kwargs": request["kwargs"],
+                        "timeout": worker_timeout,
+                    }
+                    response = multiplexer.request(wire_request, response_deadline)
+                    connection.send(response)
             except TimeoutError as exc:
                 try:
                     connection.send({"timeout_error": str(exc)})
@@ -1107,7 +1508,16 @@ def _remote_agent():
             request, python_argv + ["-c", source, "_remote_worker"]
         )
 
-    multiplexer = _Multiplexer(reader, 1, max_frame, handle_call)
+    def handle_stream(request, control):
+        if request["operation"] != "iterate":
+            raise ValueError("unsupported stream operation")
+        return _run_iterator(
+            request,
+            python_argv + ["-c", source, "_remote_iterator"],
+            control,
+        )
+
+    multiplexer = _Multiplexer(reader, 1, max_frame, handle_call, handle_stream)
     _serve_peer(
         server,
         socket_identity,
@@ -1172,7 +1582,7 @@ def _run_daemon(host, code_hash):
                         }
                     )
                     continue
-                if operation != "call" or request.get("host") != host:
+                if operation not in ("call", "iterate") or request.get("host") != host:
                     raise ValueError("invalid daemon request")
                 timeout = request.get("timeout")
                 deadline = None if timeout is None else time.monotonic() + timeout
@@ -1205,16 +1615,22 @@ def _run_daemon(host, code_hash):
                         if worker_timeout <= 0:
                             raise TimeoutError("remote call timed out")
                         response_deadline = deadline + 1
-                    response = session.call(
-                        request, worker_timeout, response_deadline
-                    )
+                    if operation == "iterate":
+                        stream = session.iterate(request, worker_timeout)
+                        _forward_stream(connection, stream)
+                        response = None
+                    else:
+                        response = session.call(
+                            request, worker_timeout, response_deadline
+                        )
                 except Exception:
                     # The stream position is unknown after a timeout or a
                     # oversized frame, so the session cannot be reused.
                     session.close()
                     session = None
                     raise
-                connection.send(response)
+                if response is not None:
+                    connection.send(response)
             except TimeoutError as exc:
                 try:
                     connection.send({"timeout_error": str(exc)})
@@ -1378,6 +1794,8 @@ def _main():
         _remote_agent()
     elif command == "_remote_worker" and len(sys.argv) >= 3:
         _remote_worker(sys.argv[2])
+    elif command == "_remote_iterator" and len(sys.argv) >= 3:
+        _remote_iterator_worker(int(sys.argv[2]))
     else:
         args = _command_parser().parse_args()
         if args.command == "exec":
