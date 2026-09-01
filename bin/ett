@@ -68,7 +68,7 @@ else
 fi
 EOF
 	chmod +x "$ET_SSH_DIR/ssh-askpass"
-	if [[ "${ET_AUTO_SSH_AUTH:-}" == 1 && ! -t 0 ]]; then
+	if [[ "${ET_AUTO_SSH_AUTH:-}" == 1 ]]; then
 		echo Starting detached master session >/dev/stderr
 		MASTER_ARGS=()
 		SKIP_ARG=0
