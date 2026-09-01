@@ -3,10 +3,15 @@
 # et (eternalterminal.dev) wrapper to use a "master" connection for auth, instead of ssh.
 # The first "master" connection requires ssh auth or manual auth from another connected session.
 # Set ET_AUTO_SSH_AUTH=1 to run ssh directly, using a GUI SSH_ASKPASS when needed.
+# It defaults to 1 when zenity is available; set it to 0 to disable.
 
 # Note: ET_BIN could be a shell sequence, like "LD_PRELOAD=force_ipv6.so my_ssh -et".
 export ET_BIN="${ET_BIN:-/bin/et}"
 export ET_NO_TELEMETRY=1
+export ET_AUTO_SSH_AUTH="${ET_AUTO_SSH_AUTH-1}"
+if ! command -v zenity >/dev/null; then
+	ET_AUTO_SSH_AUTH=0
+fi
 
 ET_HOSTPORT="$1"
 ET_HOST="${ET_HOSTPORT%%:*}"                 # strip out ":port"
@@ -71,10 +76,10 @@ EOF
 	cat >"$ET_SSH_DIR/ssh-askpass" <<'EOF'
 #!/bin/bash
 if [[ "$SSH_ASKPASS_PROMPT" == confirm ]]; then
-  /usr/bin/zenity --question --title='SSH confirmation' --text="$1" || exit
+  zenity --question --title='SSH confirmation' --text="$1" || exit
   echo yes
 else
-  exec /usr/bin/zenity --password --title='SSH authentication' --text="$1"
+  exec zenity --password --title='SSH authentication' --text="$1"
 fi
 EOF
 	chmod +x "$ET_SSH_DIR/ssh-askpass"
