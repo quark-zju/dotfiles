@@ -25,7 +25,6 @@ See :func:`call_remote` for complete function and source examples, supported
 values, timeout behavior, and stdout/stderr handling.
 """
 
-import argparse
 import ast
 import base64
 import builtins
@@ -36,21 +35,13 @@ import inspect
 import json
 import math
 import os
-import pty
-import select
 import shlex
-import signal
-import site
 import socket
-import struct
 import subprocess
 import sys
-import tempfile
 import textwrap
 import threading
 import time
-import traceback
-import tty
 import uuid
 import zlib
 from multiprocessing.connection import Client, Connection
@@ -190,6 +181,8 @@ def _write_all(fd, data):
 def _read_fd(fd, size, deadline=None):
     while True:
         if deadline is not None:
+            import select
+
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise TimeoutError("timed out waiting for remote output")
@@ -371,6 +364,8 @@ class _Multiplexer:
 def _runtime_dir():
     base = os.environ.get("XDG_RUNTIME_DIR")
     if not base:
+        import tempfile
+
         base = os.path.join(tempfile.gettempdir(), "ssh-sync-%d" % os.getuid())
     path = os.path.join(base, "ssh-sync")
     os.makedirs(path, mode=0o700, exist_ok=True)
@@ -707,6 +702,11 @@ class _Session:
         max_frame,
         deadline=None,
     ):
+        import pty
+        import signal
+        import struct
+        import tty
+
         if len(agent_source) > _MAX_AGENT:
             raise ValueError("agent source exceeds 4 MiB")
         self.host = host
@@ -782,6 +782,8 @@ class _Session:
         return self.multiplexer.request(wire_request, deadline)
 
     def close(self):
+        import signal
+
         fd = getattr(self, "fd", None)
         self.fd = None
         if fd is not None:
@@ -803,6 +805,8 @@ class _Session:
 
 
 def _exception_data(exc):
+    import traceback
+
     try:
         _encode_value(exc.args)
         args = exc.args
@@ -837,6 +841,8 @@ def _remote_worker(result_path):
 
 
 def _run_worker(request, worker_argv):
+    import tempfile
+
     with tempfile.TemporaryDirectory(prefix="ssh-sync-") as temp_dir:
         result_path = os.path.join(temp_dir, "result.json")
         try:
@@ -880,6 +886,9 @@ def _run_worker(request, worker_argv):
 
 
 def _install_uploaded_source(source):
+    import site
+    import tempfile
+
     source_bytes = source.encode("utf-8")
     site_packages = site.getusersitepackages()
     os.makedirs(site_packages, exist_ok=True)
@@ -960,6 +969,8 @@ def _bind_peer_server(address):
 
 
 def _serve_peer(server, socket_identity, peer_name, code_hash, multiplexer):
+    import traceback
+
     address = _socket_path(peer_name)
     hash_path = _daemon_hash_path(peer_name)
     with open(hash_path, "w", encoding="ascii") as hash_file:
@@ -1107,6 +1118,9 @@ def _remote_agent():
 
 
 def _run_daemon(host, code_hash):
+    import signal
+    import traceback
+
     def stop(_signum, _frame):
         raise SystemExit
 
@@ -1294,6 +1308,8 @@ def _add_call_options(parser):
 
 
 def _command_parser():
+    import argparse
+
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     commands = parser.add_subparsers(dest="command", required=True)
 
@@ -1331,6 +1347,8 @@ def _exec_main(args):
 
 
 def _install_main(force=False):
+    import site
+
     source = os.path.realpath(__file__)
     directories = [site.getusersitepackages(), os.path.expanduser("~/.local/bin")]
     for directory in directories:
