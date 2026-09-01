@@ -153,6 +153,8 @@ def list_running_agents():
                         user_messages.append(message[:1000])
                     end = start
 
+                if not user_messages:
+                    return None
                 return {
                     "session_id": session_id,
                     "harness": "codex",
