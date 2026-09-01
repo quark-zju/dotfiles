@@ -17,7 +17,37 @@ ET_HOSTPORT="$1"
 ET_HOST="${ET_HOSTPORT%%:*}"                 # strip out ":port"
 ET_BIN_HASH="$(printf '%s' "$ET_BIN" | cksum | awk '{print $1}')"
 export SESSION_NAME="et-ssh-${ET_HOST//./_}-${ET_BIN_HASH}" # tmux session name cannot have "."
-printf -v ET_ARGS ' %q' "$@"
+
+build_et_args() {
+	local client_init=" export SSH_CLIENT_PID=$PPID"
+	local has_command=0
+	local -a args=()
+
+	# et cannot set a dynamic environment variable for one connection. Prefix
+	# its startup command instead; -e keeps an otherwise interactive shell open.
+	while (($#)); do
+		if [[ "$1" == -c || "$1" == --command ]]; then
+			has_command=1
+			args+=("$1")
+			shift
+			args+=("$client_init; $1")
+			shift
+		elif [[ "$1" == --command=* ]]; then
+			has_command=1
+			args+=("--command=$client_init; ${1#--command=}")
+			shift
+		else
+			args+=("$1")
+			shift
+		fi
+	done
+	if ((!has_command)); then
+		args+=(-c "$client_init" -e)
+	fi
+	printf -v ET_ARGS ' %q' "${args[@]}"
+}
+
+build_et_args "$@"
 
 if tmux has-session -t $SESSION_NAME 2>/dev/null; then
 	echo Authenticating via the existing master session >/dev/stderr
