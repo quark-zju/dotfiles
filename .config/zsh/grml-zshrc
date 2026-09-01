@@ -2514,7 +2514,7 @@ function grml_reset_screen_title () {
     # see http://www.faqs.org/docs/Linux-mini/Xterm-Title.html
     [[ ${NOTITLE:-} -gt 0 ]] && return 0
     case $TERM in
-        (xterm*|rxvt*)
+        (xterm*|rxvt*|foot*)
             # EDITED(quark): Let TITLE override the idle terminal title.
             local body
             if [[ -n ${TITLE:-} ]]; then
@@ -2558,7 +2558,7 @@ function grml_cmd_to_screen_title () {
 
 function grml_control_xterm_title () {
     case $TERM in
-        (xterm*|rxvt*)
+        (xterm*|rxvt*|foot*)
             # EDITED(quark): Let TITLE override the running-command terminal
             # title, and LTITLE prepend a bracketed prefix.
             local body
