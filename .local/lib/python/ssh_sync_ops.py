@@ -12,7 +12,7 @@ def _repo_name(cwd):
 
     if cwd is None:
         return None
-    path = os.path.abspath(cwd)
+    path = os.path.realpath(cwd)
     while True:
         if any(
             os.path.exists(os.path.join(path, marker))
