@@ -9,9 +9,6 @@ from pathlib import Path
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
 ETT = ROOT_DIR / "bin/ett"
-sys.path.insert(0, str(ROOT_DIR / ".local/lib/python"))
-
-import ssh_sync  # noqa: E402
 
 
 def focused_node(node):
@@ -123,54 +120,31 @@ def local_context():
 def remote_cwd(client_pid):
     import os
 
-    processes = {}
     expected = ("SSH_CLIENT_PID=%d" % client_pid).encode()
+    shells = {"bash", "dash", "fish", "sh", "zsh"}
     try:
-        entries = os.scandir("/proc")
+        with os.scandir("/proc") as entries:
+            pids = sorted(
+                (int(entry.name) for entry in entries if entry.name.isdigit()),
+                reverse=True,
+            )
     except OSError:
         return None
-    with entries:
-        for entry in entries:
-            if not entry.name.isdigit():
-                continue
-            pid = int(entry.name)
-            try:
-                with open("/proc/%d/environ" % pid, "rb") as stream:
-                    if expected not in stream.read().split(b"\0"):
-                        continue
-                with open("/proc/%d/stat" % pid, encoding="utf-8") as stream:
-                    stat = stream.read()
-                fields = stat[stat.rfind(")") + 2 :].split()
-                cwd = os.readlink("/proc/%d/cwd" % pid)
-                if os.path.isdir(cwd):
-                    processes[pid] = {
-                        "ppid": int(fields[1]),
-                        "pgrp": int(fields[2]),
-                        "tpgid": int(fields[5]),
-                        "cwd": cwd,
-                    }
-            except (IndexError, OSError, ValueError):
-                continue
 
-    foreground = {
-        pid: process
-        for pid, process in processes.items()
-        if process["tpgid"] > 0 and process["pgrp"] == process["tpgid"]
-    }
-    roots = [
-        process
-        for process in foreground.values()
-        if process["ppid"] not in foreground and process["ppid"] != 1
-    ]
-    if roots:
-        return roots[0]["cwd"]
-
-    roots = [
-        process
-        for process in processes.values()
-        if process["ppid"] not in processes and process["ppid"] != 1
-    ]
-    return roots[0]["cwd"] if roots else None
+    for pid in pids:
+        try:
+            with open("/proc/%d/comm" % pid, encoding="utf-8") as stream:
+                if stream.read().strip() not in shells:
+                    continue
+            with open("/proc/%d/environ" % pid, "rb") as stream:
+                if expected not in stream.read().split(b"\0"):
+                    continue
+            cwd = os.readlink("/proc/%d/cwd" % pid)
+            if os.path.isdir(cwd):
+                return cwd
+        except OSError:
+            continue
+    return None
 
 
 def main():
@@ -180,6 +154,9 @@ def main():
     command = []
 
     if remote is not None:
+        sys.path.insert(0, str(ROOT_DIR / ".local/lib/python"))
+        import ssh_sync
+
         if remote["et_bin"]:
             os.environ["ET_BIN"] = remote["et_bin"]
         os.environ["SSH_SYNC_ET_COMMAND"] = shlex.join(
@@ -190,7 +167,7 @@ def main():
                 remote["host"],
                 remote_cwd,
                 remote["client_pid"],
-                call_timeout=3,
+                call_timeout=5,
             )
         except Exception:
             directory = None
