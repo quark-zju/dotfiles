@@ -401,18 +401,25 @@ def _daemon_hash_path(host):
     return os.path.join(_runtime_dir(), "control", _host_key(host) + ".code-hash")
 
 
-def _function_spec(script):
-    if isinstance(script, str):
-        return {"kind": "exec", "source": script}
-    if not inspect.isfunction(script):
-        raise TypeError("script must be source text or a Python function")
-    if "<locals>" in script.__qualname__:
+def _function_source(function):
+    if "<locals>" in function.__qualname__:
         raise TypeError("nested functions and closures are not supported")
+    source = textwrap.dedent(inspect.getsource(function))
+    tree = ast.parse(source)
+    definitions = [node for node in tree.body if isinstance(node, ast.FunctionDef)]
+    if len(definitions) != 1 or definitions[0].name != function.__name__:
+        raise TypeError("expected one top-level function definition")
+    if definitions[0].decorator_list:
+        raise TypeError("decorated functions are not supported")
+    return source
+
+
+def _global_names(function):
     # co_names mixes globals with attributes (``os.path`` adds both names),
     # while Python 3.14's getclosurevars() reports LOAD_ATTR names as unbound.
     # Inspect LOAD_GLOBAL directly so attributes are not mistaken for globals.
     global_names = set()
-    code_objects = [script.__code__]
+    code_objects = [function.__code__]
     while code_objects:
         code = code_objects.pop()
         global_names.update(
@@ -421,21 +428,45 @@ def _function_spec(script):
             if instruction.opname == "LOAD_GLOBAL"
         )
         code_objects.extend(value for value in code.co_consts if inspect.iscode(value))
-    names = sorted(
-        name
-        for name in global_names
-        if name in script.__globals__ or name not in vars(builtins)
-    )
-    if names:
-        raise TypeError("function depends on non-builtin globals: %s" % ", ".join(names))
-    source = textwrap.dedent(inspect.getsource(script))
-    tree = ast.parse(source)
-    definitions = [node for node in tree.body if isinstance(node, ast.FunctionDef)]
-    if len(definitions) != 1 or definitions[0].name != script.__name__:
-        raise TypeError("expected one top-level function definition")
-    if definitions[0].decorator_list:
-        raise TypeError("decorated functions are not supported")
-    return {"kind": "call", "source": source, "name": script.__name__}
+    return global_names
+
+
+def _function_spec(script):
+    if isinstance(script, str):
+        return {"kind": "exec", "source": script}
+    if not inspect.isfunction(script):
+        raise TypeError("script must be source text or a Python function")
+
+    module_globals = script.__globals__
+    sources = []
+    visited = set()
+    unresolved = set()
+
+    def add_function(function):
+        if function in visited:
+            return
+        visited.add(function)
+        for name in sorted(_global_names(function)):
+            if name not in module_globals and name in vars(builtins):
+                continue
+            value = module_globals.get(name)
+            if (
+                inspect.isfunction(value)
+                and value.__globals__ is module_globals
+                and value.__name__ == name
+            ):
+                add_function(value)
+            else:
+                unresolved.add(name)
+        sources.append(_function_source(function))
+
+    add_function(script)
+    if unresolved:
+        raise TypeError(
+            "function depends on non-builtin globals: %s"
+            % ", ".join(sorted(unresolved))
+        )
+    return {"kind": "call", "source": "\n".join(sources), "name": script.__name__}
 
 
 def _current_source():
@@ -569,8 +600,10 @@ def call_remote(host, script, *args, call_timeout=None, **kwargs):
 
         export SSH_SYNC_ET_COMMAND='et -c {command} {host}'
 
-    Pass a top-level ``def``; imports used by it should be inside the function.
-    Lambdas and closures are not supported::
+    Pass a top-level ``def``. Other top-level functions from the same module
+    are included recursively; other globals are not supported, so imports used
+    by these functions should be inside them. Lambdas and closures are not
+    supported::
 
         import ssh_sync
 
