@@ -233,3 +233,131 @@ def list_running_agents():
     return sorted(
         agents.values(), key=lambda agent: (agent["pid"], agent["session_id"])
     )
+
+
+def list_editors():
+    """Return open buffers for Neovim processes on this host."""
+    import json
+    import os
+    import shutil
+    import subprocess
+
+    markers = ("BUCK", "Cargo.toml", ".git", ".hg", ".sl")
+
+    def simplify_path(path):
+        path = os.path.abspath(os.path.expanduser(path))
+        directory = path if os.path.isdir(path) else os.path.dirname(path)
+        while True:
+            if any(
+                os.path.exists(os.path.join(directory, marker)) for marker in markers
+            ):
+                return os.path.relpath(path, os.path.dirname(directory))
+            parent = os.path.dirname(directory)
+            if parent == directory:
+                break
+            directory = parent
+
+        home = os.path.expanduser("~")
+        try:
+            if os.path.commonpath((path, home)) == home:
+                relative = os.path.relpath(path, home)
+                return "~" if relative == "." else os.path.join("~", relative)
+        except ValueError:
+            pass
+        return path
+
+    def read_cmdline(pid):
+        try:
+            with open("/proc/%d/cmdline" % pid, "rb") as stream:
+                return [os.fsdecode(arg) for arg in stream.read().split(b"\0") if arg]
+        except OSError:
+            return []
+
+    runtime_dir = os.environ.get("XDG_RUNTIME_DIR", "/run/user/%d" % os.getuid())
+    runtime_sockets = {}
+    try:
+        entries = os.scandir(runtime_dir)
+    except OSError:
+        entries = None
+    if entries is not None:
+        with entries:
+            for entry in entries:
+                parts = entry.name.split(".", 2)
+                if len(parts) == 3 and parts[0] == "nvim" and parts[1].isdigit():
+                    runtime_sockets.setdefault(int(parts[1]), []).append(entry.path)
+
+    expression = (
+        'json_encode({"pid":getpid(),"paths":map('
+        'filter(getbufinfo({"buflisted":1}), "!empty(v:val.name) && '
+        "empty(getbufvar(v:val.bufnr, '&buftype'))\"), "
+        '"fnamemodify(v:val.name, \\":p\\")")})'
+    )
+    editors = []
+    for pid, sockets in sorted(runtime_sockets.items()):
+        cmdline = read_cmdline(pid)
+        executables = ["/proc/%d/exe" % pid]
+        if cmdline:
+            if os.path.sep in cmdline[0]:
+                executable = cmdline[0]
+                if not os.path.isabs(executable):
+                    try:
+                        cwd = os.readlink("/proc/%d/cwd" % pid)
+                    except OSError:
+                        cwd = None
+                    if cwd is not None:
+                        executable = os.path.join(cwd, executable)
+                executables.append(executable)
+            else:
+                executable = shutil.which(cmdline[0])
+                if executable is not None:
+                    executables.append(executable)
+        executable = shutil.which("nvim")
+        if executable is not None:
+            executables.append(executable)
+        executables = list(dict.fromkeys(executables))
+
+        paths = None
+        for socket_path in sorted(sockets):
+            for executable in executables:
+                try:
+                    completed = subprocess.run(
+                        [
+                            executable,
+                            "--server",
+                            socket_path,
+                            "--remote-expr",
+                            expression,
+                        ],
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.DEVNULL,
+                        timeout=1,
+                        check=False,
+                        encoding="utf-8",
+                    )
+                    result = json.loads(completed.stdout)
+                except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError):
+                    continue
+                if (
+                    completed.returncode == 0
+                    and isinstance(result, dict)
+                    and result.get("pid") == pid
+                    and isinstance(result.get("paths"), list)
+                ):
+                    paths = [path for path in result["paths"] if isinstance(path, str)]
+                    break
+            if paths is not None:
+                break
+
+        if paths is None:
+            continue
+
+        buffers = []
+        for path in dict.fromkeys(paths):
+            try:
+                mtime = os.stat(path).st_mtime
+            except OSError:
+                mtime = None
+            buffers.append({"path": simplify_path(path), "mtime": mtime})
+        editors.append({"pid": pid, "name": "nvim", "buffers": buffers})
+
+    return editors
