@@ -300,15 +300,15 @@ def list_editors():
     editors = []
     for pid, sockets in sorted(runtime_sockets.items()):
         cmdline = read_cmdline(pid)
+        try:
+            cwd = os.readlink("/proc/%d/cwd" % pid)
+        except OSError:
+            cwd = None
         executables = ["/proc/%d/exe" % pid]
         if cmdline:
             if os.path.sep in cmdline[0]:
                 executable = cmdline[0]
                 if not os.path.isabs(executable):
-                    try:
-                        cwd = os.readlink("/proc/%d/cwd" % pid)
-                    except OSError:
-                        cwd = None
                     if cwd is not None:
                         executable = os.path.join(cwd, executable)
                 executables.append(executable)
@@ -363,6 +363,13 @@ def list_editors():
             except OSError:
                 mtime = None
             buffers.append({"path": simplify_path(path), "mtime": mtime})
-        editors.append({"pid": pid, "name": "nvim", "buffers": buffers})
+        editors.append(
+            {
+                "pid": pid,
+                "name": "nvim",
+                "repo_name": _repo_name(cwd),
+                "buffers": buffers,
+            }
+        )
 
     return editors
