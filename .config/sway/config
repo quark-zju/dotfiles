@@ -26,11 +26,11 @@ set $menu wmenu-run
 xwayland enable
 
 # Make the Wayland session environment available to D-Bus and systemd user
-# services, then start the desktop services previously provided by Xfce.
-exec dbus-update-activation-environment --systemd WAYLAND_DISPLAY SWAYSOCK XDG_CURRENT_DESKTOP
+# services, then start XDG autostart applications and the desktop services
+# which do not advertise Sway support in their desktop files.
+exec dbus-update-activation-environment --systemd DISPLAY WAYLAND_DISPLAY SWAYSOCK XDG_CURRENT_DESKTOP XDG_SESSION_DESKTOP XDG_SESSION_TYPE GTK_IM_MODULE QT_IM_MODULE XMODIFIERS
+exec dex --autostart --environment sway
 exec mako
-exec nm-applet --indicator
-exec blueman-applet
 exec /usr/libexec/xfce-polkit
 
 # Lock before suspend, lock after 10 idle minutes, and power displays down
@@ -176,3 +176,6 @@ for_window [class="Xfce4-appfinder"] floating enable
 for_window [class="zoom"] floating enable
 for_window [title="Live Caption"] floating enable
 for_window [class="Blueman-manager"] floating enable
+
+# Machine-specific settings, such as output layout. This file is untracked.
+include config.local
