@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
 
 import json
+import os
 import re
 import subprocess
 import sys
 
 
-def i3_message(*args):
+def ipc_message(*args):
+    client = "swaymsg" if os.environ.get("SWAYSOCK") else "i3-msg"
     result = subprocess.run(
-        ["i3-msg", *args],
+        [client, *args],
         check=True,
         stdout=subprocess.PIPE,
         text=True,
@@ -16,7 +18,7 @@ def i3_message(*args):
     return json.loads(result.stdout)
 
 
-workspaces = i3_message("-t", "get_workspaces")
+workspaces = ipc_message("-t", "get_workspaces")
 current = next(workspace for workspace in workspaces if workspace["focused"])
 number = current["num"]
 
@@ -31,6 +33,6 @@ else:
         sys.exit("workspace name cannot be empty")
     if number >= 0:
         name = f"{number}: {name}"
-    response = i3_message(f"rename workspace to {json.dumps(name, ensure_ascii=False)}")
+    response = ipc_message(f"rename workspace to {json.dumps(name, ensure_ascii=False)}")
     if not all(item.get("success") for item in response):
         sys.exit(response[0].get("error", "failed to rename workspace"))
