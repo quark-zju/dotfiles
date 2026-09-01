@@ -8,6 +8,7 @@ from the module's global scope.
 
 def list_running_agents():
     """Return Codex sessions whose rollout files are open by local processes."""
+    import datetime
     import functools
     import json
     import mmap
@@ -106,7 +107,10 @@ def list_running_agents():
                 parts.append(value.strip())
         message = "\n".join(parts)
         if message and not is_synthetic_user_message(message):
-            return message
+            timestamp = datetime.datetime.fromisoformat(
+                obj["timestamp"].replace("Z", "+00:00")
+            ).timestamp()
+            return {"message": message[:1000], "timestamp": timestamp}
         return None
 
     def inspect_rollout(fd_path, pid, cwd):
@@ -172,7 +176,7 @@ def list_running_agents():
                                 working = False
                     message = user_message(obj)
                     if message is not None:
-                        user_messages.append(message[:1000])
+                        user_messages.append(message)
                     end = start
 
                 if not user_messages:
