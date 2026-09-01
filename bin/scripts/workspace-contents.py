@@ -18,6 +18,14 @@ from typing import Any
 
 LIB_DIR = Path(__file__).resolve().parents[2] / ".local/lib/python"
 TERMINAL_APP_IDS = frozenset(("foot", "xfce4-terminal"))
+COLORS = {
+    "codex": "\033[32m",
+    "nvim": "\033[94m",
+    "idle": "\033[90m",
+    "suspended": "\033[35m",
+    "working": "\033[33m",
+}
+RESET_COLOR = "\033[0m"
 sys.path.insert(0, str(LIB_DIR))
 
 import ssh_sync  # noqa: E402
@@ -254,6 +262,19 @@ def align_line(text: str, timestamp: str, width: int) -> str:
     return prefix + " " * padding + timestamp
 
 
+def colorize_line(line: str) -> str:
+    parts = line.split(" · ")
+    for index, part in enumerate(parts):
+        token = part.strip()
+        color = COLORS.get(token)
+        if color is None:
+            continue
+        start = len(part) - len(part.lstrip())
+        end = len(part.rstrip())
+        parts[index] = part[:start] + color + token + RESET_COLOR + part[end:]
+    return " · ".join(parts)
+
+
 def render(args: argparse.Namespace) -> str:
     workspaces = sway_workspaces()
     sources, errors = collect(args.remote, args.timeout)
@@ -289,7 +310,7 @@ def render(args: argparse.Namespace) -> str:
                     None,
                     (
                         source_name,
-                        str(agent.get("harness", "codex")),
+                        str(agent.get("harness", "codex")).ljust(5),
                         compact(agent.get("repo_name", "")),
                         state,
                         compact(last_message.get("message", "")),
@@ -312,7 +333,7 @@ def render(args: argparse.Namespace) -> str:
                             None,
                             (
                                 source_name,
-                                str(editor.get("name", "nvim")),
+                                str(editor.get("name", "nvim")).ljust(5),
                                 compact(editor.get("repo_name", "")),
                                 compact(buffer.get("path", "")),
                             ),
@@ -327,7 +348,7 @@ def render(args: argparse.Namespace) -> str:
                         None,
                         (
                             source_name,
-                            str(editor.get("name", "nvim")),
+                            str(editor.get("name", "nvim")).ljust(5),
                             compact(editor.get("repo_name", "")),
                             "suspended",
                         ),
@@ -347,6 +368,8 @@ def render(args: argparse.Namespace) -> str:
         if lines:
             lines.append("")
         lines.extend("warning: " + compact(error) for error in errors)
+    if sys.stdout.isatty():
+        lines = [colorize_line(line) for line in lines]
     return "\n".join(lines)
 
 
