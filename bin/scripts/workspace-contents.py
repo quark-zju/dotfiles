@@ -342,8 +342,13 @@ def render(args: argparse.Namespace) -> str:
                             ),
                         )
                     )
+                    timestamps = [
+                        value
+                        for value in (buffer.get("mtime"), editor.get("start_time"))
+                        if isinstance(value, (int, float))
+                    ]
                     rows[workspace_by_terminal[terminal]].append(
-                        (text, age(buffer.get("mtime"), now))
+                        (text, age(max(timestamps, default=None), now))
                     )
             elif editor.get("suspended"):
                 text = " · ".join(
