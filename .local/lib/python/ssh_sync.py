@@ -28,6 +28,8 @@ values, timeout behavior, and stdout/stderr handling.
 import argparse
 import ast
 import base64
+import builtins
+import dis
 import errno
 import hashlib
 import inspect
@@ -406,9 +408,22 @@ def _function_spec(script):
         raise TypeError("script must be source text or a Python function")
     if "<locals>" in script.__qualname__:
         raise TypeError("nested functions and closures are not supported")
-    closure = inspect.getclosurevars(script)
-    if closure.globals or closure.unbound:
-        names = sorted(set(closure.globals) | set(closure.unbound))
+    global_names = set()
+    code_objects = [script.__code__]
+    while code_objects:
+        code = code_objects.pop()
+        global_names.update(
+            instruction.argval
+            for instruction in dis.get_instructions(code)
+            if instruction.opname == "LOAD_GLOBAL"
+        )
+        code_objects.extend(value for value in code.co_consts if inspect.iscode(value))
+    names = sorted(
+        name
+        for name in global_names
+        if name in script.__globals__ or name not in vars(builtins)
+    )
+    if names:
         raise TypeError("function depends on non-builtin globals: %s" % ", ".join(names))
     source = textwrap.dedent(inspect.getsource(script))
     tree = ast.parse(source)
