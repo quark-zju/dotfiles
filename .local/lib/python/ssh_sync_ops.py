@@ -327,10 +327,30 @@ def list_editors():
     editors = []
     for server_pid, sockets in sorted(runtime_sockets.items()):
         cmdline = read_cmdline(server_pid)
+        pid = editor_pid(server_pid, cmdline)
         try:
             server_cwd = os.readlink("/proc/%d/cwd" % server_pid)
         except OSError:
             server_cwd = None
+        try:
+            cwd = os.readlink("/proc/%d/cwd" % pid)
+        except OSError:
+            cwd = server_cwd
+        suspended = _process_suspended(pid) or (
+            pid != server_pid and _process_suspended(server_pid)
+        )
+        if suspended:
+            editors.append(
+                {
+                    "pid": pid,
+                    "name": "nvim",
+                    "suspended": True,
+                    "repo_name": _repo_name(cwd),
+                    "buffers": [],
+                }
+            )
+            continue
+
         executables = ["/proc/%d/exe" % server_pid]
         if cmdline:
             if os.path.sep in cmdline[0]:
@@ -350,6 +370,7 @@ def list_editors():
 
         paths = None
         api_cwd = None
+        timed_out = False
         for socket_path in sorted(sockets):
             for executable in executables:
                 try:
@@ -368,7 +389,10 @@ def list_editors():
                         encoding="utf-8",
                     )
                     result = json.loads(completed.stdout)
-                except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError):
+                except subprocess.TimeoutExpired:
+                    timed_out = True
+                    break
+                except (OSError, json.JSONDecodeError):
                     continue
                 if (
                     completed.returncode == 0
@@ -380,16 +404,13 @@ def list_editors():
                     if isinstance(result.get("cwd"), str):
                         api_cwd = result["cwd"]
                     break
-            if paths is not None:
+            if paths is not None or timed_out:
                 break
 
         if paths is None:
             continue
 
-        pid = editor_pid(server_pid, cmdline)
-        try:
-            cwd = os.readlink("/proc/%d/cwd" % pid)
-        except OSError:
+        if cwd is None:
             cwd = api_cwd or server_cwd
         buffers = []
         for path in dict.fromkeys(paths):
@@ -402,7 +423,7 @@ def list_editors():
             {
                 "pid": pid,
                 "name": "nvim",
-                "suspended": _process_suspended(pid),
+                "suspended": False,
                 "repo_name": _repo_name(cwd),
                 "buffers": buffers,
             }
