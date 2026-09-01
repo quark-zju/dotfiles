@@ -36,6 +36,24 @@ def _process_suspended(pid):
     return comm_end >= 0 and stat[comm_end + 2 : comm_end + 3] == "T"
 
 
+def _process_start_time(pid):
+    """Return a process start time as a Unix timestamp, if available."""
+    import os
+
+    try:
+        with open("/proc/%d/stat" % pid, encoding="utf-8") as stream:
+            stat = stream.read()
+        fields = stat[stat.rfind(")") + 2 :].split()
+        start_ticks = int(fields[19])
+        with open("/proc/stat", encoding="utf-8") as stream:
+            boot_time = next(
+                int(line.split()[1]) for line in stream if line.startswith("btime ")
+            )
+        return boot_time + start_ticks / os.sysconf("SC_CLK_TCK")
+    except (OSError, ValueError, IndexError, StopIteration):
+        return None
+
+
 def _ssh_client_pid(pid):
     """Return SSH_CLIENT_PID from a process environment, if valid."""
     try:
@@ -221,6 +239,7 @@ def list_running_agents():
                     "user_messages": list(reversed(user_messages)),
                     "working": bool(working),
                     "pid": pid,
+                    "start_time": _process_start_time(pid),
                     "suspended": _process_suspended(pid),
                     "cwd": cwd,
                     "repo_name": repo_name(cwd),
@@ -365,6 +384,7 @@ def list_editors():
             editor = {
                 "pid": pid,
                 "name": "nvim",
+                "start_time": _process_start_time(pid),
                 "suspended": True,
                 "repo_name": _repo_name(cwd),
                 "buffers": [],
@@ -447,6 +467,7 @@ def list_editors():
         editor = {
             "pid": pid,
             "name": "nvim",
+            "start_time": _process_start_time(pid),
             "suspended": False,
             "repo_name": _repo_name(cwd),
             "buffers": buffers,
