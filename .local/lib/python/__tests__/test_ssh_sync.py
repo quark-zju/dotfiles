@@ -1,8 +1,8 @@
+import os
 import sys
 import threading
 import unittest
 from pathlib import Path
-
 
 LIB_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(LIB_DIR))
@@ -77,6 +77,144 @@ class IteratorWorkerTest(unittest.TestCase):
         self.assertTrue(final["cancelled"])
         with self.assertRaises(StopIteration):
             next(responses)
+
+
+class ProcessWorkerTest(unittest.TestCase):
+    def test_streams_stdin_stdout_stderr_and_exit_status(self):
+        control = ssh_sync._IncomingStream()
+        request = {
+            "argv": [
+                sys.executable,
+                "-c",
+                "import sys; data = sys.stdin.buffer.read(); "
+                "sys.stdout.buffer.write(data.upper()); "
+                "sys.stderr.buffer.write(b'notice')",
+            ],
+            "cwd": None,
+            "env": None,
+            "timeout": 5,
+        }
+        control.deliver({"operation": "stream_input", "data": b"hello"})
+        control.deliver({"operation": "stream_eof"})
+
+        responses = list(ssh_sync._run_process(request, control))
+
+        stdout = b"".join(
+            event["data"] for event in responses if event["stream_event"] == "stdout"
+        )
+        stderr = b"".join(
+            event["data"] for event in responses if event["stream_event"] == "stderr"
+        )
+        self.assertEqual(stdout, b"HELLO")
+        self.assertEqual(stderr, b"notice")
+        self.assertEqual(
+            responses[-1], {"stream_event": "end", "ok": True, "returncode": 0}
+        )
+
+    def test_cancel_terminates_process(self):
+        control = ssh_sync._IncomingStream()
+        request = {
+            "argv": [
+                sys.executable,
+                "-u",
+                "-c",
+                "import os,time; print(os.getpid()); time.sleep(60)",
+            ],
+            "cwd": None,
+            "env": None,
+            "timeout": 5,
+        }
+        responses = ssh_sync._run_process(request, control)
+        pid = int(next(responses)["data"])
+
+        control.cancelled.set()
+        final = next(responses)
+
+        self.assertTrue(final["cancelled"])
+        with self.assertRaises(StopIteration):
+            next(responses)
+        with self.assertRaises(ProcessLookupError):
+            os.kill(pid, 0)
+
+    def test_timeout_terminates_process(self):
+        control = ssh_sync._IncomingStream()
+        request = {
+            "argv": [sys.executable, "-c", "import time; time.sleep(60)"],
+            "cwd": None,
+            "env": None,
+            "timeout": 0.05,
+        }
+
+        responses = list(ssh_sync._run_process(request, control))
+
+        self.assertTrue(responses[-1]["timeout"])
+
+
+class RemoteProcessTest(unittest.TestCase):
+    class Connection:
+        def __init__(self, responses):
+            self.responses = iter(responses)
+            self.sent = []
+            self.closed = False
+
+        def send(self, value):
+            self.sent.append(value)
+
+        def poll(self, _timeout=None):
+            return True
+
+        def recv(self):
+            return next(self.responses)
+
+        def close(self):
+            self.closed = True
+
+    def test_chunks_input_and_iterates_output(self):
+        connection = self.Connection(
+            [
+                {"stream_event": "stdout", "data": b"output"},
+                {"stream_event": "end", "ok": True, "returncode": 7},
+            ]
+        )
+        process = ssh_sync.RemoteProcess(connection, timeout=None)
+
+        process.send(b"x" * (ssh_sync._STREAM_CHUNK_SIZE + 1))
+        process.close_stdin()
+        events = list(process)
+
+        self.assertEqual(
+            [(event.stream, event.data) for event in events], [("stdout", b"output")]
+        )
+        self.assertEqual(process.returncode, 7)
+        self.assertEqual(
+            [len(message["data"]) for message in connection.sent[:-1]],
+            [ssh_sync._STREAM_CHUNK_SIZE, 1],
+        )
+        self.assertEqual(connection.sent[-1], {"operation": "stream_eof"})
+        self.assertTrue(connection.closed)
+
+    def test_communicate(self):
+        connection = self.Connection(
+            [
+                {"stream_event": "stderr", "data": b"warning"},
+                {"stream_event": "stdout", "data": b"result"},
+                {"stream_event": "end", "ok": True, "returncode": 0},
+            ]
+        )
+        process = ssh_sync.RemoteProcess(connection, timeout=None)
+
+        stdout, stderr = process.communicate(b"input")
+
+        self.assertEqual(stdout, b"result")
+        self.assertEqual(stderr, b"warning")
+        self.assertEqual(process.returncode, 0)
+        self.assertEqual(
+            connection.sent,
+            [
+                {"operation": "stream_input", "data": b"input"},
+                {"operation": "stream_eof"},
+            ],
+        )
 
 
 if __name__ == "__main__":
