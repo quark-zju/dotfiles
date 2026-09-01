@@ -849,6 +849,22 @@ def _bind_server(address):
     return server, (stat.st_dev, stat.st_ino)
 
 
+def _bind_peer_server(address):
+    bound = _bind_server(address)
+    if bound is not None:
+        return bound
+    info = _daemon_command(address, "info")
+    if info is None or info.get("kind") != "peer":
+        return None
+    _daemon_command(address, "stop")
+    deadline = time.monotonic() + 2
+    while os.path.exists(address) and time.monotonic() < deadline:
+        time.sleep(0.05)
+    if os.path.exists(address):
+        os.unlink(address)
+    return _bind_server(address)
+
+
 def _serve_peer(server, socket_identity, peer_name, code_hash, multiplexer):
     address = _socket_path(peer_name)
     hash_path = _daemon_hash_path(peer_name)
@@ -944,7 +960,7 @@ def _remote_agent():
     max_frame = globals()["__ssh_sync_max_frame__"]
     peer_name = globals()["__ssh_sync_peer_name__"]
     address = _socket_path(peer_name)
-    bound = _bind_server(address)
+    bound = _bind_peer_server(address)
     if bound is None:
         _send_frame(
             1,
