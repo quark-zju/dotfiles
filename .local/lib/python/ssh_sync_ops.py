@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+"""Operations primarily intended for use with :func:`ssh_sync.call_remote`.
+
+Functions in this module must be self-contained and must not reference names
+from the module's global scope.
+"""
 
 
 def list_running_agents():
