@@ -87,7 +87,7 @@ def list_running_agents():
             return message
         return None
 
-    def inspect_rollout(fd_path, pid):
+    def inspect_rollout(fd_path, pid, cwd):
         try:
             stream = open(fd_path, "rb")
         except OSError:
@@ -159,6 +159,7 @@ def list_running_agents():
                     "user_messages": list(reversed(user_messages)),
                     "working": bool(working),
                     "pid": pid,
+                    "cwd": cwd,
                 }
 
     agents = {}
@@ -178,6 +179,10 @@ def list_running_agents():
             descriptors = os.scandir(fd_dir)
         except OSError:
             continue
+        try:
+            cwd = os.readlink("/proc/%d/cwd" % pid)
+        except OSError:
+            cwd = None
         seen_files = set()
         with descriptors:
             for descriptor in descriptors:
@@ -193,7 +198,7 @@ def list_running_agents():
                 if identity in seen_files:
                     continue
                 seen_files.add(identity)
-                agent = inspect_rollout(fd_path, pid)
+                agent = inspect_rollout(fd_path, pid, cwd)
                 if agent is not None and agent["session_id"] not in agents:
                     agents[agent["session_id"]] = agent
     return sorted(
