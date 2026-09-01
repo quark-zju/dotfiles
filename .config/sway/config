@@ -156,6 +156,7 @@ bar {
     status_command i3status
     position bottom
     tray_padding 2
+    tray_bindsym button3 ContextMenu
 }
 
 # XWayland window rules migrated from i3. Native Wayland applications use
