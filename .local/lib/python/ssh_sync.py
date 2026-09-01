@@ -407,11 +407,9 @@ def _function_spec(script):
     if "<locals>" in script.__qualname__:
         raise TypeError("nested functions and closures are not supported")
     closure = inspect.getclosurevars(script)
-    if closure.nonlocals or closure.globals or closure.unbound:
-        names = sorted(
-            set(closure.nonlocals) | set(closure.globals) | set(closure.unbound)
-        )
-        raise TypeError("function depends on non-local names: %s" % ", ".join(names))
+    if closure.globals or closure.unbound:
+        names = sorted(set(closure.globals) | set(closure.unbound))
+        raise TypeError("function depends on non-builtin globals: %s" % ", ".join(names))
     source = textwrap.dedent(inspect.getsource(script))
     tree = ast.parse(source)
     definitions = [node for node in tree.body if isinstance(node, ast.FunctionDef)]
