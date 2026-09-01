@@ -408,6 +408,9 @@ def _function_spec(script):
         raise TypeError("script must be source text or a Python function")
     if "<locals>" in script.__qualname__:
         raise TypeError("nested functions and closures are not supported")
+    # co_names mixes globals with attributes (``os.path`` adds both names),
+    # while Python 3.14's getclosurevars() reports LOAD_ATTR names as unbound.
+    # Inspect LOAD_GLOBAL directly so attributes are not mistaken for globals.
     global_names = set()
     code_objects = [script.__code__]
     while code_objects:
