@@ -8,6 +8,7 @@ from the module's global scope.
 
 def list_running_agents():
     """Return Codex sessions whose rollout files are open by local processes."""
+    import functools
     import json
     import mmap
     import os
@@ -39,6 +40,7 @@ def list_running_agents():
             or stripped.startswith("<user_shell_command>")
         )
 
+    @functools.lru_cache
     def repo_name(cwd):
         if cwd is None:
             return None
