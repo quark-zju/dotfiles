@@ -36,6 +36,24 @@ def _process_suspended(pid):
     return comm_end >= 0 and stat[comm_end + 2 : comm_end + 3] == "T"
 
 
+def _ssh_client_pid(pid):
+    """Return SSH_CLIENT_PID from a process environment, if valid."""
+    try:
+        with open("/proc/%d/environ" % pid, "rb") as stream:
+            environment = stream.read().split(b"\0")
+    except OSError:
+        return None
+    prefix = b"SSH_CLIENT_PID="
+    for entry in environment:
+        if entry.startswith(prefix):
+            try:
+                value = int(entry[len(prefix) :])
+            except ValueError:
+                return None
+            return value if value > 0 else None
+    return None
+
+
 def list_running_agents():
     """Return Codex sessions whose rollout files are open by local processes."""
     import datetime
@@ -197,7 +215,7 @@ def list_running_agents():
 
                 if not user_messages:
                     return None
-                return {
+                agent = {
                     "session_id": session_id,
                     "harness": "codex",
                     "user_messages": list(reversed(user_messages)),
@@ -207,6 +225,10 @@ def list_running_agents():
                     "cwd": cwd,
                     "repo_name": repo_name(cwd),
                 }
+                ssh_client_pid = _ssh_client_pid(pid)
+                if ssh_client_pid is not None:
+                    agent["ssh_client_pid"] = ssh_client_pid
+                return agent
 
     agents = {}
     try:
@@ -340,15 +362,17 @@ def list_editors():
             pid != server_pid and _process_suspended(server_pid)
         )
         if suspended:
-            editors.append(
-                {
-                    "pid": pid,
-                    "name": "nvim",
-                    "suspended": True,
-                    "repo_name": _repo_name(cwd),
-                    "buffers": [],
-                }
-            )
+            editor = {
+                "pid": pid,
+                "name": "nvim",
+                "suspended": True,
+                "repo_name": _repo_name(cwd),
+                "buffers": [],
+            }
+            ssh_client_pid = _ssh_client_pid(pid)
+            if ssh_client_pid is not None:
+                editor["ssh_client_pid"] = ssh_client_pid
+            editors.append(editor)
             continue
 
         executables = ["/proc/%d/exe" % server_pid]
@@ -420,14 +444,16 @@ def list_editors():
             except OSError:
                 mtime = None
             buffers.append({"path": simplify_path(path), "mtime": mtime})
-        editors.append(
-            {
-                "pid": pid,
-                "name": "nvim",
-                "suspended": False,
-                "repo_name": _repo_name(cwd),
-                "buffers": buffers,
-            }
-        )
+        editor = {
+            "pid": pid,
+            "name": "nvim",
+            "suspended": False,
+            "repo_name": _repo_name(cwd),
+            "buffers": buffers,
+        }
+        ssh_client_pid = _ssh_client_pid(pid)
+        if ssh_client_pid is not None:
+            editor["ssh_client_pid"] = ssh_client_pid
+        editors.append(editor)
 
     return editors
