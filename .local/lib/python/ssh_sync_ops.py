@@ -290,6 +290,21 @@ def list_editors():
         except OSError:
             return []
 
+    def editor_pid(pid, cmdline):
+        if "--embed" not in cmdline:
+            return pid
+        try:
+            with open("/proc/%d/stat" % pid, encoding="utf-8") as stream:
+                stat = stream.read()
+            parent = int(stat[stat.rfind(")") + 2 :].split()[1])
+            with open("/proc/%d/comm" % parent, encoding="utf-8") as stream:
+                parent_name = stream.read().strip().lower()
+        except (OSError, ValueError, IndexError):
+            return pid
+        if parent_name == "vim" or "nvim" in parent_name:
+            return parent
+        return pid
+
     runtime_dir = os.environ.get("XDG_RUNTIME_DIR", "/run/user/%d" % os.getuid())
     runtime_sockets = {}
     try:
@@ -304,25 +319,25 @@ def list_editors():
                     runtime_sockets.setdefault(int(parts[1]), []).append(entry.path)
 
     expression = (
-        'json_encode({"pid":getpid(),"paths":map('
+        'json_encode({"pid":getpid(),"cwd":getcwd(),"paths":map('
         'filter(getbufinfo({"buflisted":1}), "!empty(v:val.name) && '
         "empty(getbufvar(v:val.bufnr, '&buftype'))\"), "
         '"fnamemodify(v:val.name, \\":p\\")")})'
     )
     editors = []
-    for pid, sockets in sorted(runtime_sockets.items()):
-        cmdline = read_cmdline(pid)
+    for server_pid, sockets in sorted(runtime_sockets.items()):
+        cmdline = read_cmdline(server_pid)
         try:
-            cwd = os.readlink("/proc/%d/cwd" % pid)
+            server_cwd = os.readlink("/proc/%d/cwd" % server_pid)
         except OSError:
-            cwd = None
-        executables = ["/proc/%d/exe" % pid]
+            server_cwd = None
+        executables = ["/proc/%d/exe" % server_pid]
         if cmdline:
             if os.path.sep in cmdline[0]:
                 executable = cmdline[0]
                 if not os.path.isabs(executable):
-                    if cwd is not None:
-                        executable = os.path.join(cwd, executable)
+                    if server_cwd is not None:
+                        executable = os.path.join(server_cwd, executable)
                 executables.append(executable)
             else:
                 executable = shutil.which(cmdline[0])
@@ -334,6 +349,7 @@ def list_editors():
         executables = list(dict.fromkeys(executables))
 
         paths = None
+        api_cwd = None
         for socket_path in sorted(sockets):
             for executable in executables:
                 try:
@@ -357,10 +373,12 @@ def list_editors():
                 if (
                     completed.returncode == 0
                     and isinstance(result, dict)
-                    and result.get("pid") == pid
+                    and result.get("pid") == server_pid
                     and isinstance(result.get("paths"), list)
                 ):
                     paths = [path for path in result["paths"] if isinstance(path, str)]
+                    if isinstance(result.get("cwd"), str):
+                        api_cwd = result["cwd"]
                     break
             if paths is not None:
                 break
@@ -368,6 +386,11 @@ def list_editors():
         if paths is None:
             continue
 
+        pid = editor_pid(server_pid, cmdline)
+        try:
+            cwd = os.readlink("/proc/%d/cwd" % pid)
+        except OSError:
+            cwd = api_cwd or server_cwd
         buffers = []
         for path in dict.fromkeys(paths):
             try:
