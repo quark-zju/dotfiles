@@ -195,7 +195,8 @@ def main():
         except Exception:
             directory = None
 
-        command = [str(ETT), remote["host"]]
+        # Keep ett's -c from being interpreted as a foot option.
+        command = ["--", str(ETT), remote["host"]]
         if directory:
             remote_command = "cd -- %s 2>/dev/null || cd; " % shlex.quote(directory)
             remote_command += 'exec "${SHELL:-/bin/sh}" -l'
