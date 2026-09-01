@@ -25,6 +25,17 @@ def _repo_name(cwd):
         path = parent
 
 
+def _process_suspended(pid):
+    """Return whether a process is stopped by job control or another signal."""
+    try:
+        with open("/proc/%d/stat" % pid, encoding="utf-8") as stream:
+            stat = stream.read()
+    except OSError:
+        return False
+    comm_end = stat.rfind(")")
+    return comm_end >= 0 and stat[comm_end + 2 : comm_end + 3] == "T"
+
+
 def list_running_agents():
     """Return Codex sessions whose rollout files are open by local processes."""
     import datetime
@@ -192,6 +203,7 @@ def list_running_agents():
                     "user_messages": list(reversed(user_messages)),
                     "working": bool(working),
                     "pid": pid,
+                    "suspended": _process_suspended(pid),
                     "cwd": cwd,
                     "repo_name": repo_name(cwd),
                 }
@@ -367,6 +379,7 @@ def list_editors():
             {
                 "pid": pid,
                 "name": "nvim",
+                "suspended": _process_suspended(pid),
                 "repo_name": _repo_name(cwd),
                 "buffers": buffers,
             }
