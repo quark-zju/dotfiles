@@ -6,6 +6,25 @@ module, but must not depend on other names from the module's global scope.
 """
 
 
+def _repo_name(cwd):
+    """Return the repository directory name containing cwd, if any."""
+    import os
+
+    if cwd is None:
+        return None
+    path = os.path.abspath(cwd)
+    while True:
+        if any(
+            os.path.exists(os.path.join(path, marker))
+            for marker in (".git", ".sl", ".hg")
+        ):
+            return os.path.basename(path)
+        parent = os.path.dirname(path)
+        if parent == path:
+            return None
+        path = parent
+
+
 def list_running_agents():
     """Return Codex sessions whose rollout files are open by local processes."""
     import datetime
@@ -41,21 +60,7 @@ def list_running_agents():
             or stripped.startswith("<user_shell_command>")
         )
 
-    @functools.lru_cache
-    def repo_name(cwd):
-        if cwd is None:
-            return None
-        path = os.path.abspath(cwd)
-        while True:
-            if any(
-                os.path.exists(os.path.join(path, marker))
-                for marker in (".git", ".sl", ".hg")
-            ):
-                return os.path.basename(path)
-            parent = os.path.dirname(path)
-            if parent == path:
-                return None
-            path = parent
+    repo_name = functools.lru_cache(_repo_name)
 
     def user_message(obj):
         matched = {}
