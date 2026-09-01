@@ -26,6 +26,196 @@ EXEC_CMD_RE = re.compile(
 )
 GIT_COMMIT_RE = re.compile(r"(?:^|&&|\|\||;|\n|\\n)\s*git\s+commit\b")
 
+# Derived from https://github.com/casonadams/opencode-secret-redactor/blob/main/src/patterns.ts
+#
+# MIT License
+# Copyright (c) 2026 Cason Adams
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in
+# all copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+SECRET_PATTERNS = [
+    ("gitlab_pat", re.compile(r"glpat-[A-Za-z0-9\-_]{20,}")),
+    ("gitlab_pipeline_trigger", re.compile(r"glptt-[A-Za-z0-9\-_]{20,}")),
+    ("gitlab_deploy_token", re.compile(r"gldt-[A-Za-z0-9\-_]{20,}")),
+    ("gitlab_ci_job_token", re.compile(r"glcbt-[A-Za-z0-9\-_]{20,}")),
+    ("gitlab_runner_token", re.compile(r"glrt-[A-Za-z0-9\-_]{20,}")),
+    ("gitlab_service_account", re.compile(r"glsoat-[A-Za-z0-9\-_]{20,}")),
+    ("gitlab_feed_token", re.compile(r"glft-[A-Za-z0-9\-_]{20,}")),
+    ("gitlab_incoming_mail", re.compile(r"glimt-[A-Za-z0-9\-_]{20,}")),
+    ("gitlab_oauth_secret", re.compile(r"gloas-[A-Za-z0-9\-_]{20,}")),
+    ("gitlab_agent_token", re.compile(r"glagent-[A-Za-z0-9\-_]{20,}")),
+    ("github_pat", re.compile(r"ghp_[A-Za-z0-9]{36,}")),
+    ("github_oauth", re.compile(r"gho_[A-Za-z0-9]{36,}")),
+    ("github_app_token", re.compile(r"ghu_[A-Za-z0-9]{36,}")),
+    ("github_app_install", re.compile(r"ghs_[A-Za-z0-9]{36,}")),
+    ("github_fine_grained", re.compile(r"github_pat_[A-Za-z0-9_]{22,}")),
+    ("aws_access_key", re.compile(r"AKIA[0-9A-Z]{16}")),
+    (
+        "aws_secret_key",
+        re.compile(
+            r"(?:aws_secret_access_key|AWS_SECRET_ACCESS_KEY|SecretAccessKey)"
+            r"[=:\s\"']+([A-Za-z0-9/+=]{40})"
+        ),
+    ),
+    ("anthropic_key", re.compile(r"sk-ant-[A-Za-z0-9\-_]{20,}")),
+    ("openai_project_key", re.compile(r"sk-proj-[A-Za-z0-9\-_]{20,}")),
+    (
+        "openai_key",
+        re.compile(r"sk-(?!ant-)(?!proj-)[A-Za-z0-9]{20,}"),
+    ),
+    ("cohere_key", re.compile(r"co-[A-Za-z0-9]{30,}")),
+    ("huggingface_token", re.compile(r"hf_[A-Za-z0-9]{30,}")),
+    ("google_api_key", re.compile(r"AIza[0-9A-Za-z\-_]{35}")),
+    ("google_oauth_secret", re.compile(r"GOCSPX-[A-Za-z0-9\-_]{28}")),
+    ("gcloud_access_token", re.compile(r"ya29\.[A-Za-z0-9\-_]{50,}")),
+    ("google_refresh_token", re.compile(r"1//[A-Za-z0-9\-_]{40,}")),
+    ("digitalocean_pat", re.compile(r"dop_v1_[a-f0-9]{64}")),
+    ("digitalocean_oauth", re.compile(r"doo_v1_[a-f0-9]{64}")),
+    ("hashicorp_vault", re.compile(r"hvs\.[A-Za-z0-9]{24,}")),
+    (
+        "heroku_api_key",
+        re.compile(
+            r"(?:HEROKU_API_KEY|heroku_api_key)[=:\s\"']+"
+            r"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})"
+        ),
+    ),
+    ("vercel_token", re.compile(r"vercel_[A-Za-z0-9]{24,}")),
+    ("slack_token", re.compile(r"xox[bpors]-[A-Za-z0-9-]{10,}")),
+    (
+        "slack_webhook",
+        re.compile(r"hooks\.slack\.com/services/T[A-Z0-9]+/B[A-Z0-9]+/[A-Za-z0-9]+"),
+    ),
+    ("twilio_api_key", re.compile(r"SK[a-f0-9]{32}")),
+    (
+        "sendgrid_key",
+        re.compile(r"SG\.[A-Za-z0-9\-_]{22,}\.[A-Za-z0-9\-_]{22,}"),
+    ),
+    ("postman_key", re.compile(r"PMAK-[A-Za-z0-9-]{50,}")),
+    ("datadog_api_key", re.compile(r"dd[a-z]{1,2}_[A-Za-z0-9]{32,40}")),
+    ("stripe_secret", re.compile(r"sk_(?:test|live)_[A-Za-z0-9]{10,}")),
+    ("stripe_restricted", re.compile(r"rk_(?:test|live)_[A-Za-z0-9]{10,}")),
+    ("stripe_webhook", re.compile(r"whsec_[A-Za-z0-9]{32,}")),
+    ("square_access_token", re.compile(r"sq0atp-[A-Za-z0-9\-_]{22,}")),
+    ("square_oauth", re.compile(r"sq0csp-[A-Za-z0-9\-_]{43}")),
+    ("npm_token", re.compile(r"npm_[A-Za-z0-9]{36,}")),
+    ("pypi_token", re.compile(r"pypi-[A-Za-z0-9\-_]{50,}")),
+    ("rubygems_key", re.compile(r"rubygems_[A-Za-z0-9]{48}")),
+    (
+        "jwt",
+        re.compile(
+            r"eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\."
+            r"[A-Za-z0-9_-]{10,}"
+        ),
+    ),
+    ("bearer_token", re.compile(r"Bearer\s+[A-Za-z0-9\-._~+/]+=*")),
+    ("basic_auth", re.compile(r"Basic\s+[A-Za-z0-9+/]{10,}={0,2}")),
+    (
+        "private_key",
+        re.compile(
+            r"-----BEGIN\s+(?:RSA\s+|EC\s+|ED25519\s+|DSA\s+)?PRIVATE\s+KEY-----"
+            r"[\s\S]*?"
+            r"-----END\s+(?:RSA\s+|EC\s+|ED25519\s+|DSA\s+)?PRIVATE\s+KEY-----"
+        ),
+    ),
+    (
+        "database_url",
+        re.compile(
+            r"(?:postgres|postgresql|mysql|mongodb|mongodb\+srv|redis)://"
+            r"[^:\s]+:[^@\s]+@[^\s]+"
+        ),
+    ),
+    (
+        "sentry_dsn",
+        re.compile(r"https://[a-f0-9]{32}@[^\s/]+\.ingest\.sentry\.io/[0-9]+"),
+    ),
+    ("grafana_api_key", re.compile(r"glc_[A-Za-z0-9\-_]{32,}")),
+    ("doppler_token", re.compile(r"dp\.st\.[A-Za-z0-9_-]{40,}")),
+    (
+        "azure_connection_string",
+        re.compile(
+            r"DefaultEndpointsProtocol=https?;AccountName=[^;\s]+;"
+            r"AccountKey=[A-Za-z0-9+/]{86}==[^\s\"']*"
+        ),
+    ),
+    ("azure_storage_key", re.compile(r"AccountKey=([A-Za-z0-9+/]{86}==)")),
+    ("azure_sas_token", re.compile(r"[?&]sig=([A-Za-z0-9%+/=]{40,})")),
+    ("shopify_access_token", re.compile(r"shpat_[a-fA-F0-9]{20,}")),
+    ("shopify_custom_app", re.compile(r"shpca_[a-fA-F0-9]{20,}")),
+    ("shopify_private_app", re.compile(r"shppa_[a-fA-F0-9]{20,}")),
+    ("shopify_shared_secret", re.compile(r"shpss_[a-fA-F0-9]{20,}")),
+    ("mailgun_api_key", re.compile(r"key-[a-z0-9]{30,}")),
+    ("mailchimp_api_key", re.compile(r"[a-f0-9]{32}-us\d{1,2}")),
+    ("linear_api_key", re.compile(r"lin_api_[A-Za-z0-9]{40,}")),
+    (
+        "terraform_cloud_token",
+        re.compile(r"[A-Za-z0-9]{14}\.atlasv1\.[A-Za-z0-9\-_]{60,}"),
+    ),
+    ("pulumi_token", re.compile(r"pul-[a-f0-9]{40}")),
+    ("docker_pat", re.compile(r"dckr_pat_[A-Za-z0-9\-_]{24,}")),
+    ("age_secret_key", re.compile(r"AGE-SECRET-KEY-1[A-Za-z0-9]{58}")),
+    (
+        "ssh_public_key",
+        re.compile(r"ssh-(?:rsa|ed25519|dss)\s+[A-Za-z0-9+/]{60,}={0,2}"),
+    ),
+    (
+        "ssh_ecdsa_key",
+        re.compile(
+            r"ecdsa-sha2-nistp(?:256|384|521)\s+[A-Za-z0-9+/]{60,}={0,2}"
+        ),
+    ),
+    (
+        "hostname",
+        re.compile(
+            r"(?<![A-Za-z0-9._%+@:-])"
+            r"(?:[A-Za-z0-9._%+-]+(?::\d{1,5})?@)?"
+            r"(?:[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\.)+"
+            r"(?:com|net|org)(?![A-Za-z0-9.-])",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "email",
+        re.compile(r"(?<![:/])[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}"),
+    ),
+    (
+        "credit_card",
+        re.compile(
+            r"\b(?:4[0-9]{3}|5[1-5][0-9]{2}|3[47][0-9]{2}|"
+            r"6(?:011|5[0-9]{2}))[-\s]?[0-9]{4}[-\s]?[0-9]{4}"
+            r"[-\s]?[0-9]{3,4}\b"
+        ),
+    ),
+    ("us_ssn", re.compile(r"\b\d{3}-\d{2}-\d{4}\b")),
+    (
+        "phone_us",
+        re.compile(r"\+1[-.\s]?\(?[2-9]\d{2}\)?[-.\s]?[2-9]\d{2}[-.\s]?\d{4}"),
+    ),
+    (
+        "env_secret",
+        re.compile(
+            r"(?:PASSWORD|PASSWD|SECRET|API_KEY|PRIVATE_KEY|ACCESS_KEY|AUTH_TOKEN|"
+            r"ENCRYPTION_KEY|SIGNING_KEY|DB_PASSWORD|DATABASE_PASSWORD)\s*[=:]\s*"
+            r"[\"']?([^\s\"']{8,})[\"']?",
+            re.IGNORECASE,
+        ),
+    ),
+]
+
 
 def get_agent_env() -> Dict[str, str]:
     return (
@@ -697,6 +887,22 @@ def normalize_repeated_value(value: str) -> str:
     return "\n".join(line.rstrip() for line in value.splitlines() if line.strip())
 
 
+def redact_agent_prompt(value: str) -> str:
+    covered = bytearray(len(value))
+    replacements = []
+    for name, pattern in SECRET_PATTERNS:
+        for match in pattern.finditer(value):
+            start, end = match.span(1 if match.lastindex else 0)
+            if any(covered[start:end]):
+                continue
+            covered[start:end] = b"\1" * (end - start)
+            replacements.append((start, end, f"[{name}]"))
+
+    for start, end, replacement in sorted(replacements, reverse=True):
+        value = value[:start] + replacement + value[end:]
+    return value
+
+
 def keep_repeated_value(value: str) -> bool:
     return (
         "\n" not in value
@@ -752,6 +958,8 @@ def rewrite_commit_msg(
         value = (raw_val or "").strip()
         if not key or not value:
             continue
+        if key == "Agent-Prompt":
+            value = redact_agent_prompt(value)
         if not keep_repeated_value(value) and normalize_repeated_value(
             parent_commit_env.get(key, "")
         ) == normalize_repeated_value(value):
@@ -1325,6 +1533,47 @@ def run_self_tests():
                 "Agent-Prompt: prompt\n"
                 "Agent-Model: model\n"
                 "Agent-Harness: opencode\n",
+            )
+
+        def test_rewrite_redacts_secrets_only_in_agent_prompt(self):
+            github_pat = "ghp_" + "a" * 36
+            aws_secret = "b" * 40
+            output = self.rewrite(
+                "subject\n",
+                {
+                    "Agent-Prompt": (
+                        f"token {github_pat}\n"
+                        f"AWS_SECRET_ACCESS_KEY={aws_secret}"
+                    ),
+                    "Agent-Model": github_pat,
+                },
+            )
+
+            self.assertEqual(
+                output,
+                "subject\n\n"
+                "Agent-Prompt:\n"
+                "    token [github_pat]\n"
+                "    AWS_SECRET_ACCESS_KEY=[aws_secret_key]\n\n"
+                f"Agent-Model: {github_pat}\n",
+            )
+
+        def test_rewrite_redacts_supported_hostnames(self):
+            output = self.rewrite(
+                "subject\n",
+                {
+                    "Agent-Prompt": (
+                        "host.example.com or user@host.example.com and "
+                        "user:2222@build.example.net or admin@server.org"
+                    )
+                },
+            )
+
+            self.assertEqual(
+                output,
+                "subject\n\n"
+                "Agent-Prompt: [hostname] or [hostname] and [hostname] or "
+                "[hostname]\n",
             )
 
         def test_opencode_env_uses_plugin_vars_without_agent_sentinel(self):
