@@ -13,7 +13,8 @@ The flags override ``SSH_SYNC_ET_COMMAND``, ``SSH_SYNC_REMOTE_PYTHON``,
 ``SSH_SYNC_TIMEOUT``, and ``SSH_SYNC_MAX_FRAME`` respectively.  Use
 ``ssh_sync.py list`` and ``ssh_sync.py stop [HOST ...]`` to manage daemons.
 Run ``ssh_sync.py install`` to symlink this file into the current Python
-interpreter's user site-packages and ``~/.local/bin``.
+interpreter's user site-packages and ``~/.local/bin``. Starting a remote agent
+also installs the uploaded version into those locations on the remote host.
 
 For library use::
 
@@ -827,6 +828,48 @@ def _run_worker(request, worker_argv):
         return response
 
 
+def _install_uploaded_source(source):
+    source_bytes = source.encode("utf-8")
+    site_packages = site.getusersitepackages()
+    os.makedirs(site_packages, exist_ok=True)
+    destination = os.path.join(site_packages, "ssh_sync.py")
+    try:
+        with open(destination, "rb") as installed:
+            current = installed.read()
+    except OSError:
+        current = None
+    if current != source_bytes:
+        fd, temporary = tempfile.mkstemp(
+            prefix=".ssh_sync.py.", dir=site_packages
+        )
+        try:
+            with os.fdopen(fd, "wb") as output:
+                output.write(source_bytes)
+            os.chmod(temporary, 0o755)
+            os.replace(temporary, destination)
+        finally:
+            try:
+                os.unlink(temporary)
+            except FileNotFoundError:
+                pass
+    os.chmod(destination, 0o755)
+
+    bin_dir = os.path.expanduser("~/.local/bin")
+    os.makedirs(bin_dir, exist_ok=True)
+    command = os.path.join(bin_dir, "ssh_sync.py")
+    if os.path.islink(command) and os.path.realpath(command) == destination:
+        return
+    temporary = os.path.join(bin_dir, ".ssh_sync.py.%s" % uuid.uuid4().hex)
+    try:
+        os.symlink(destination, temporary)
+        os.replace(temporary, command)
+    finally:
+        try:
+            os.unlink(temporary)
+        except FileNotFoundError:
+            pass
+
+
 def _bind_server(address):
     server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     try:
@@ -959,6 +1002,19 @@ def _remote_agent():
     python_argv = globals()["__ssh_sync_python_argv__"]
     max_frame = globals()["__ssh_sync_max_frame__"]
     peer_name = globals()["__ssh_sync_peer_name__"]
+    try:
+        _install_uploaded_source(source)
+    except Exception as exc:
+        _send_frame(
+            1,
+            {
+                "operation": "hello",
+                "agent_digest": digest,
+                "error": "could not install ssh-sync: %s" % exc,
+            },
+            max_frame,
+        )
+        return
     address = _socket_path(peer_name)
     bound = _bind_peer_server(address)
     if bound is None:
