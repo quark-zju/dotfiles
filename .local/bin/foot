@@ -2,9 +2,16 @@
 
 import json
 import os
+import shlex
 import subprocess
 import sys
 from pathlib import Path
+
+ROOT_DIR = Path(__file__).resolve().parents[2]
+ETT = ROOT_DIR / "bin/ett"
+sys.path.insert(0, str(ROOT_DIR / ".local/lib/python"))
+
+import ssh_sync  # noqa: E402
 
 
 def focused_node(node):
@@ -16,7 +23,49 @@ def focused_node(node):
     return None
 
 
-def focused_cwd():
+def process_stat(pid):
+    stat = Path(f"/proc/{pid}/stat").read_text()
+    fields = stat[stat.rfind(")") + 2 :].split()
+    return {
+        "ppid": int(fields[1]),
+        "pgrp": int(fields[2]),
+        "tpgid": int(fields[5]),
+    }
+
+
+def descendants(pid):
+    result = []
+    pending = [pid]
+    while pending:
+        current = pending.pop()
+        result.append(current)
+        try:
+            children = (
+                Path(f"/proc/{current}/task/{current}/children").read_text().split()
+            )
+        except OSError:
+            continue
+        pending.extend(int(child) for child in children)
+    return result
+
+
+def process_args(pid):
+    return [
+        os.fsdecode(arg)
+        for arg in Path(f"/proc/{pid}/cmdline").read_bytes().split(b"\0")
+        if arg
+    ]
+
+
+def process_environment(pid):
+    return dict(
+        os.fsdecode(entry).split("=", 1)
+        for entry in Path(f"/proc/{pid}/environ").read_bytes().split(b"\0")
+        if b"=" in entry
+    )
+
+
+def local_context():
     try:
         completed = subprocess.run(
             ["swaymsg", "-t", "get_tree", "-r"],
@@ -27,7 +76,7 @@ def focused_cwd():
         )
         node = focused_node(json.loads(completed.stdout))
         if node is None:
-            return None
+            return None, None
         pid = node["pid"]
 
         # Sway reports foot's PID, whose direct child is the shell. The shell's
@@ -37,7 +86,30 @@ def focused_cwd():
             pid = children[0]
 
         cwd = Path(os.readlink(f"/proc/{pid}/cwd"))
-        return cwd if cwd.is_dir() else None
+        if not cwd.is_dir():
+            cwd = None
+
+        foreground_pgrp = process_stat(pid)["tpgid"]
+        for candidate in descendants(pid):
+            try:
+                if process_stat(candidate)["pgrp"] != foreground_pgrp:
+                    continue
+                args = process_args(candidate)
+                script_index = next(
+                    index
+                    for index, arg in enumerate(args)
+                    if Path(arg).expanduser().resolve() == ETT
+                )
+                host = args[script_index + 1]
+                environment = process_environment(candidate)
+                return cwd, {
+                    "client_pid": process_stat(candidate)["ppid"],
+                    "et_bin": environment.get("ET_BIN"),
+                    "host": host,
+                }
+            except (IndexError, OSError, StopIteration):
+                continue
+        return cwd, None
     except (
         IndexError,
         json.JSONDecodeError,
@@ -45,12 +117,95 @@ def focused_cwd():
         OSError,
         subprocess.CalledProcessError,
     ):
+        return None, None
+
+
+def remote_cwd(client_pid):
+    import os
+
+    processes = {}
+    expected = ("SSH_CLIENT_PID=%d" % client_pid).encode()
+    try:
+        entries = os.scandir("/proc")
+    except OSError:
         return None
+    with entries:
+        for entry in entries:
+            if not entry.name.isdigit():
+                continue
+            pid = int(entry.name)
+            try:
+                with open("/proc/%d/environ" % pid, "rb") as stream:
+                    if expected not in stream.read().split(b"\0"):
+                        continue
+                with open("/proc/%d/stat" % pid, encoding="utf-8") as stream:
+                    stat = stream.read()
+                fields = stat[stat.rfind(")") + 2 :].split()
+                cwd = os.readlink("/proc/%d/cwd" % pid)
+                if os.path.isdir(cwd):
+                    processes[pid] = {
+                        "ppid": int(fields[1]),
+                        "pgrp": int(fields[2]),
+                        "tpgid": int(fields[5]),
+                        "cwd": cwd,
+                    }
+            except (IndexError, OSError, ValueError):
+                continue
+
+    foreground = {
+        pid: process
+        for pid, process in processes.items()
+        if process["tpgid"] > 0 and process["pgrp"] == process["tpgid"]
+    }
+    roots = [
+        process
+        for process in foreground.values()
+        if process["ppid"] not in foreground and process["ppid"] != 1
+    ]
+    if roots:
+        return roots[0]["cwd"]
+
+    roots = [
+        process
+        for process in processes.values()
+        if process["ppid"] not in processes and process["ppid"] != 1
+    ]
+    return roots[0]["cwd"] if roots else None
 
 
-home = Path.home()
-cwd = focused_cwd() or home
-os.execv(
-    "/usr/bin/foot",
-    ["foot", f"--working-directory={cwd}", *sys.argv[1:]],
-)
+def main():
+    home = Path.home()
+    cwd, remote = local_context()
+    cwd = cwd or home
+    command = []
+
+    if remote is not None:
+        if remote["et_bin"]:
+            os.environ["ET_BIN"] = remote["et_bin"]
+        os.environ["SSH_SYNC_ET_COMMAND"] = shlex.join(
+            [str(ETT), "{host}", "-c", "{command}"]
+        )
+        try:
+            directory = ssh_sync.call_remote(
+                remote["host"],
+                remote_cwd,
+                remote["client_pid"],
+                call_timeout=3,
+            )
+        except Exception:
+            directory = None
+
+        command = [str(ETT), remote["host"]]
+        if directory:
+            remote_command = "cd -- %s 2>/dev/null || cd; " % shlex.quote(directory)
+            remote_command += 'exec "${SHELL:-/bin/sh}" -l'
+            command += ["-c", remote_command]
+
+    os.execv(
+        "/usr/bin/foot",
+        ["foot", f"--working-directory={cwd}", *sys.argv[1:], *command],
+    )
+
+
+if __name__ == "__main__":
+    main()
