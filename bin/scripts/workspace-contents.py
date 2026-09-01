@@ -290,6 +290,7 @@ def render(args: argparse.Namespace) -> str:
                     (
                         source_name,
                         str(agent.get("harness", "codex")),
+                        compact(agent.get("repo_name", "")),
                         state,
                         compact(last_message.get("message", "")),
                     ),
@@ -312,6 +313,7 @@ def render(args: argparse.Namespace) -> str:
                             (
                                 source_name,
                                 str(editor.get("name", "nvim")),
+                                compact(editor.get("repo_name", "")),
                                 compact(buffer.get("path", "")),
                             ),
                         )
@@ -326,8 +328,8 @@ def render(args: argparse.Namespace) -> str:
                         (
                             source_name,
                             str(editor.get("name", "nvim")),
-                            "suspended",
                             compact(editor.get("repo_name", "")),
+                            "suspended",
                         ),
                     )
                 )
