@@ -1,7 +1,7 @@
 # Sway configuration migrated from ~/.config/i3/config.
 #
 # Fedora dependencies used directly by this file:
-#   sudo dnf install sway foot wmenu swaylock swayidle mako i3status \
+#   sudo dnf install sway waybar foot wmenu swaylock swayidle mako \
 #       network-manager-applet blueman xfce-polkit \
 #       xorg-x11-server-Xwayland i3
 # Additional window switcher: github.com/quark-zju/i3-selwin
@@ -150,13 +150,10 @@ mode "resize" {
 }
 bindsym $mod+r mode "resize"
 
-# Swaybar understands the i3bar status protocol produced by i3status. With no
-# tray_output restriction, tray icons are available on every active output.
+# Waybar implements D-Bus menus exported by StatusNotifierItem tray icons.
 bar {
-    status_command i3status
+    swaybar_command waybar
     position bottom
-    tray_padding 2
-    tray_bindsym button3 ContextMenu
 }
 
 # XWayland window rules migrated from i3. Native Wayland applications use

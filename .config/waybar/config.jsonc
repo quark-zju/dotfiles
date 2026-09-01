@@ -1,0 +1,51 @@
+{
+    "position": "bottom",
+    "modules-left": ["sway/workspaces", "sway/mode"],
+    "modules-right": [
+        "network#wifi",
+        "network#ethernet",
+        "battery",
+        "temperature",
+        "load",
+        "clock",
+        "tray"
+    ],
+
+    "network#wifi": {
+        "interface": "wlp*",
+        "format-wifi": "W: {signalStrength}% at {essid}",
+        "format-disconnected": "W: down",
+        "tooltip": false
+    },
+    "network#ethernet": {
+        "interface": "enp*",
+        "format-ethernet": "E: up",
+        "format-disconnected": "E: down",
+        "tooltip": false
+    },
+    "battery": {
+        "bat": "BAT0",
+        "format": "BAT {time}",
+        "format-charging": "CHR {time}",
+        "format-full": "FULL",
+        "format-not-charging": "IDLE",
+        "format-plugged": "IDLE",
+        "tooltip": false
+    },
+    "temperature": {
+        "format": "{temperatureC} °C",
+        "tooltip": false
+    },
+    "load": {
+        "format": "{load1}",
+        "interval": 5,
+        "tooltip": false
+    },
+    "clock": {
+        "format": "{:%a %Y-%m-%d %H:%M}",
+        "tooltip": false
+    },
+    "tray": {
+        "spacing": 2
+    }
+}
