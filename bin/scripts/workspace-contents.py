@@ -7,6 +7,7 @@ import argparse
 import concurrent.futures
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -20,12 +21,13 @@ LIB_DIR = Path(__file__).resolve().parents[2] / ".local/lib/python"
 TERMINAL_APP_IDS = frozenset(("foot", "xfce4-terminal"))
 COLORS = {
     "codex": "\033[32m",
-    "nvim": "\033[94m",
+    "nvim": "\033[32m",
     "idle": "\033[90m",
     "suspended": "\033[35m",
     "working": "\033[33m",
 }
 RESET_COLOR = "\033[0m"
+TIMESTAMP_RE = re.compile(r"(?:now|\d+[mhd] ago)$")
 sys.path.insert(0, str(LIB_DIR))
 
 import ssh_sync  # noqa: E402
@@ -272,7 +274,8 @@ def colorize_line(line: str) -> str:
         start = len(part) - len(part.lstrip())
         end = len(part.rstrip())
         parts[index] = part[:start] + color + token + RESET_COLOR + part[end:]
-    return " · ".join(parts)
+    line = " · ".join(parts)
+    return TIMESTAMP_RE.sub(lambda match: "\033[36m" + match[0] + RESET_COLOR, line)
 
 
 def render(args: argparse.Namespace) -> str:
