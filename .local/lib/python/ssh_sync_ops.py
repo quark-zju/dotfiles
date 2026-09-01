@@ -382,6 +382,7 @@ def list_editors():
                             "--remote-expr",
                             expression,
                         ],
+                        stdin=subprocess.DEVNULL,
                         stdout=subprocess.PIPE,
                         stderr=subprocess.DEVNULL,
                         timeout=1,
