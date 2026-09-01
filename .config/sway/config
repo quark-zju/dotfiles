@@ -1,0 +1,178 @@
+# Sway configuration migrated from ~/.config/i3/config.
+#
+# Fedora dependencies used directly by this file:
+#   sudo dnf install sway foot wmenu swaylock swayidle mako i3status \
+#       network-manager-applet blueman xfce-polkit \
+#       xorg-x11-server-Xwayland i3
+# Additional window switcher: github.com/quark-zju/i3-selwin
+#
+# foot runs one process per window when invoked directly. Do not replace it
+# with footclient if window PID -> shell PID mapping is desired.
+# XWayland and the i3 package are transitional dependencies for legacy apps,
+# class-based window rules, and the i3-input mark/goto prompt.
+
+font pango:Noto Sans CJK 10
+
+set $mod Mod4
+set $alt Mod1
+set $left h
+set $down j
+set $up k
+set $right l
+set $term foot
+set $menu wmenu-run
+
+# Keep legacy X11 applications working during the migration.
+xwayland enable
+
+# Make the Wayland session environment available to D-Bus and systemd user
+# services, then start the desktop services previously provided by Xfce.
+exec dbus-update-activation-environment --systemd WAYLAND_DISPLAY SWAYSOCK XDG_CURRENT_DESKTOP
+exec mako
+exec nm-applet --indicator
+exec blueman-applet
+exec /usr/libexec/xfce-polkit
+
+# Lock before suspend, lock after 10 idle minutes, and power displays down
+# after 15 minutes. Any input powers them back on.
+exec swayidle -w \
+    timeout 600 'swaylock -f -c 111111' \
+    timeout 900 'swaymsg "output * power off"' \
+        resume 'swaymsg "output * power on"' \
+    before-sleep 'swaylock -f -c 111111'
+
+# Solid background; Sway performs compositing itself, so picom is unnecessary.
+output * bg '#111111' solid_color
+
+# Use Mod4 with the mouse to move and resize floating windows.
+floating_modifier $mod normal
+
+# Window actions and application launchers.
+bindsym $mod+b border toggle
+bindsym $mod+Return exec $term
+bindsym $mod+semicolon exec $term
+bindsym $alt+Return exec $term
+bindsym $alt+semicolon exec $term
+bindsym $mod+c kill
+bindsym $alt+F4 kill
+bindsym $mod+x exec swaylock -f -c 111111
+bindsym $mod+p exec $menu
+
+# i3-input uses XWayland for its UI, but its IPC commands work with Sway.
+bindsym $mod+comma exec i3-selwin
+bindsym $mod+m exec i3-input -F 'mark %s' -l 1 -P 'Mark: '
+bindsym $mod+g exec i3-input -F '[con_mark="%s"] focus' -l 1 -P 'Goto: '
+
+# Focus.
+bindsym $mod+$left focus left
+bindsym $mod+$down focus down
+bindsym $mod+$up focus up
+bindsym $mod+$right focus right
+bindsym $mod+u focus parent
+bindsym $mod+Left focus left
+bindsym $mod+Down focus down
+bindsym $mod+Up focus up
+bindsym $mod+Right focus right
+
+# Move containers.
+bindsym $mod+Shift+$left move left
+bindsym $mod+Shift+$down move down
+bindsym $mod+Shift+$up move up
+bindsym $mod+Shift+$right move right
+bindsym $mod+Shift+Left move left
+bindsym $mod+Shift+Down move down
+bindsym $mod+Shift+Up move up
+bindsym $mod+Shift+Right move right
+
+# Layout.
+bindsym $mod+i split h
+bindsym $mod+o split v
+bindsym $mod+f fullscreen
+bindsym $mod+s layout stacking
+bindsym $mod+w layout tabbed
+bindsym $mod+e layout default
+bindsym $mod+Shift+space floating toggle
+bindsym $mod+space focus mode_toggle
+bindsym $mod+a focus parent
+
+# Switch workspaces.
+bindsym $mod+1 workspace number 1
+bindsym $mod+2 workspace number 2
+bindsym $mod+3 workspace number 3
+bindsym $mod+4 workspace number 4
+bindsym $mod+5 workspace number 5
+bindsym $mod+6 workspace number 6
+bindsym $mod+7 workspace number 7
+bindsym $mod+8 workspace number 8
+bindsym $mod+9 workspace number 9
+bindsym $mod+0 workspace number 10
+
+# Move the focused container to a workspace.
+bindsym $mod+Shift+1 move container to workspace number 1
+bindsym $mod+Shift+2 move container to workspace number 2
+bindsym $mod+Shift+3 move container to workspace number 3
+bindsym $mod+Shift+4 move container to workspace number 4
+bindsym $mod+Shift+5 move container to workspace number 5
+bindsym $mod+Shift+6 move container to workspace number 6
+bindsym $mod+Shift+7 move container to workspace number 7
+bindsym $mod+Shift+8 move container to workspace number 8
+bindsym $mod+Shift+9 move container to workspace number 9
+bindsym $mod+Shift+0 move container to workspace number 10
+
+# Reload and exit. Sway has no in-place restart command.
+bindsym $mod+Shift+c reload
+bindsym $mod+Shift+e exec swaynag -t warning \
+    -m 'Exit Sway? This will end the Wayland session.' \
+    -B 'Exit Sway' 'swaymsg exit'
+
+# Resize containers.
+mode "resize" {
+    bindsym $left resize shrink left 10 px or 10 ppt
+    bindsym Shift+$left resize grow left 10 px or 10 ppt
+    bindsym $down resize shrink down 10 px or 10 ppt
+    bindsym Shift+$down resize grow down 10 px or 10 ppt
+    bindsym $up resize shrink up 10 px or 10 ppt
+    bindsym Shift+$up resize grow up 10 px or 10 ppt
+    bindsym $right resize shrink right 10 px or 10 ppt
+    bindsym Shift+$right resize grow right 10 px or 10 ppt
+
+    bindsym Left resize shrink left 10 px or 10 ppt
+    bindsym Shift+Left resize grow left 10 px or 10 ppt
+    bindsym Down resize shrink down 10 px or 10 ppt
+    bindsym Shift+Down resize grow down 10 px or 10 ppt
+    bindsym Up resize shrink up 10 px or 10 ppt
+    bindsym Shift+Up resize grow up 10 px or 10 ppt
+    bindsym Right resize shrink right 10 px or 10 ppt
+    bindsym Shift+Right resize grow right 10 px or 10 ppt
+
+    bindsym Return mode "default"
+    bindsym Escape mode "default"
+}
+bindsym $mod+r mode "resize"
+
+# Swaybar understands the i3bar status protocol produced by i3status. With no
+# tray_output restriction, tray icons are available on every active output.
+bar {
+    status_command i3status
+    position bottom
+    tray_padding 2
+}
+
+# XWayland window rules migrated from i3. Native Wayland applications use
+# app_id instead of class; inspect actual values with `swaymsg -t get_tree`
+# before adding corresponding app_id rules.
+for_window [class="MPlayer"] border pixel 1, floating enable
+for_window [class="Vlc"] floating enable
+for_window [class="Gcolor2"] floating enable
+for_window [class="Tilda"] floating enable, border pixel 1
+for_window [class="Xfce4-notifyd"] floating enable, border pixel 1
+for_window [class="rdesktop"] floating enable, border none
+for_window [class="xfreerdp"] floating enable
+for_window [class="Wine"] floating enable
+for_window [class="Lazarus"] floating enable
+for_window [class="Nm-connection-editor"] floating enable
+for_window [class="FooNote"] sticky enable, border none, move right, move right, move right, move right
+for_window [class="Xfce4-appfinder"] floating enable
+for_window [class="zoom"] floating enable
+for_window [title="Live Caption"] floating enable
+for_window [class="Blueman-manager"] floating enable
