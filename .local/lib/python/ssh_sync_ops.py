@@ -34,6 +34,21 @@ def list_running_agents():
             or stripped.startswith("<user_shell_command>")
         )
 
+    def repo_name(cwd):
+        if cwd is None:
+            return None
+        path = os.path.abspath(cwd)
+        while True:
+            if any(
+                os.path.exists(os.path.join(path, marker))
+                for marker in (".git", ".sl", ".hg")
+            ):
+                return os.path.basename(path)
+            parent = os.path.dirname(path)
+            if parent == path:
+                return None
+            path = parent
+
     def user_message(obj):
         matched = {}
         if not match_obj(
@@ -162,6 +177,7 @@ def list_running_agents():
                     "working": bool(working),
                     "pid": pid,
                     "cwd": cwd,
+                    "repo_name": repo_name(cwd),
                 }
 
     agents = {}
