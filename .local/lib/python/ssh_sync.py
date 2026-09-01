@@ -12,7 +12,7 @@ Execute source from the command line::
 The flags override ``SSH_SYNC_ET_COMMAND``, ``SSH_SYNC_REMOTE_PYTHON``,
 ``SSH_SYNC_TIMEOUT``, and ``SSH_SYNC_MAX_FRAME`` respectively.  Use
 ``ssh_sync.py list`` and ``ssh_sync.py stop [HOST ...]`` to manage daemons.
-Run ``ssh_sync.py install`` to symlink this file into the current Python
+Run ``ssh_sync.py install [-f]`` to symlink this file into the current Python
 interpreter's user site-packages and ``~/.local/bin``. Starting a remote agent
 also installs the uploaded version into those locations on the remote host.
 
@@ -1256,8 +1256,11 @@ def _command_parser():
     commands.add_parser("list", help="show running daemons")
     stop = commands.add_parser("stop", help="stop daemons")
     stop.add_argument("hosts", nargs="*")
-    commands.add_parser(
+    install = commands.add_parser(
         "install", help="symlink this module into user site-packages and ~/.local/bin"
+    )
+    install.add_argument(
+        "-f", "--force", action="store_true", help="replace existing installations"
     )
     return parser
 
@@ -1278,7 +1281,7 @@ def _exec_main(args):
         print(repr(result))
 
 
-def _install_main():
+def _install_main(force=False):
     source = os.path.realpath(__file__)
     directories = [site.getusersitepackages(), os.path.expanduser("~/.local/bin")]
     for directory in directories:
@@ -1288,7 +1291,9 @@ def _install_main():
             if os.path.islink(destination) and os.path.realpath(destination) == source:
                 print(destination + " already points to " + source)
                 continue
-            raise FileExistsError(destination + " already exists")
+            if not force:
+                raise FileExistsError(destination + " already exists")
+            os.unlink(destination)
         os.symlink(source, destination)
         print(destination + " -> " + source)
 
@@ -1315,7 +1320,7 @@ def _main():
         elif args.command == "stop":
             _control_main("stop", args.hosts)
         else:
-            _install_main()
+            _install_main(args.force)
 
 
 if __name__ == "__main__":
