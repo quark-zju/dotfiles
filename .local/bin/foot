@@ -1,0 +1,56 @@
+#!/usr/bin/env python3
+
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+
+def focused_node(node):
+    if node.get("focused"):
+        return node
+    for child in node.get("nodes", []) + node.get("floating_nodes", []):
+        if result := focused_node(child):
+            return result
+    return None
+
+
+def focused_cwd():
+    try:
+        completed = subprocess.run(
+            ["swaymsg", "-t", "get_tree", "-r"],
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+        node = focused_node(json.loads(completed.stdout))
+        if node is None:
+            return None
+        pid = node["pid"]
+
+        # Sway reports foot's PID, whose direct child is the shell. The shell's
+        # cwd follows cd even while it is waiting for a foreground command.
+        if node.get("app_id") == "foot":
+            children = Path(f"/proc/{pid}/task/{pid}/children").read_text().split()
+            pid = children[0]
+
+        cwd = Path(os.readlink(f"/proc/{pid}/cwd"))
+        return cwd if cwd.is_dir() else None
+    except (
+        IndexError,
+        json.JSONDecodeError,
+        KeyError,
+        OSError,
+        subprocess.CalledProcessError,
+    ):
+        return None
+
+
+home = Path.home()
+cwd = focused_cwd() or home
+os.execv(
+    "/usr/bin/foot",
+    ["foot", f"--working-directory={cwd}", *sys.argv[1:]],
+)
