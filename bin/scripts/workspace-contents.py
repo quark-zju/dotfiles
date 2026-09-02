@@ -22,7 +22,7 @@ TERMINAL_APP_IDS = frozenset(("foot", "xfce4-terminal"))
 COLORS = {
     "codex": "\033[32m",
     "nvim": "\033[32m",
-    "idle": "\033[90m",
+    "idle": "\033[33m",
     "suspended": "\033[35m",
     "working": "\033[33m",
 }
