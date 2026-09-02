@@ -223,6 +223,7 @@ def get_agent_env() -> Dict[str, str]:
         or get_codex_env()
         or get_zed_env()
         or get_claude_code_env()
+        or get_dsh_env()
         or get_kimi_code_env()
     )
 
@@ -644,6 +645,104 @@ def get_kimi_code_env(cwd: str = None) -> Dict[str, str]:
     return env
 
 
+def get_dsh_env() -> Dict[str, str]:
+    # DeepSeek Harness exports the current session transcript path to every
+    # shell-tool subprocess as DSH_SESSION_JSONL (dsh-shell-env's
+    # session-persistence contributor); only agent-driven commits carry it.
+    session_jsonl = os.getenv("DSH_SESSION_JSONL", "").strip()
+    if not session_jsonl:
+        return {}
+    try:
+        with open(session_jsonl, "rb") as f:
+            decoded = zstd_decompress(f.read())
+    except OSError:
+        return {}
+    if decoded is None:
+        return {}
+    return dsh_env_from_lines(decoded.decode("utf-8", errors="replace").splitlines())
+
+
+def dsh_env_from_lines(lines) -> Dict[str, str]:
+    env = {}
+    model = None
+    prompt = []
+    seen_git_commit = False
+    for line in reversed(lines):
+        try:
+            data = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        out = {}
+        if not model:
+            # {"type":"request/header","data":{"header":{"config":{"model":"deepseek-v4-flash",...}}}}
+            if match_obj(
+                data,
+                {
+                    "type": "request/header",
+                    "data": {"header": {"config": {"model": "$model"}}},
+                },
+                out,
+            ):
+                model = out.get("$model", "").strip()
+        if not seen_git_commit:
+            # {"type":"user/message","data":{"content":[{"type":"text","text":...}],
+            #  "source":{"kind":"user",...}}} -- plugin-injected snapshots carry
+            #  source.kind "plugin" and are not agent prompts.
+            if match_obj(
+                data,
+                {
+                    "type": "user/message",
+                    "data": {"source": {"kind": "user"}, "content": "$content"},
+                },
+                out,
+            ):
+                content = out.get("$content")
+                if isinstance(content, list):
+                    texts = [
+                        part.get("text", "").strip()
+                        for part in content
+                        if isinstance(part, dict) and part.get("type") == "text"
+                    ]
+                    text = "\n".join(part for part in texts if part)
+                    if text:
+                        prompt.append(text)
+            # Only use git commit as a boundary after we've already seen at
+            # least one prompt while scanning backwards (the in-flight commit
+            # that triggered this hook is not yet in the transcript).
+            if prompt:
+                call = {}
+                if match_obj(
+                    data,
+                    {
+                        "type": "tool/call",
+                        "data": {"name": "bash", "arguments": "$arguments"},
+                    },
+                    call,
+                ):
+                    arguments = call.get("$arguments")
+                    if isinstance(arguments, str):
+                        try:
+                            arguments = json.loads(arguments)
+                        except json.JSONDecodeError:
+                            arguments = None
+                    if (
+                        isinstance(arguments, dict)
+                        and GIT_COMMIT_RE.search(
+                            str(arguments.get("command") or "").lower()
+                        )
+                    ):
+                        seen_git_commit = True
+        if model and seen_git_commit:
+            break
+    if prompt:
+        env["Agent-Prompt"] = "\n----\n".join(reversed(prompt))
+    if model:
+        env["Agent-Model"] = model
+    if prompt or model:
+        env["Agent-Harness"] = "dsh"
+    return env
+
+
 def default_zed_threads_db() -> str:
     return os.path.expanduser("~/Library/Application Support/Zed/threads/threads.db")
 
@@ -683,6 +782,27 @@ def zstd_decompress(data: bytes):
         )
     except (FileNotFoundError, subprocess.CalledProcessError):
         return None
+
+
+def zstd_compress(data: bytes):
+    # Python 3.14 ships zstd in the standard library as compression.zstd;
+    # fall back to the zstd CLI on older versions (mirrors zstd_decompress).
+    try:
+        from compression import zstd
+
+        return zstd.compress(data)
+    except (ImportError, ModuleNotFoundError):
+        pass
+    except Exception:
+        pass
+
+    try:
+        return subprocess.check_output(["zstd", "-c"], input=data)
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        return None
+
+
+HAS_ZSTD = zstd_compress(b"") is not None
 
 
 def zed_text_from_content(content) -> str:
@@ -1245,6 +1365,69 @@ def run_self_tests():
                 },
             }
 
+        def dsh_record(self, record_type, data):
+            return {"type": record_type, "data": data}
+
+        def dsh_session_record(self, work_dir):
+            return {
+                "type": "session",
+                "version": 0,
+                "id": "session-test",
+                "createdAt": 1788317802332,
+                "cwd": str(work_dir),
+                "delegationDepth": 0,
+                "agentPreset": "standard",
+            }
+
+        def dsh_user_message(self, text, source_kind="user"):
+            return self.dsh_record(
+                "user/message",
+                {
+                    "content": [{"type": "text", "text": text}],
+                    "source": {"kind": source_kind},
+                    "role": "user",
+                    "id": "msg-1",
+                },
+            )
+
+        def dsh_bash_call(self, command):
+            return self.dsh_record(
+                "tool/call",
+                {
+                    "turn": 1,
+                    "step": 1,
+                    "callId": "call_00_test",
+                    "name": "bash",
+                    "arguments": json.dumps({"command": command}),
+                },
+            )
+
+        def dsh_model_header(self, model="deepseek-v4-flash"):
+            return self.dsh_record(
+                "request/header",
+                {
+                    "header": {
+                        "config": {
+                            "provider": "deepseek-official",
+                            "model": model,
+                            "maxTokens": 256000,
+                            "reasoningEffort": "high",
+                        }
+                    }
+                },
+            )
+
+        def write_dsh_session(self, home, session_id, work_dir, records):
+            munged = "--" + str(work_dir).lstrip("/").replace("/", "-") + "--"
+            session_dir = (
+                pathlib.Path(home) / ".dsh" / "sessions" / munged / session_id
+            )
+            session_dir.mkdir(parents=True)
+            session_file = session_dir / "session.jsonl.zstd"
+            payload = "\n".join(json.dumps(record) for record in records) + "\n"
+            session_file.write_bytes(zstd_compress(payload.encode("utf-8")))
+            return session_file
+
         def test_kimi_code_accepts_json_encoded_pi_values(self):
             prompt = json.dumps([{"type": "text", "text": "encoded prompt"}])
             event = {
@@ -1430,6 +1613,83 @@ def run_self_tests():
                     selected = find_kimi_code_wire_file(str(work_dir))
 
                     self.assertEqual(selected, str(newer))
+            finally:
+                os.environ.clear()
+                os.environ.update(old_env)
+
+        def test_dsh_env_reads_prompts_until_git_commit(self):
+            lines = [
+                self.dsh_session_record("/repo"),
+                self.dsh_user_message("old prompt"),
+                self.dsh_bash_call("git commit -m old"),
+                self.dsh_model_header(),
+                self.dsh_user_message("first prompt"),
+                self.dsh_user_message("second prompt"),
+                self.dsh_bash_call("git add . && git commit -m current"),
+            ]
+            self.assertEqual(
+                dsh_env_from_lines([json.dumps(record) for record in lines]),
+                {
+                    "Agent-Prompt": "first prompt\n----\nsecond prompt",
+                    "Agent-Model": "deepseek-v4-flash",
+                    "Agent-Harness": "dsh",
+                },
+            )
+
+        def test_dsh_env_skips_plugin_snapshot_messages(self):
+            lines = [
+                self.dsh_session_record("/repo"),
+                self.dsh_user_message("snapshot injected", source_kind="plugin"),
+                self.dsh_model_header(),
+                self.dsh_user_message("real prompt"),
+            ]
+            self.assertEqual(
+                dsh_env_from_lines([json.dumps(record) for record in lines]),
+                {
+                    "Agent-Prompt": "real prompt",
+                    "Agent-Model": "deepseek-v4-flash",
+                    "Agent-Harness": "dsh",
+                },
+            )
+
+        @unittest.skipUnless(HAS_ZSTD, "zstd not available")
+        def test_dsh_env_uses_session_jsonl_env_var(self):
+            old_env = os.environ.copy()
+            try:
+                with tempfile.TemporaryDirectory() as home:
+                    work_dir = pathlib.Path(home) / "repo"
+                    work_dir.mkdir()
+                    session_file = self.write_dsh_session(
+                        home,
+                        "session-01234567-89ab-cdef-0123-456789abcdef",
+                        work_dir,
+                        [
+                            self.dsh_session_record(work_dir),
+                            self.dsh_model_header(),
+                            self.dsh_user_message("current prompt"),
+                        ],
+                    )
+                    os.environ["HOME"] = home
+                    os.environ["DSH_SESSION_JSONL"] = str(session_file)
+
+                    self.assertEqual(
+                        get_dsh_env(),
+                        {
+                            "Agent-Prompt": "current prompt",
+                            "Agent-Model": "deepseek-v4-flash",
+                            "Agent-Harness": "dsh",
+                        },
+                    )
+            finally:
+                os.environ.clear()
+                os.environ.update(old_env)
+
+        @unittest.skipUnless(HAS_ZSTD, "zstd not available")
+        def test_dsh_env_ignores_missing_session_jsonl_env_var(self):
+            old_env = os.environ.copy()
+            try:
+                os.environ.pop("DSH_SESSION_JSONL", None)
+                self.assertEqual(get_dsh_env(), {})
             finally:
                 os.environ.clear()
                 os.environ.update(old_env)
