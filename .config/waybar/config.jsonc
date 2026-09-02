@@ -2,11 +2,7 @@
     "position": "bottom",
     "modules-left": ["sway/workspaces", "sway/mode"],
     "modules-right": [
-        "network#wifi",
-        "network#ethernet",
         "battery",
-        "temperature",
-        "load",
         "clock",
         "tray"
     ],
