@@ -1,0 +1,4 @@
+[tui]
+status_line = ["model-with-reasoning", "current-dir", "context-remaining", "thread-id"]
+status_line_use_colors = true
+terminal_title = ["activity", "project-name", "thread-title"]
