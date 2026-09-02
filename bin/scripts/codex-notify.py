@@ -101,6 +101,24 @@ def load_prompt(session_id: str) -> dict[str, Any] | None:
     return value if isinstance(value, dict) else None
 
 
+def load_thread_title(session_id: str) -> str | None:
+    title = None
+    try:
+        with Path.home().joinpath(".codex/session_index.jsonl").open() as stream:
+            for line in stream:
+                try:
+                    value = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if value.get("id") == session_id and isinstance(
+                    value.get("thread_name"), str
+                ):
+                    title = value["thread_name"]
+    except OSError:
+        pass
+    return title
+
+
 def terminal_containers(node: dict[str, object], result: dict[int, int]) -> None:
     pid = node.get("pid")
     container_id = node.get("id")
@@ -149,7 +167,10 @@ def focus_process(pid: object, expected_start_time: object) -> None:
 
 
 def show_notify(
-    message: str, pid: object, expected_start_time: object | None = None
+    title: str | None,
+    message: str,
+    pid: object,
+    expected_start_time: object | None = None,
 ) -> None:
     """Show a completion notification and focus the process when activated."""
     import html
@@ -168,7 +189,7 @@ def show_notify(
                 "--action=default=Focus window",
                 "--action=focus=Focus window",
                 "--expire-time=10000",
-                "Codex turn complete",
+                html.escape(f"Codex · {title}" if title else "Codex turn complete"),
                 html.escape(message),
             ],
             stdout=subprocess.PIPE,
@@ -191,6 +212,7 @@ def notify(payload: dict[str, Any]) -> None:
     prompt = " ".join(saved["prompt"].split())
     if len(prompt) > 1000:
         prompt = prompt[:999] + "…"
+    title = load_thread_title(session_id)
     ssh_client_pid = os.environ.get("SSH_CLIENT_PID")
     if ssh_client_pid is not None:
         try:
@@ -200,11 +222,11 @@ def notify(payload: dict[str, Any]) -> None:
             import ssh_sync
 
             host = ssh_sync.list_hosts()[0]
-            ssh_sync.call_remote(host, show_notify, prompt, pid, call_timeout=20)
+            ssh_sync.call_remote(host, show_notify, title, prompt, pid, call_timeout=20)
         except Exception:
             return
         return
-    show_notify(prompt, saved.get("pid"), saved.get("process_start_time"))
+    show_notify(title, prompt, saved.get("pid"), saved.get("process_start_time"))
 
 
 def main() -> None:
