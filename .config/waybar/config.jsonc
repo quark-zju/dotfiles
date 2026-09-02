@@ -3,9 +3,20 @@
     "modules-left": ["sway/workspaces", "sway/mode"],
     "modules-right": [
         "battery",
+        "custom/separator#battery-clock",
         "clock",
+        "custom/separator#clock-tray",
         "tray"
     ],
+
+    "custom/separator#battery-clock": {
+        "format": "•",
+        "tooltip": false
+    },
+    "custom/separator#clock-tray": {
+        "format": "•",
+        "tooltip": false
+    },
 
     "network#wifi": {
         "interface": "wlp*",

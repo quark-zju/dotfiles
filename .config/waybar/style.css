@@ -43,12 +43,19 @@ window#waybar {
 #load,
 #clock {
     padding: 1px 7px;
+}
+
+#mode {
     border-left: 1px solid #666666;
 }
 
 #tray {
     padding: 1px 6px;
-    border-left: 1px solid #666666;
+}
+
+#custom-separator {
+    padding: 0 3px;
+    color: #666666;
 }
 
 tooltip {
