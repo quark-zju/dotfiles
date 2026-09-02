@@ -200,7 +200,7 @@ def show_notify(
     pid: object,
     expected_start_time: object | None = None,
 ) -> None:
-    """Show a completion notification and focus the process when activated."""
+    """Mark a completed turn urgent and notify when it is off-workspace."""
     import html
     import subprocess
 
@@ -209,6 +209,19 @@ def show_notify(
         if stat is None:
             return
         expected_start_time = stat[1]
+    state = process_sway_state(pid, expected_start_time)
+    if state is None:
+        return
+    container_id, is_focused, workspace_is_focused = state
+    if is_focused:
+        return
+    subprocess.run(
+        ["swaymsg", f"[con_id={container_id}]", "urgent", "enable"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    if workspace_is_focused:
+        return
     try:
         completed = subprocess.run(
             [
