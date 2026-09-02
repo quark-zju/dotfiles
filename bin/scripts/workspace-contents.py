@@ -64,7 +64,7 @@ def parse_args() -> argparse.Namespace:
         default=[],
         type=remote_arg,
         metavar="NAME=HOST",
-        help="query HOST and display it as NAME (repeatable)",
+        help="query HOST and display it as NAME (repeatable; auto-detected by default)",
     )
     parser.add_argument(
         "--poll",
@@ -91,6 +91,8 @@ def parse_args() -> argparse.Namespace:
         parser.error("remote names must be unique")
     if "local" in names:
         parser.error("remote name 'local' is reserved")
+    if not args.remote:
+        args.remote = [Remote("remote", host) for host in ssh_sync.list_hosts()]
     return args
 
 
