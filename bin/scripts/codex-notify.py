@@ -4,20 +4,19 @@
 from __future__ import annotations
 
 import hashlib
-import html
 import json
 import os
-import subprocess
 import sys
 from pathlib import Path
 from typing import Any
 
-TERMINAL_APP_IDS = frozenset(("foot", "xfce4-terminal"))
 TITLE_PROMPT_PREFIX = "Generate a concise, single-line task title "
 
 
 def process_stat(pid: int) -> tuple[int, int] | None:
     """Return a process's parent PID and start time in clock ticks."""
+    from pathlib import Path
+
     try:
         stat = Path(f"/proc/{pid}/stat").read_text()
         fields = stat[stat.rfind(")") + 2 :].split()
@@ -102,11 +101,11 @@ def load_prompt(session_id: str) -> dict[str, Any] | None:
     return value if isinstance(value, dict) else None
 
 
-def terminal_containers(node: dict[str, Any], result: dict[int, int]) -> None:
+def terminal_containers(node: dict[str, object], result: dict[int, int]) -> None:
     pid = node.get("pid")
     container_id = node.get("id")
     if (
-        node.get("app_id") in TERMINAL_APP_IDS
+        node.get("app_id") in ("foot", "xfce4-terminal")
         and isinstance(pid, int)
         and isinstance(container_id, int)
     ):
@@ -116,6 +115,9 @@ def terminal_containers(node: dict[str, Any], result: dict[int, int]) -> None:
 
 
 def focus_process(pid: object, expected_start_time: object) -> None:
+    import json
+    import subprocess
+
     if not isinstance(pid, int) or not isinstance(expected_start_time, int):
         return
     stat = process_stat(pid)
@@ -146,6 +148,39 @@ def focus_process(pid: object, expected_start_time: object) -> None:
         return
 
 
+def show_notify(
+    message: str, pid: object, expected_start_time: object | None = None
+) -> None:
+    """Show a completion notification and focus the process when activated."""
+    import html
+    import subprocess
+
+    if expected_start_time is None:
+        stat = process_stat(pid) if isinstance(pid, int) else None
+        if stat is None:
+            return
+        expected_start_time = stat[1]
+    try:
+        completed = subprocess.run(
+            [
+                "notify-send",
+                "--app-name=Codex",
+                "--action=default=Focus window",
+                "--action=focus=Focus window",
+                "--expire-time=10000",
+                "Codex turn complete",
+                html.escape(message),
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+    except OSError:
+        return
+    if completed.stdout.strip() in ("default", "focus"):
+        focus_process(pid, expected_start_time)
+
+
 def notify(payload: dict[str, Any]) -> None:
     session_id = payload.get("session_id")
     if not isinstance(session_id, str):
@@ -156,25 +191,7 @@ def notify(payload: dict[str, Any]) -> None:
     prompt = " ".join(saved["prompt"].split())
     if len(prompt) > 1000:
         prompt = prompt[:999] + "…"
-    try:
-        completed = subprocess.run(
-            [
-                "notify-send",
-                "--app-name=Codex",
-                "--action=default=Focus window",
-                "--action=focus=Focus window",
-                "--expire-time=10000",
-                "Codex turn complete",
-                html.escape(prompt),
-            ],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            text=True,
-        )
-    except OSError:
-        return
-    if completed.stdout.strip() in ("default", "focus"):
-        focus_process(saved.get("pid"), saved.get("process_start_time"))
+    show_notify(prompt, saved.get("pid"), saved.get("process_start_time"))
 
 
 def main() -> None:
