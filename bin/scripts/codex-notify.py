@@ -162,6 +162,7 @@ def notify(payload: dict[str, Any]) -> None:
                 "notify-send",
                 "--app-name=Codex",
                 "--action=default=Focus window",
+                "--action=focus=Focus window",
                 "--expire-time=10000",
                 "Codex turn complete",
                 html.escape(prompt),
@@ -172,7 +173,7 @@ def notify(payload: dict[str, Any]) -> None:
         )
     except OSError:
         return
-    if completed.stdout.strip() == "default":
+    if completed.stdout.strip() in ("default", "focus"):
         focus_process(saved.get("pid"), saved.get("process_start_time"))
 
 
