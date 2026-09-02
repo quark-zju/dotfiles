@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 TERMINAL_APP_IDS = frozenset(("foot", "xfce4-terminal"))
+TITLE_PROMPT_PREFIX = "Generate a concise, single-line task title "
 
 
 def process_stat(pid: int) -> tuple[int, int] | None:
@@ -68,8 +69,14 @@ def state_path(session_id: str) -> Path | None:
 def save_prompt(payload: dict[str, Any]) -> None:
     session_id = payload.get("session_id")
     prompt = payload.get("prompt")
+    if (
+        not isinstance(session_id, str)
+        or not isinstance(prompt, str)
+        or prompt.startswith(TITLE_PROMPT_PREFIX)
+    ):
+        return
     process = codex_process()
-    if not isinstance(session_id, str) or not isinstance(prompt, str) or not process:
+    if not process:
         return
     path = state_path(session_id)
     if path is None:
@@ -154,7 +161,7 @@ def notify(payload: dict[str, Any]) -> None:
             [
                 "notify-send",
                 "--app-name=Codex",
-                "--action=focus=Focus window",
+                "--action=default=Focus window",
                 "--expire-time=10000",
                 "Codex turn complete",
                 html.escape(prompt),
@@ -165,7 +172,7 @@ def notify(payload: dict[str, Any]) -> None:
         )
     except OSError:
         return
-    if completed.stdout.strip() == "focus":
+    if completed.stdout.strip() == "default":
         focus_process(saved.get("pid"), saved.get("process_start_time"))
 
 
