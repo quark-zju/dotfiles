@@ -1,7 +1,7 @@
 # Sway configuration migrated from ~/.config/i3/config.
 #
 # Fedora dependencies used directly by this file:
-#   sudo dnf install sway waybar foot wmenu swaylock swayidle mako \
+#   sudo dnf install sway waybar foot wmenu swaylock swayidle SwayNotificationCenter \
 #       network-manager-applet blueman xfce-polkit \
 #       xorg-x11-server-Xwayland i3
 # Additional window switcher: github.com/quark-zju/i3-selwin
@@ -35,7 +35,7 @@ input type:keyboard {
 # which do not advertise Sway support in their desktop files.
 exec dbus-update-activation-environment --systemd DISPLAY WAYLAND_DISPLAY SWAYSOCK XDG_CURRENT_DESKTOP XDG_SESSION_DESKTOP XDG_SESSION_TYPE GTK_IM_MODULE QT_IM_MODULE XMODIFIERS
 exec dex --autostart --environment sway
-exec mako
+exec swaync
 exec /usr/libexec/xfce-polkit
 
 # Lock before suspend, lock after 10 idle minutes, and power displays down
