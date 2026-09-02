@@ -7,6 +7,10 @@
         "tray"
     ],
 
+    "sway/workspaces": {
+        "on-click-right": "~/bin/i3-wname-dialog"
+    },
+
     "custom/separator#clock-tray": {
         "format": "•",
         "tooltip": false

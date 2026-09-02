@@ -1,0 +1,11 @@
+#!/bin/sh
+
+current_title="$("$HOME/bin/i3-wname")" || exit
+new_title="$(
+	zenity --entry \
+		--title='Rename workspace' \
+		--text='Workspace title:' \
+		--entry-text="$current_title"
+)" || exit
+
+[ "$new_title" = "$current_title" ] || "$HOME/bin/i3-wname" "$new_title"
