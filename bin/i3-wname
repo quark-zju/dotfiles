@@ -48,9 +48,11 @@ elif sys.argv[1:] == ["--interactive-rename"]:
 else:
     name = " ".join(sys.argv[1:]).strip()
 
-if not name:
+if not name and sys.argv[1:] == ["--interactive-rename"] and number >= 0:
+    name = str(number)
+elif not name:
     sys.exit("workspace name cannot be empty")
-if number >= 0:
+elif number >= 0:
     name = f"{number}: {name}"
 response = ipc_message(f"rename workspace to {json.dumps(name, ensure_ascii=False)}")
 if not all(item.get("success") for item in response):
