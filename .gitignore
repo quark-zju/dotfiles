@@ -1,6 +1,7 @@
 __pycache__
 node_modules
 bun.lock
-.codex
+.codex/*
+!.codex/hooks.json
 .vscode/
 .config/sway/config.local
