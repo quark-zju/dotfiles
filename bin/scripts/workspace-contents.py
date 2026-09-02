@@ -24,7 +24,7 @@ COLORS = {
     "nvim": "\033[32m",
     "idle": "\033[33m",
     "suspended": "\033[35m",
-    "working": "\033[33m",
+    "working": "\033[32m",
 }
 RESET_COLOR = "\033[0m"
 TIMESTAMP_RE = re.compile(r"(?:now|\d+[mhd] ago)$")
