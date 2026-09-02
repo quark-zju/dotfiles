@@ -119,7 +119,14 @@ def load_thread_title(session_id: str) -> str | None:
     return title
 
 
-def terminal_containers(node: dict[str, object], result: dict[int, int]) -> None:
+def sway_state(
+    node: dict[str, object],
+    terminals: dict[int, tuple[int, int | None]],
+    focused: dict[str, int],
+    workspace_id: int | None = None,
+) -> None:
+    if node.get("type") == "workspace" and isinstance(node.get("id"), int):
+        workspace_id = node["id"]
     pid = node.get("pid")
     container_id = node.get("id")
     if (
@@ -127,20 +134,26 @@ def terminal_containers(node: dict[str, object], result: dict[int, int]) -> None
         and isinstance(pid, int)
         and isinstance(container_id, int)
     ):
-        result[pid] = container_id
+        terminals[pid] = (container_id, workspace_id)
+    if node.get("focused") is True and isinstance(container_id, int):
+        focused["container"] = container_id
+        if workspace_id is not None:
+            focused["workspace"] = workspace_id
     for child in node.get("nodes", []) + node.get("floating_nodes", []):
-        terminal_containers(child, result)
+        sway_state(child, terminals, focused, workspace_id)
 
 
-def focus_process(pid: object, expected_start_time: object) -> None:
+def process_sway_state(
+    pid: object, expected_start_time: object
+) -> tuple[int, bool, bool] | None:
     import json
     import subprocess
 
     if not isinstance(pid, int) or not isinstance(expected_start_time, int):
-        return
+        return None
     stat = process_stat(pid)
     if stat is None or stat[1] != expected_start_time:
-        return
+        return None
     try:
         completed = subprocess.run(
             ["swaymsg", "-t", "get_tree", "-r"],
@@ -151,19 +164,34 @@ def focus_process(pid: object, expected_start_time: object) -> None:
         )
         tree = json.loads(completed.stdout)
     except (OSError, subprocess.CalledProcessError, json.JSONDecodeError):
-        return
-    containers: dict[int, int] = {}
-    terminal_containers(tree, containers)
+        return None
+    terminals: dict[int, tuple[int, int | None]] = {}
+    focused: dict[str, int] = {}
+    sway_state(tree, terminals, focused)
     for ancestor in ancestors(pid):
-        container_id = containers.get(ancestor)
-        if container_id is None:
+        location = terminals.get(ancestor)
+        if location is None:
             continue
+        container_id, workspace_id = location
+        return (
+            container_id,
+            container_id == focused.get("container"),
+            workspace_id == focused.get("workspace"),
+        )
+    return None
+
+
+def focus_process(pid: object, expected_start_time: object) -> None:
+    import subprocess
+
+    state = process_sway_state(pid, expected_start_time)
+    if state is not None:
+        container_id = state[0]
         subprocess.run(
             ["swaymsg", f"[con_id={container_id}]", "focus"],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
-        return
 
 
 def show_notify(
