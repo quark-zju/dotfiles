@@ -19,6 +19,7 @@ also installs the uploaded version into those locations on the remote host.
 For library use::
 
     import ssh_sync
+    hosts = ssh_sync.list_hosts()
     value = ssh_sync.call_remote(host, function, *args, call_timeout=30)
     for item in ssh_sync.iter_remote(host, generator_function, call_timeout=30):
         print(item)
@@ -2063,6 +2064,16 @@ def _daemon_sockets():
     except FileNotFoundError:
         return []
     return [os.path.join(control, name) for name in names if name.endswith(".sock")]
+
+
+def list_hosts():
+    """Return the hostnames of running local ssh-sync endpoints."""
+    hosts = []
+    for address in _daemon_sockets():
+        info = _daemon_command(address, "info")
+        if info is not None and info.get("ok"):
+            hosts.append(info["host"])
+    return sorted(hosts)
 
 
 def _control_main(command, hosts):

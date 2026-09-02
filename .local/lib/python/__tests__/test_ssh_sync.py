@@ -3,6 +3,7 @@ import sys
 import threading
 import unittest
 from pathlib import Path
+from unittest import mock
 
 LIB_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(LIB_DIR))
@@ -13,6 +14,30 @@ import ssh_sync  # noqa: E402
 class Control:
     def __init__(self):
         self.cancelled = threading.Event()
+
+
+class ListHostsTest(unittest.TestCase):
+    def test_returns_sorted_hosts_and_skips_stale_sockets(self):
+        infos = {
+            "first.sock": {"ok": True, "host": "zebra"},
+            "second.sock": None,
+            "third.sock": {"ok": False},
+            "fourth.sock": {"ok": True, "host": "alpha"},
+        }
+
+        sockets = mock.patch.object(ssh_sync, "_daemon_sockets", return_value=infos)
+        command = mock.patch.object(
+            ssh_sync,
+            "_daemon_command",
+            side_effect=lambda address, operation: infos[address],
+        )
+        with sockets, command as daemon_command:
+            self.assertEqual(ssh_sync.list_hosts(), ["alpha", "zebra"])
+
+        self.assertEqual(
+            daemon_command.call_args_list,
+            [mock.call(address, "info") for address in infos],
+        )
 
 
 def values(count):
