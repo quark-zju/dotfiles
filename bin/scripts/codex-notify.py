@@ -191,13 +191,28 @@ def notify(payload: dict[str, Any]) -> None:
     prompt = " ".join(saved["prompt"].split())
     if len(prompt) > 1000:
         prompt = prompt[:999] + "…"
+    ssh_client_pid = os.environ.get("SSH_CLIENT_PID")
+    if ssh_client_pid is not None:
+        try:
+            pid = int(ssh_client_pid)
+            if pid <= 0:
+                return
+            import ssh_sync
+
+            host = ssh_sync.list_hosts()[0]
+            ssh_sync.call_remote(host, show_notify, prompt, pid, call_timeout=20)
+        except Exception:
+            return
+        return
     show_notify(prompt, saved.get("pid"), saved.get("process_start_time"))
 
 
 def main() -> None:
     try:
         payload = json.load(sys.stdin)
-        if not isinstance(payload, dict) or not os.environ.get("SWAYSOCK"):
+        if not isinstance(payload, dict) or (
+            not os.environ.get("SWAYSOCK") and "SSH_CLIENT_PID" not in os.environ
+        ):
             return
         event = payload.get("hook_event_name")
         if event == "UserPromptSubmit":
