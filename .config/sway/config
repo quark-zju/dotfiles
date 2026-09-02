@@ -25,6 +25,11 @@ set $menu wmenu-run
 # Keep legacy X11 applications working during the migration.
 xwayland enable
 
+# Use Caps Lock as Escape; Shift+Caps Lock still toggles Caps Lock.
+input type:keyboard {
+    xkb_options caps:escape_shifted_capslock
+}
+
 # Make the Wayland session environment available to D-Bus and systemd user
 # services, then start XDG autostart applications and the desktop services
 # which do not advertise Sway support in their desktop files.
