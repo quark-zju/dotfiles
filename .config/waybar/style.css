@@ -54,7 +54,7 @@ window#waybar {
 }
 
 #custom-separator {
-    padding: 0 3px;
+    padding: 0;
     color: #666666;
 }
 
