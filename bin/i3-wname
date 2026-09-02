@@ -21,18 +21,37 @@ def ipc_message(*args):
 workspaces = ipc_message("-t", "get_workspaces")
 current = next(workspace for workspace in workspaces if workspace["focused"])
 number = current["num"]
+current_name = current["name"]
+if number >= 0:
+    current_name = re.sub(rf"^{number}(?::\s*|\s+)?", "", current_name)
 
 if len(sys.argv) == 1:
-    name = current["name"]
-    if number >= 0:
-        name = re.sub(rf"^{number}(?::\s*|\s+)?", "", name)
-    print(name)
+    print(current_name)
+    sys.exit()
+elif sys.argv[1:] == ["--interactive-rename"]:
+    dialog = subprocess.run(
+        [
+            "zenity",
+            "--entry",
+            "--title=Rename workspace",
+            "--text=Workspace title:",
+            f"--entry-text={current_name}",
+        ],
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    if dialog.returncode != 0:
+        sys.exit()
+    name = dialog.stdout.strip()
+    if name == current_name:
+        sys.exit()
 else:
     name = " ".join(sys.argv[1:]).strip()
-    if not name:
-        sys.exit("workspace name cannot be empty")
-    if number >= 0:
-        name = f"{number}: {name}"
-    response = ipc_message(f"rename workspace to {json.dumps(name, ensure_ascii=False)}")
-    if not all(item.get("success") for item in response):
-        sys.exit(response[0].get("error", "failed to rename workspace"))
+
+if not name:
+    sys.exit("workspace name cannot be empty")
+if number >= 0:
+    name = f"{number}: {name}"
+response = ipc_message(f"rename workspace to {json.dumps(name, ensure_ascii=False)}")
+if not all(item.get("success") for item in response):
+    sys.exit(response[0].get("error", "failed to rename workspace"))

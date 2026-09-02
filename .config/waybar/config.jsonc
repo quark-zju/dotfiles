@@ -8,7 +8,7 @@
     ],
 
     "sway/workspaces": {
-        "on-click-right": "~/bin/i3-wname-dialog"
+        "on-click-right": "~/bin/i3-wname --interactive-rename"
     },
 
     "custom/separator#clock-tray": {
