@@ -187,7 +187,6 @@ def show_notify(
                 "notify-send",
                 "--app-name=Codex",
                 "--action=default=Focus window",
-                "--action=focus=Focus window",
                 "--expire-time=10000",
                 html.escape(f"Codex · {title}" if title else "Codex turn complete"),
                 html.escape(message),
@@ -198,7 +197,7 @@ def show_notify(
         )
     except OSError:
         return
-    if completed.stdout.strip() in ("default", "focus"):
+    if completed.stdout.strip() == "default":
         focus_process(pid, expected_start_time)
 
 
