@@ -2153,7 +2153,15 @@ def _command_parser():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     commands = parser.add_subparsers(dest="command", required=True)
 
-    execute = commands.add_parser("exec", help="execute Python source remotely")
+    execute = commands.add_parser(
+        "exec",
+        help="execute Python source or a shell command remotely",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""Python source may contain ordinary statements, imports, and print calls.
+stdout and stderr are forwarded. A bare expression is not printed; assign a
+value to `result` to return and print it locally. Supported result values are
+None, bool, finite numbers, str, bytes, and containers of those types.""",
+    )
     execute.add_argument(
         "--host",
         help="remote host (default: first host reported by ssh_sync list)",
@@ -2164,9 +2172,7 @@ def _command_parser():
         dest="source_type",
         help="source type (default: Python if parseable, otherwise shell)",
     )
-    execute.add_argument(
-        "source", help="Python source or a shell command to execute remotely"
-    )
+    execute.add_argument("source", help="Python source or shell command")
     _add_call_options(execute)
 
     commands.add_parser("list", help="show running daemons")
