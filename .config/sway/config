@@ -1,7 +1,7 @@
 # Sway configuration migrated from ~/.config/i3/config.
 #
 # Fedora dependencies used directly by this file:
-#   sudo dnf install sway waybar foot wmenu swaylock swayidle SwayNotificationCenter \
+#   sudo dnf install sway waybar foot wmenu swaylock swayidle kanshi SwayNotificationCenter \
 #       network-manager-applet blueman xfce-polkit \
 #       xorg-x11-server-Xwayland i3
 # Additional window switcher: github.com/quark-zju/i3-selwin
@@ -37,16 +37,16 @@ exec dbus-update-activation-environment --systemd DISPLAY WAYLAND_DISPLAY SWAYSO
 exec dex --autostart --environment sway
 exec swaync
 exec /usr/libexec/xfce-polkit
+exec kanshi
 
 # Lock before suspend, lock after 10 idle minutes, and power displays down
-# after 15 minutes. Any input powers them back on; system resume reapplies the
-# preferred output configuration.
+# after 15 minutes. Any input or system resume powers them back on.
 exec swayidle -w \
     timeout 600 'swaylock -f -c 111111' \
     timeout 900 'swaymsg "output * power off"' \
-        resume '~/bin/scripts/setup-displays.py || swaymsg "output * power on"' \
+        resume 'swaymsg "output * power on"' \
     before-sleep 'swaylock -f -c 111111' \
-    after-resume '~/bin/scripts/setup-displays.py || swaymsg "output * power on"'
+    after-resume 'swaymsg "output * power on"'
 
 # Solid background; Sway performs compositing itself, so picom is unnecessary.
 output * bg '#111111' solid_color
@@ -64,7 +64,6 @@ bindsym $mod+c kill
 bindsym $alt+F4 kill
 bindsym $mod+x exec swaylock -f -c 111111
 bindsym $mod+p exec $menu
-bindsym $mod+Escape exec ~/bin/scripts/setup-displays.py
 
 # i3-input uses XWayland for its UI, but its IPC commands work with Sway.
 bindsym $mod+comma exec i3-selwin
