@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 TITLE_PROMPT_PREFIX = "Generate a concise, single-line task title "
+RECAP_PROMPT_PREFIX = "Write a brief catch-up for a user returning to this Codex task. "
 
 
 def process_stat(pid: int) -> tuple[int, int] | None:
@@ -71,7 +72,7 @@ def save_prompt(payload: dict[str, Any]) -> None:
     if (
         not isinstance(session_id, str)
         or not isinstance(prompt, str)
-        or prompt.startswith(TITLE_PROMPT_PREFIX)
+        or prompt.startswith((TITLE_PROMPT_PREFIX, RECAP_PROMPT_PREFIX))
     ):
         return
     process = codex_process()
