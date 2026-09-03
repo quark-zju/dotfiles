@@ -9,8 +9,9 @@ Execute source from the command line::
         --timeout 30 \
         --max-frame 16777216
 
-Omit ``--type`` to parse the source as Python first and otherwise run it with
-``sh -c``. Shell commands stream stdin, stdout, and stderr.
+Omit ``--type`` to run a source without whitespace as shell, or otherwise parse
+it as Python first and fall back to ``sh -c``. Shell commands stream stdin,
+stdout, and stderr.
 
 The flags override ``SSH_SYNC_ET_COMMAND``, ``SSH_SYNC_REMOTE_PYTHON``,
 ``SSH_SYNC_TIMEOUT``, and ``SSH_SYNC_MAX_FRAME`` respectively.  Use
@@ -2170,7 +2171,7 @@ None, bool, finite numbers, str, bytes, and containers of those types.""",
         "--type",
         choices=("sh", "py"),
         dest="source_type",
-        help="source type (default: Python if parseable, otherwise shell)",
+        help="source type (default: shell for one token or invalid Python)",
     )
     execute.add_argument("source", help="Python source or shell command")
     _add_call_options(execute)
@@ -2202,12 +2203,15 @@ def _exec_main(args):
         host = hosts[0]
     source_type = args.source_type
     if source_type is None:
-        try:
-            ast.parse(args.source)
-        except SyntaxError:
+        if not any(character.isspace() for character in args.source):
             source_type = "sh"
         else:
-            source_type = "py"
+            try:
+                ast.parse(args.source)
+            except SyntaxError:
+                source_type = "sh"
+            else:
+                source_type = "py"
     if source_type == "sh":
         with open_process(
             host, ["sh", "-c", args.source], call_timeout=args.timeout

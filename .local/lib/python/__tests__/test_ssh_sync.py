@@ -51,9 +51,9 @@ class ExecCommandTest(unittest.TestCase):
 
         call.assert_called_once_with("first", "result = 42", call_timeout=None)
 
-    def test_streams_shell_source_when_python_parsing_fails(self):
+    def test_treats_source_without_whitespace_as_shell(self):
         args = ssh_sync._command_parser().parse_args(
-            ["exec", "--host", "remote", "printf '%s' hello"]
+            ["exec", "--host", "remote", "hostname"]
         )
         process = mock.MagicMock()
         process.forward_stdio.return_value = 7
@@ -65,7 +65,7 @@ class ExecCommandTest(unittest.TestCase):
             returncode = ssh_sync._exec_main(args)
 
         open_process.assert_called_once_with(
-            "remote", ["sh", "-c", "printf '%s' hello"], call_timeout=None
+            "remote", ["sh", "-c", "hostname"], call_timeout=None
         )
         process.forward_stdio.assert_called_once_with(
             sys.stdin.buffer, sys.stdout.buffer, sys.stderr.buffer
