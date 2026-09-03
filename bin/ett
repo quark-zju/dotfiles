@@ -4,6 +4,8 @@
 # The first "master" connection requires ssh auth or manual auth from another connected session.
 # Set ET_AUTO_SSH_AUTH=1 to run ssh directly, using a GUI SSH_ASKPASS when needed.
 # It defaults to 1 when zenity is available; set it to 0 to disable.
+# Set ET_MASTER_TARGET to a systemd user target (for example, work.target) to
+# start it after this process creates the master tmux session.
 
 # Note: ET_BIN could be a shell sequence, like "LD_PRELOAD=force_ipv6.so my_ssh -et".
 export ET_BIN="${ET_BIN:-/bin/et}"
@@ -17,6 +19,15 @@ ET_HOSTPORT="$1"
 ET_HOST="${ET_HOSTPORT%%:*}"                 # strip out ":port"
 ET_BIN_HASH="$(printf '%s' "$ET_BIN" | cksum | awk '{print $1}')"
 export SESSION_NAME="et-ssh-${ET_HOST//./_}-${ET_BIN_HASH}" # tmux session name cannot have "."
+
+start_master_target() {
+	if [[ -n "${ET_MASTER_TARGET:-}" ]]; then
+		echo "Starting systemd user target $ET_MASTER_TARGET" >/dev/stderr
+		if ! systemctl --user start --no-block "$ET_MASTER_TARGET"; then
+			echo "Failed to start systemd user target $ET_MASTER_TARGET" >/dev/stderr
+		fi
+	fi
+}
 
 build_et_args() {
 	local client_init=" export SSH_CLIENT_PID=$PPID"
@@ -139,8 +150,10 @@ EOF
 		MASTER_ARGS+=(-c " echo $MASTER_READY; stty -echo; while IFS= read -r command; do /bin/sh -c \"\$command\"; done")
 		printf -v MASTER_ET_ARGS ' %q' "${MASTER_ARGS[@]}"
 		printf -v MASTER_PATH %q "$ET_SSH_DIR:$PATH"
-		tmux new-session -d -s "$SESSION_NAME" \
-			"ET_AUTO_SSH_AUTH=1 PATH=$MASTER_PATH $ET_BIN$MASTER_ET_ARGS" 2>/dev/null || true
+		if tmux new-session -d -s "$SESSION_NAME" \
+			"ET_AUTO_SSH_AUTH=1 PATH=$MASTER_PATH $ET_BIN$MASTER_ET_ARGS" 2>/dev/null; then
+			start_master_target
+		fi
 		while tmux has-session -t "$SESSION_NAME" 2>/dev/null; do
 			if tmux capture-pane -t "$SESSION_NAME" -p | grep -Fq "$MASTER_READY"; then
 				exec "$0" "$@"
@@ -153,7 +166,12 @@ EOF
 	echo Starting master session >/dev/stderr
 	echo Run:
 	echo PATH="$ET_SSH_DIR:"'$'"PATH" tmux new-session -s $SESSION_NAME "'""$ET_BIN$ET_ARGS""'"
-	PATH="$ET_SSH_DIR:$PATH" tmux new-session -s $SESSION_NAME "$ET_BIN$ET_ARGS || sleep 30"
+	if PATH="$ET_SSH_DIR:$PATH" tmux new-session -d -s "$SESSION_NAME" \
+		"$ET_BIN$ET_ARGS || sleep 30"; then
+		start_master_target
+		exec tmux attach-session -t "$SESSION_NAME"
+	fi
+	exit 1
 fi
 
 # vim: set ts=2 sw=2 et
