@@ -52,7 +52,7 @@ class ExecCommandTest(unittest.TestCase):
 
         call.assert_called_once_with("first", "result = 42", call_timeout=None)
 
-    def test_treats_source_without_whitespace_as_shell(self):
+    def test_treats_simple_command_name_as_shell(self):
         args = ssh_sync._command_parser().parse_args(
             ["exec", "--host", "remote", "hostname"]
         )
@@ -72,6 +72,15 @@ class ExecCommandTest(unittest.TestCase):
             sys.stdin.buffer, sys.stdout.buffer, sys.stderr.buffer
         )
         self.assertEqual(returncode, 7)
+
+    def test_parses_other_source_without_whitespace_as_python(self):
+        args = ssh_sync._command_parser().parse_args(
+            ["exec", "--host", "remote", "foo-bar"]
+        )
+        with mock.patch.object(ssh_sync, "call_remote", return_value=None) as call:
+            ssh_sync._exec_main(args)
+
+        call.assert_called_once_with("remote", "foo-bar", call_timeout=None)
 
 
 def values(count):
