@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -31,6 +32,12 @@ def parse_args() -> argparse.Namespace:
         "--remote",
         metavar="USER@HOST",
         help="ssh_sync host (default: first running host)",
+    )
+    parser.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        help="print ssh_sync operations before running them",
     )
     return parser.parse_args()
 
@@ -202,7 +209,21 @@ def remote_update_branch(
     return {"checked_out": True, "checkout_changed": True, "checkout_error": None}
 
 
-def first_remote() -> str:
+def ssh_call(remote: str, function, *args, verbose: bool):
+    if verbose:
+        print(f"ssh_sync: {remote}: call {function.__name__}()")
+    return ssh_sync.call_remote(remote, function, *args)
+
+
+def ssh_process(remote: str, argv: list[str], *, cwd: str, verbose: bool):
+    if verbose:
+        print(f"ssh_sync: {remote}: run {shlex.join(argv)} (cwd {cwd})")
+    return ssh_sync.open_process(remote, argv, cwd=cwd)
+
+
+def first_remote(verbose: bool) -> str:
+    if verbose:
+        print("ssh_sync: list_hosts()")
     hosts = ssh_sync.list_hosts()
     if not hosts:
         raise SyncError("no running ssh_sync remote; pass --remote or start one")
@@ -218,16 +239,19 @@ def is_ancestor(repo: Path, ancestor: str, descendant: str) -> bool:
     return completed.returncode == 0
 
 
-def find_common(repo: Path, remote: str, remote_path: str, branch: str) -> str:
+def find_common(
+    repo: Path, remote: str, remote_path: str, branch: str, verbose: bool
+) -> str:
     commits = run_git(repo, "rev-list", "--first-parent", branch).decode().splitlines()
     batch_size = 512
     for offset in range(0, len(commits), batch_size):
-        common = ssh_sync.call_remote(
+        common = ssh_call(
             remote,
             remote_find_common,
             remote_path,
             branch,
             commits[offset : offset + batch_size],
+            verbose=verbose,
         )
         if common is not None:
             return common
@@ -240,6 +264,7 @@ def receive_bundle(
     remote_path: str,
     branch: str,
     base: str | None,
+    verbose: bool,
 ) -> None:
     ref = "refs/heads/" + branch
     argv = ["git", "bundle", "create", "-", ref]
@@ -255,7 +280,7 @@ def receive_bundle(
         assert local.stdin is not None
         remote_errors = bytearray()
         try:
-            with ssh_sync.open_process(remote, argv, cwd=remote_path) as process:
+            with ssh_process(remote, argv, cwd=remote_path, verbose=verbose) as process:
                 process.close_stdin()
                 for event in process:
                     if event.stream == "stdout":
@@ -289,6 +314,7 @@ def send_bundle(
     remote_path: str,
     branch: str,
     base: str | None,
+    verbose: bool,
 ) -> None:
     ref = "refs/heads/" + branch
     argv = ["git", "-C", str(repo), "bundle", "create", "-", ref]
@@ -298,10 +324,11 @@ def send_bundle(
         local = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=local_errors)
         assert local.stdout is not None
         remote_errors = bytearray()
-        with ssh_sync.open_process(
+        with ssh_process(
             remote,
             ["git", "bundle", "unbundle", "-"],
             cwd=remote_path,
+            verbose=verbose,
         ) as process:
             with local.stdout:
                 while data := local.stdout.read(64 * 1024):
@@ -331,10 +358,17 @@ def update_remote(
     branch: str,
     old_tip: str | None,
     new_tip: str,
+    verbose: bool,
 ) -> None:
-    send_bundle(repo, remote, remote_path, branch, old_tip)
-    result = ssh_sync.call_remote(
-        remote, remote_update_branch, remote_path, branch, old_tip, new_tip
+    send_bundle(repo, remote, remote_path, branch, old_tip, verbose)
+    result = ssh_call(
+        remote,
+        remote_update_branch,
+        remote_path,
+        branch,
+        old_tip,
+        new_tip,
+        verbose=verbose,
     )
     old = old_tip[:12] if old_tip is not None else "new branch"
     print(f"remote: updated {branch} ({old} -> {new_tip[:12]})")
@@ -345,10 +379,12 @@ def update_remote(
         print(f"remote: kept the existing checkout: {detail}")
 
 
-def sync(local_path: str, remote_path: str, remote: str | None) -> None:
+def sync(
+    local_path: str, remote_path: str, remote: str | None, verbose: bool = False
+) -> None:
     repo, branch, local_tip = local_repo(local_path)
-    remote = remote or first_remote()
-    info = ssh_sync.call_remote(remote, remote_repo_info, remote_path, branch)
+    remote = remote or first_remote(verbose)
+    info = ssh_call(remote, remote_repo_info, remote_path, branch, verbose=verbose)
     remote_path = str(info["path"])
     remote_tip = info["tip"]
     print(f"sync: {repo} <-> {remote}:{remote_path} ({branch})")
@@ -356,23 +392,28 @@ def sync(local_path: str, remote_path: str, remote: str | None) -> None:
     if remote_tip == local_tip:
         return
     if remote_tip is None:
-        update_remote(repo, remote, remote_path, branch, None, local_tip)
+        update_remote(repo, remote, remote_path, branch, None, local_tip, verbose)
         return
 
     if is_ancestor(repo, remote_tip, local_tip):
-        update_remote(repo, remote, remote_path, branch, remote_tip, local_tip)
+        update_remote(repo, remote, remote_path, branch, remote_tip, local_tip, verbose)
         return
 
-    if ssh_sync.call_remote(
-        remote, remote_has_ancestor, remote_path, local_tip, branch
+    if ssh_call(
+        remote,
+        remote_has_ancestor,
+        remote_path,
+        local_tip,
+        branch,
+        verbose=verbose,
     ):
-        receive_bundle(repo, remote, remote_path, branch, local_tip)
+        receive_bundle(repo, remote, remote_path, branch, local_tip, verbose)
         run_git(repo, "merge", "--ff-only", "--quiet", remote_tip)
         print(f"local: fast-forwarded {branch} ({local_tip[:12]} -> {remote_tip[:12]})")
         return
 
-    common = find_common(repo, remote, remote_path, branch)
-    receive_bundle(repo, remote, remote_path, branch, common)
+    common = find_common(repo, remote, remote_path, branch, verbose)
+    receive_bundle(repo, remote, remote_path, branch, common, verbose)
     completed = subprocess.run(
         [
             "git",
@@ -401,7 +442,7 @@ def sync(local_path: str, remote_path: str, remote: str | None) -> None:
         f"local: rebased {branch} onto remote "
         f"({local_tip[:12]} -> {rebased_tip[:12]})"
     )
-    update_remote(repo, remote, remote_path, branch, remote_tip, rebased_tip)
+    update_remote(repo, remote, remote_path, branch, remote_tip, rebased_tip, verbose)
 
 
 def main() -> int:
@@ -409,7 +450,7 @@ def main() -> int:
     local_path = args.local_path if args.local_path is not None else abbreviated_cwd()
     remote_path = args.remote_path if args.remote_path is not None else local_path
     try:
-        sync(local_path, remote_path, args.remote)
+        sync(local_path, remote_path, args.remote, args.verbose)
     except (
         OSError,
         SyncError,
