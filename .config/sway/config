@@ -38,6 +38,10 @@ exec dex --autostart --environment sway
 exec swaync
 exec /usr/libexec/xfce-polkit
 exec kanshi
+# A Sway reload resets runtime output settings, so ask the existing kanshi
+# daemon to reapply its current profile. A startup race is harmless because
+# kanshi applies a profile when it first starts.
+exec_always kanshictl reload
 
 # Lock before suspend, lock after 10 idle minutes, and power displays down
 # after 15 minutes. Any input or system resume powers them back on.
