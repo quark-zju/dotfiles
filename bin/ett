@@ -63,11 +63,17 @@ if tmux has-session -t $SESSION_NAME 2>/dev/null; then
 	cat >"$ET_SSH_DIR/ssh" <<'EOF'
 #!/bin/bash
 [[ "$1" == "-G" ]] && exec /usr/bin/ssh "$@"
-old_idpasskey="$(tmux capture-pane -t "$SESSION_NAME" -p | grep IDPASSKEY | tail -1)"
-tmux send-keys -t $SESSION_NAME " ${@: -1}" C-m
+sequence="ETT_IDPASSKEY_$$_$RANDOM"
+tmux send-keys -t "$SESSION_NAME" "echo $sequence; ( ${@: -1} )" C-m
 for ((i = 0; i < 200; i++)); do
-  idpasskey="$(tmux capture-pane -t "$SESSION_NAME" -p | grep IDPASSKEY | tail -1)"
-  if [[ -n "$idpasskey" && "$idpasskey" != "$old_idpasskey" ]]; then
+  idpasskey="$(
+    tmux capture-pane -t "$SESSION_NAME" -p -S -100 |
+      awk -v sequence="$sequence" '
+        $0 == sequence { found = 1; next }
+        found && /^IDPASSKEY:/ { print; exit }
+      '
+  )"
+  if [[ -n "$idpasskey" ]]; then
     # etterminal prints the key before the router finishes registering it.
     sleep "${ET_SSH_REGISTRATION_DELAY:-1}"
     echo "$idpasskey"
@@ -130,7 +136,7 @@ EOF
 			fi
 		done
 		MASTER_READY=ETT_MASTER_READY
-		MASTER_ARGS+=(-c "echo $MASTER_READY; exec \"\${SHELL:-/bin/sh}\" -l")
+		MASTER_ARGS+=(-c "echo $MASTER_READY; stty -echo; while IFS= read -r command; do /bin/sh -c \"\$command\"; done")
 		printf -v MASTER_ET_ARGS ' %q' "${MASTER_ARGS[@]}"
 		printf -v MASTER_PATH %q "$ET_SSH_DIR:$PATH"
 		tmux new-session -d -s "$SESSION_NAME" \
