@@ -3,7 +3,7 @@ r"""Run small Python calls on a remote host through Eternal Terminal.
 
 Execute source from the command line::
 
-    ssh_sync.py exec HOST 'result = {"answer": 1 + 1}' \
+    ssh_sync.py exec --host HOST 'result = {"answer": 1 + 1}' \
         --et-command 'et -c {command} {host}' \
         --remote-python python3.14 \
         --timeout 30 \
@@ -2151,7 +2151,10 @@ def _command_parser():
     commands = parser.add_subparsers(dest="command", required=True)
 
     execute = commands.add_parser("exec", help="execute Python source remotely")
-    execute.add_argument("host")
+    execute.add_argument(
+        "--host",
+        help="remote host (default: first host reported by ssh_sync list)",
+    )
     execute.add_argument("source", help="source may assign its result to 'result'")
     _add_call_options(execute)
 
@@ -2174,8 +2177,14 @@ def _exec_main(args):
         os.environ["SSH_SYNC_REMOTE_PYTHON"] = args.remote_python
     if args.max_frame is not None:
         os.environ["SSH_SYNC_MAX_FRAME"] = str(args.max_frame)
+    host = args.host
+    if host is None:
+        hosts = list_hosts()
+        if not hosts:
+            raise RuntimeError("no running ssh-sync host; pass --host")
+        host = hosts[0]
     result = call_remote(
-        args.host,
+        host,
         args.source,
         call_timeout=args.timeout,
     )

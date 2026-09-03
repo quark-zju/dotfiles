@@ -41,6 +41,17 @@ class ListHostsTest(unittest.TestCase):
         )
 
 
+class ExecCommandTest(unittest.TestCase):
+    def test_uses_first_running_host_by_default(self):
+        args = ssh_sync._command_parser().parse_args(["exec", "result = 42"])
+        with mock.patch.object(
+            ssh_sync, "list_hosts", return_value=["first", "second"]
+        ), mock.patch.object(ssh_sync, "call_remote", return_value=None) as call:
+            ssh_sync._exec_main(args)
+
+        call.assert_called_once_with("first", "result = 42", call_timeout=None)
+
+
 def values(count):
     import sys
 
