@@ -175,7 +175,8 @@ def main():
         # Keep ett's -c from being interpreted as a foot option.
         command = ["--", str(ETT), remote["host"]]
         if directory:
-            remote_command = "cd -- %s 2>/dev/null || cd; " % shlex.quote(directory)
+            remote_command = "printf '\\033[2A\\033[J'; "
+            remote_command += "cd -- %s 2>/dev/null || cd; " % shlex.quote(directory)
             remote_command += 'exec "${SHELL:-/bin/sh}" -l'
             command += ["-c", remote_command]
 
