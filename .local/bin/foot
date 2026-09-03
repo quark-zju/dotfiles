@@ -179,6 +179,12 @@ def main():
             remote_command += "cd -- %s 2>/dev/null || cd; " % shlex.quote(directory)
             remote_command += 'exec "${SHELL:-/bin/sh}" -l'
             command += ["-c", remote_command]
+        command = [
+            "--",
+            "/bin/sh",
+            "-c",
+            shlex.join(command[1:]) + " || sleep 30",
+        ]
 
     os.execv(
         "/usr/bin/foot",
