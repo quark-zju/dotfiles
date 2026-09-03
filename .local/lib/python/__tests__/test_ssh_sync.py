@@ -1,5 +1,6 @@
 import os
 import sys
+import tempfile
 import threading
 import unittest
 from pathlib import Path
@@ -173,6 +174,84 @@ class ProcessWorkerTest(unittest.TestCase):
         responses = list(ssh_sync._run_process(request, control))
 
         self.assertTrue(responses[-1]["timeout"])
+
+
+class ServerConcurrencyTest(unittest.TestCase):
+    class Stream:
+        def __init__(self):
+            self.closed = threading.Event()
+
+        def receive(self, timeout=None):
+            self.closed.wait(timeout)
+            return None
+
+        def send(self, _operation, **_values):
+            pass
+
+        def close(self, cancel=False):
+            self.closed.set()
+
+    class Multiplexer:
+        def __init__(self):
+            self.closed = threading.Event()
+            self.opened = threading.Event()
+            self.stream = ServerConcurrencyTest.Stream()
+
+        def open_stream(self, _request):
+            self.opened.set()
+            return self.stream
+
+    def test_peer_accepts_another_client_while_stream_is_open(self):
+        with tempfile.TemporaryDirectory() as runtime_dir:
+            with mock.patch.object(ssh_sync, "_runtime_dir", return_value=runtime_dir):
+                peer_name = "test-peer"
+                server, socket_identity = ssh_sync._bind_server(
+                    ssh_sync._socket_path(peer_name)
+                )
+                multiplexer = self.Multiplexer()
+                server_thread = threading.Thread(
+                    target=ssh_sync._serve_peer,
+                    args=(server, socket_identity, peer_name, "test-hash", multiplexer),
+                    daemon=True,
+                )
+                server_thread.start()
+
+                stream = ssh_sync.Client(
+                    ssh_sync._socket_path(peer_name), family="AF_UNIX"
+                )
+                stream.send(
+                    {
+                        "operation": "process",
+                        "host": peer_name,
+                        "request_id": "stream",
+                        "argv": ["true"],
+                        "cwd": None,
+                        "env": None,
+                        "timeout": None,
+                    }
+                )
+                self.assertTrue(multiplexer.opened.wait(1))
+
+                control = ssh_sync.Client(
+                    ssh_sync._socket_path(peer_name), family="AF_UNIX"
+                )
+                control.send({"operation": "info"})
+                self.assertTrue(control.poll(1))
+                self.assertTrue(control.recv()["ok"])
+                control.close()
+
+                stream.send({"operation": "stream_cancel"})
+                stream.close()
+                self.assertTrue(multiplexer.stream.closed.wait(1))
+
+                control = ssh_sync.Client(
+                    ssh_sync._socket_path(peer_name), family="AF_UNIX"
+                )
+                control.send({"operation": "stop"})
+                self.assertTrue(control.recv()["ok"])
+                control.close()
+                server_thread.join(1)
+                self.assertFalse(server_thread.is_alive())
 
 
 class RemoteProcessTest(unittest.TestCase):

@@ -1325,6 +1325,28 @@ def _forward_stream(connection, stream):
         stream.close(cancel=True)
 
 
+def _forward_stream_in_background(connection, stream):
+    def run():
+        import traceback
+
+        try:
+            _forward_stream(connection, stream)
+        except TimeoutError as exc:
+            try:
+                connection.send({"timeout_error": str(exc)})
+            except OSError:
+                pass
+        except Exception:
+            try:
+                connection.send({"daemon_error": traceback.format_exc()})
+            except OSError:
+                pass
+        finally:
+            connection.close()
+
+    threading.Thread(target=run, daemon=True).start()
+
+
 def _exception_data(exc):
     import traceback
 
@@ -1794,12 +1816,14 @@ def _serve_peer(server, socket_identity, peer_name, code_hash, multiplexer):
                     stream = multiplexer.open_stream(
                         _iteration_wire_request(request, worker_timeout)
                     )
-                    _forward_stream(connection, stream)
+                    _forward_stream_in_background(connection, stream)
+                    connection = None
                 elif operation == "process":
                     stream = multiplexer.open_stream(
                         _process_wire_request(request, worker_timeout)
                     )
-                    _forward_stream(connection, stream)
+                    _forward_stream_in_background(connection, stream)
+                    connection = None
                 else:
                     wire_request = {
                         "operation": "call",
@@ -1822,7 +1846,8 @@ def _serve_peer(server, socket_identity, peer_name, code_hash, multiplexer):
                 except OSError:
                     pass
             finally:
-                connection.close()
+                if connection is not None:
+                    connection.close()
     finally:
         server.close()
         try:
@@ -1996,11 +2021,13 @@ def _run_daemon(host, code_hash):
                         response_deadline = deadline + 1
                     if operation == "iterate":
                         stream = session.iterate(request, worker_timeout)
-                        _forward_stream(connection, stream)
+                        _forward_stream_in_background(connection, stream)
+                        connection = None
                         response = None
                     elif operation == "process":
                         stream = session.open_process(request, worker_timeout)
-                        _forward_stream(connection, stream)
+                        _forward_stream_in_background(connection, stream)
+                        connection = None
                         response = None
                     else:
                         response = session.call(
@@ -2025,7 +2052,8 @@ def _run_daemon(host, code_hash):
                 except OSError:
                     pass
             finally:
-                connection.close()
+                if connection is not None:
+                    connection.close()
     finally:
         signal.setitimer(signal.ITIMER_REAL, 0)
         if session is not None:
