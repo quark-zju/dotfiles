@@ -39,12 +39,13 @@ exec swaync
 exec /usr/libexec/xfce-polkit
 
 # Lock before suspend, lock after 10 idle minutes, and power displays down
-# after 15 minutes. Any input powers them back on.
+# after 15 minutes. Any input or system resume powers them back on.
 exec swayidle -w \
     timeout 600 'swaylock -f -c 111111' \
     timeout 900 'swaymsg "output * power off"' \
         resume 'swaymsg "output * power on"' \
-    before-sleep 'swaylock -f -c 111111'
+    before-sleep 'swaylock -f -c 111111' \
+    after-resume 'swaymsg "output * power on"'
 
 # Solid background; Sway performs compositing itself, so picom is unnecessary.
 output * bg '#111111' solid_color
