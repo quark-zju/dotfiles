@@ -136,7 +136,7 @@ EOF
 			fi
 		done
 		MASTER_READY=ETT_MASTER_READY
-		MASTER_ARGS+=(-c "echo $MASTER_READY; stty -echo; while IFS= read -r command; do /bin/sh -c \"\$command\"; done")
+		MASTER_ARGS+=(-c " echo $MASTER_READY; stty -echo; while IFS= read -r command; do /bin/sh -c \"\$command\"; done")
 		printf -v MASTER_ET_ARGS ' %q' "${MASTER_ARGS[@]}"
 		printf -v MASTER_PATH %q "$ET_SSH_DIR:$PATH"
 		tmux new-session -d -s "$SESSION_NAME" \
