@@ -9,12 +9,17 @@ import shlex
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 import ssh_sync
 
 
 class SyncError(Exception):
+    pass
+
+
+class BranchChanged(Exception):
     pass
 
 
@@ -38,6 +43,12 @@ def parse_args() -> argparse.Namespace:
         "--verbose",
         action="store_true",
         help="print ssh_sync operations before running them",
+    )
+    parser.add_argument(
+        "-f",
+        "--follow",
+        action="store_true",
+        help="keep polling and synchronizing like tail -f",
     )
     return parser.parse_args()
 
@@ -112,6 +123,7 @@ def remote_repo_info(path: str, branch: str) -> dict[str, str | None]:
     current_result = git("symbolic-ref", "--quiet", "--short", "HEAD", check=False)
     return {
         "path": path,
+        "branch": branch,
         "tip": (
             tip_result.stdout.decode().strip() if tip_result.returncode == 0 else None
         ),
@@ -121,6 +133,39 @@ def remote_repo_info(path: str, branch: str) -> dict[str, str | None]:
             else None
         ),
     }
+
+
+def watch_remote_branch(path: str, branch: str, interval: float):
+    import os
+    import subprocess
+    import time
+
+    path = os.path.realpath(os.path.expanduser(path))
+    root = subprocess.run(
+        ["git", "-C", path, "rev-parse", "--show-toplevel"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    if root.returncode:
+        message = root.stderr.decode(errors="replace").strip()
+        raise RuntimeError(message or f"{path}: not a Git repository")
+    root_path = root.stdout.decode().strip()
+    if os.path.realpath(root_path) != path:
+        raise RuntimeError(f"{path}: not the Git repository root ({root_path})")
+
+    ref = "refs/heads/" + branch
+    while True:
+        tip = subprocess.run(
+            ["git", "-C", path, "rev-parse", "--verify", ref],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        )
+        yield {
+            "path": path,
+            "branch": branch,
+            "tip": tip.stdout.decode().strip() if tip.returncode == 0 else None,
+        }
+        time.sleep(interval)
 
 
 def remote_has_ancestor(path: str, ancestor: str, branch: str) -> bool:
@@ -219,6 +264,12 @@ def ssh_process(remote: str, argv: list[str], *, cwd: str, verbose: bool):
     if verbose:
         print(f"ssh_sync: {remote}: run {shlex.join(argv)} (cwd {cwd})")
     return ssh_sync.open_process(remote, argv, cwd=cwd)
+
+
+def ssh_iter(remote: str, function, *args, verbose: bool):
+    if verbose:
+        print(f"ssh_sync: {remote}: iterate {function.__name__}()")
+    return ssh_sync.iter_remote(remote, function, *args, call_timeout=0)
 
 
 def first_remote(verbose: bool) -> str:
@@ -380,24 +431,34 @@ def update_remote(
 
 
 def sync(
-    local_path: str, remote_path: str, remote: str | None, verbose: bool = False
-) -> None:
+    local_path: str,
+    remote_path: str,
+    remote: str | None,
+    verbose: bool = False,
+    remote_info: dict[str, str | None] | None = None,
+    show_info: bool = True,
+) -> str:
     repo, branch, local_tip = local_repo(local_path)
     remote = remote or first_remote(verbose)
-    info = ssh_call(remote, remote_repo_info, remote_path, branch, verbose=verbose)
+    info = remote_info
+    if info is None:
+        info = ssh_call(remote, remote_repo_info, remote_path, branch, verbose=verbose)
+    elif info["branch"] != branch:
+        raise BranchChanged
     remote_path = str(info["path"])
     remote_tip = info["tip"]
-    print(f"sync: {repo} <-> {remote}:{remote_path} ({branch})")
+    if show_info:
+        print(f"sync: {repo} <-> {remote}:{remote_path} ({branch})")
 
     if remote_tip == local_tip:
-        return
+        return remote
     if remote_tip is None:
         update_remote(repo, remote, remote_path, branch, None, local_tip, verbose)
-        return
+        return remote
 
     if is_ancestor(repo, remote_tip, local_tip):
         update_remote(repo, remote, remote_path, branch, remote_tip, local_tip, verbose)
-        return
+        return remote
 
     if ssh_call(
         remote,
@@ -410,7 +471,7 @@ def sync(
         receive_bundle(repo, remote, remote_path, branch, local_tip, verbose)
         run_git(repo, "merge", "--ff-only", "--quiet", remote_tip)
         print(f"local: fast-forwarded {branch} ({local_tip[:12]} -> {remote_tip[:12]})")
-        return
+        return remote
 
     common = find_common(repo, remote, remote_path, branch, verbose)
     receive_bundle(repo, remote, remote_path, branch, common, verbose)
@@ -443,6 +504,53 @@ def sync(
         f"({local_tip[:12]} -> {rebased_tip[:12]})"
     )
     update_remote(repo, remote, remote_path, branch, remote_tip, rebased_tip, verbose)
+    return remote
+
+
+def follow(
+    local_path: str, remote_path: str, remote: str | None, verbose: bool
+) -> None:
+    announced_branch = None
+    last_error = None
+    while True:
+        try:
+            _repo, branch, _tip = local_repo(local_path)
+            remote = remote or first_remote(verbose)
+            updates = ssh_iter(
+                remote,
+                watch_remote_branch,
+                remote_path,
+                branch,
+                1.0,
+                verbose=verbose,
+            )
+            with updates:
+                for info in updates:
+                    try:
+                        sync(
+                            local_path,
+                            remote_path,
+                            remote,
+                            verbose,
+                            remote_info=info,
+                            show_info=announced_branch != branch,
+                        )
+                    except BranchChanged:
+                        break
+                    announced_branch = branch
+                    last_error = None
+        except (
+            OSError,
+            SyncError,
+            ssh_sync.RemoteError,
+            RuntimeError,
+            TimeoutError,
+        ) as error:
+            message = str(error)
+            if message != last_error:
+                print(f"sync_repo.py: {message}", file=sys.stderr)
+                last_error = message
+            time.sleep(1)
 
 
 def main() -> int:
@@ -450,7 +558,12 @@ def main() -> int:
     local_path = args.local_path if args.local_path is not None else abbreviated_cwd()
     remote_path = args.remote_path if args.remote_path is not None else local_path
     try:
-        sync(local_path, remote_path, args.remote, args.verbose)
+        if args.follow:
+            follow(local_path, remote_path, args.remote, args.verbose)
+        else:
+            sync(local_path, remote_path, args.remote, args.verbose)
+    except KeyboardInterrupt:
+        return 130
     except (
         OSError,
         SyncError,
