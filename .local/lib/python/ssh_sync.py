@@ -1048,16 +1048,26 @@ class RemoteProcess:
 
         selector = selectors.DefaultSelector()
         selector.register(self.connection.fileno(), selectors.EVENT_READ, "remote")
-        selector.register(stdin.fileno(), selectors.EVENT_READ, "stdin")
+        try:
+            stdin_fd = stdin.fileno()
+            selector.register(stdin_fd, selectors.EVENT_READ, "stdin")
+        except (AttributeError, OSError, ValueError):
+            stdin_fd = None
+            self.close_stdin()
         try:
             while not self.closed:
                 for key, _events in selector.select():
                     if key.data == "stdin":
-                        data = os.read(stdin.fileno(), _STREAM_CHUNK_SIZE)
+                        try:
+                            data = os.read(stdin_fd, _STREAM_CHUNK_SIZE)
+                        except OSError:
+                            selector.unregister(stdin_fd)
+                            self.close_stdin()
+                            continue
                         if data:
                             self.send(data)
                         else:
-                            selector.unregister(stdin.fileno())
+                            selector.unregister(stdin_fd)
                             self.close_stdin()
                         continue
                     try:

@@ -1,4 +1,5 @@
 import os
+import io
 import sys
 import tempfile
 import threading
@@ -351,6 +352,28 @@ class RemoteProcessTest(unittest.TestCase):
                 {"operation": "stream_eof"},
             ],
         )
+
+    def test_forward_stdio_closes_unpollable_stdin(self):
+        connection = self.Connection(
+            [
+                {"stream_event": "stdout", "data": b"result"},
+                {"stream_event": "end", "ok": True, "returncode": 0},
+            ]
+        )
+        connection.fileno = mock.Mock(return_value=10)
+        process = ssh_sync.RemoteProcess(connection, timeout=None)
+        stdin = mock.Mock()
+        stdin.fileno.side_effect = PermissionError(1, "Operation not permitted")
+        selector = mock.MagicMock()
+        selector.select.return_value = [(mock.Mock(data="remote"), None)]
+
+        with mock.patch("selectors.DefaultSelector", return_value=selector):
+            stdout = io.BytesIO()
+            returncode = process.forward_stdio(stdin, stdout, io.BytesIO())
+
+        self.assertEqual(returncode, 0)
+        self.assertEqual(stdout.getvalue(), b"result")
+        self.assertEqual(connection.sent, [{"operation": "stream_eof"}])
 
 
 if __name__ == "__main__":
