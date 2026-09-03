@@ -3,11 +3,14 @@ r"""Run small Python calls on a remote host through Eternal Terminal.
 
 Execute source from the command line::
 
-    ssh_sync.py exec --host HOST 'result = {"answer": 1 + 1}' \
+    ssh_sync.py exec --host HOST --type py 'result = {"answer": 1 + 1}' \
         --et-command 'et -c {command} {host}' \
         --remote-python python3.14 \
         --timeout 30 \
         --max-frame 16777216
+
+Omit ``--type`` to parse the source as Python first and otherwise run it with
+``sh -c``. Shell commands stream stdin, stdout, and stderr.
 
 The flags override ``SSH_SYNC_ET_COMMAND``, ``SSH_SYNC_REMOTE_PYTHON``,
 ``SSH_SYNC_TIMEOUT``, and ``SSH_SYNC_MAX_FRAME`` respectively.  Use
@@ -2155,7 +2158,15 @@ def _command_parser():
         "--host",
         help="remote host (default: first host reported by ssh_sync list)",
     )
-    execute.add_argument("source", help="source may assign its result to 'result'")
+    execute.add_argument(
+        "--type",
+        choices=("sh", "py"),
+        dest="source_type",
+        help="source type (default: Python if parseable, otherwise shell)",
+    )
+    execute.add_argument(
+        "source", help="Python source or a shell command to execute remotely"
+    )
     _add_call_options(execute)
 
     commands.add_parser("list", help="show running daemons")
@@ -2183,13 +2194,26 @@ def _exec_main(args):
         if not hosts:
             raise RuntimeError("no running ssh-sync host; pass --host")
         host = hosts[0]
-    result = call_remote(
-        host,
-        args.source,
-        call_timeout=args.timeout,
-    )
+    source_type = args.source_type
+    if source_type is None:
+        try:
+            ast.parse(args.source)
+        except SyntaxError:
+            source_type = "sh"
+        else:
+            source_type = "py"
+    if source_type == "sh":
+        with open_process(
+            host, ["sh", "-c", args.source], call_timeout=args.timeout
+        ) as process:
+            return process.forward_stdio(
+                sys.stdin.buffer, sys.stdout.buffer, sys.stderr.buffer
+            )
+
+    result = call_remote(host, args.source, call_timeout=args.timeout)
     if result is not None:
         print(repr(result))
+    return 0
 
 
 def _install_main(force=False):
@@ -2229,14 +2253,15 @@ def _main():
     else:
         args = _command_parser().parse_args()
         if args.command == "exec":
-            _exec_main(args)
+            return _exec_main(args)
         elif args.command == "list":
             _control_main("list", [])
         elif args.command == "stop":
             _control_main("stop", args.hosts)
         else:
             _install_main(args.force)
+    return 0
 
 
 if __name__ == "__main__":
-    _main()
+    raise SystemExit(_main())
