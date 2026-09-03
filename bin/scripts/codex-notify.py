@@ -14,6 +14,33 @@ TITLE_PROMPT_PREFIX = "Generate a concise, single-line task title "
 RECAP_PROMPT_PREFIX = "Write a brief catch-up for a user returning to this Codex task. "
 
 
+def log_event(event: str, **fields: object) -> None:
+    """Append one diagnostic event without affecting notification behavior."""
+    import datetime
+    import json
+    import os
+    import socket
+
+    record = {
+        "time": datetime.datetime.now().astimezone().isoformat(timespec="milliseconds"),
+        "host": socket.gethostname(),
+        "event": event,
+        **fields,
+    }
+    try:
+        fd = os.open(
+            "/tmp/codex-notify.log",
+            os.O_APPEND | os.O_CREAT | os.O_WRONLY | os.O_CLOEXEC | os.O_NOFOLLOW,
+            0o600,
+        )
+        try:
+            os.write(fd, (json.dumps(record, sort_keys=True) + "\n").encode())
+        finally:
+            os.close(fd)
+    except OSError:
+        pass
+
+
 def process_stat(pid: int) -> tuple[int, int] | None:
     """Return a process's parent PID and start time in clock ticks."""
     from pathlib import Path
@@ -151,9 +178,14 @@ def process_sway_state(
     import subprocess
 
     if not isinstance(pid, int) or not isinstance(expected_start_time, int):
+        log_event("window_invalid_process", pid=pid)
         return None
     stat = process_stat(pid)
-    if stat is None or stat[1] != expected_start_time:
+    if stat is None:
+        log_event("window_process_missing", pid=pid)
+        return None
+    if stat[1] != expected_start_time:
+        log_event("window_process_changed", pid=pid)
         return None
     try:
         completed = subprocess.run(
@@ -164,21 +196,39 @@ def process_sway_state(
             text=True,
         )
         tree = json.loads(completed.stdout)
-    except (OSError, subprocess.CalledProcessError, json.JSONDecodeError):
+    except (OSError, subprocess.CalledProcessError, json.JSONDecodeError) as error:
+        log_event("sway_query_failed", pid=pid, error=repr(error))
         return None
     terminals: dict[int, tuple[int, int | None]] = {}
     focused: dict[str, int] = {}
     sway_state(tree, terminals, focused)
+    process_ancestors = []
     for ancestor in ancestors(pid):
+        process_ancestors.append(ancestor)
         location = terminals.get(ancestor)
         if location is None:
             continue
         container_id, workspace_id = location
-        return (
-            container_id,
-            container_id == focused.get("container"),
-            workspace_id == focused.get("workspace"),
+        is_focused = container_id == focused.get("container")
+        workspace_is_focused = workspace_id == focused.get("workspace")
+        log_event(
+            "window_resolved",
+            pid=pid,
+            ancestors=process_ancestors,
+            container=container_id,
+            workspace=workspace_id,
+            focused_container=focused.get("container"),
+            focused_workspace=focused.get("workspace"),
+            is_focused=is_focused,
+            workspace_is_focused=workspace_is_focused,
         )
+        return container_id, is_focused, workspace_is_focused
+    log_event(
+        "window_not_found",
+        pid=pid,
+        ancestors=process_ancestors,
+        terminal_pids=sorted(terminals),
+    )
     return None
 
 
@@ -188,10 +238,15 @@ def focus_process(pid: object, expected_start_time: object) -> None:
     state = process_sway_state(pid, expected_start_time)
     if state is not None:
         container_id = state[0]
-        subprocess.run(
+        completed = subprocess.run(
             ["swaymsg", f"[con_id={container_id}]", "focus"],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
+        )
+        log_event(
+            "focus_requested",
+            container=container_id,
+            returncode=completed.returncode,
         )
 
 
@@ -215,13 +270,20 @@ def show_notify(
         return
     container_id, is_focused, workspace_is_focused = state
     if is_focused:
+        log_event("notification_skipped", container=container_id, reason="focused")
         return
-    subprocess.run(
+    completed = subprocess.run(
         ["swaymsg", f"[con_id={container_id}]", "urgent", "enable"],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
+    log_event(
+        "urgent_requested", container=container_id, returncode=completed.returncode
+    )
     if workspace_is_focused:
+        log_event(
+            "notification_skipped", container=container_id, reason="focused_workspace"
+        )
         return
     try:
         completed = subprocess.run(
@@ -237,9 +299,17 @@ def show_notify(
             stderr=subprocess.DEVNULL,
             text=True,
         )
-    except OSError:
+    except OSError as error:
+        log_event("notification_failed", container=container_id, error=repr(error))
         return
-    if completed.stdout.strip() == "default":
+    action = completed.stdout.strip()
+    log_event(
+        "notification_finished",
+        container=container_id,
+        returncode=completed.returncode,
+        action=action,
+    )
+    if action == "default":
         focus_process(pid, expected_start_time)
 
 
@@ -259,14 +329,35 @@ def notify(payload: dict[str, Any]) -> None:
         try:
             pid = int(ssh_client_pid)
             if pid <= 0:
+                log_event("remote_invalid_client_pid", client_pid=ssh_client_pid)
                 return
             import ssh_sync
 
-            host = ssh_sync.list_hosts()[0]
+            hosts = ssh_sync.list_hosts()
+            if not hosts:
+                log_event("remote_no_hosts", client_pid=pid)
+                return
+            host = hosts[0]
+            log_event(
+                "remote_dispatch",
+                client_pid=pid,
+                selected_host=host,
+                available_hosts=hosts,
+            )
             ssh_sync.call_remote(host, show_notify, title, prompt, pid, call_timeout=20)
-        except Exception:
+        except Exception as error:
+            log_event(
+                "remote_dispatch_failed",
+                client_pid=ssh_client_pid,
+                error=repr(error),
+            )
             return
         return
+    log_event(
+        "local_dispatch",
+        pid=saved.get("pid"),
+        session_id=session_id,
+    )
     show_notify(title, prompt, saved.get("pid"), saved.get("process_start_time"))
 
 
