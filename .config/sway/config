@@ -168,6 +168,7 @@ bar {
 }
 
 # Native Wayland window rules.
+assign [app_id="^google-chrome$"] workspace number 10
 for_window [app_id="wdisplays"] floating enable
 for_window [app_id="nm-connection-editor"] floating enable
 

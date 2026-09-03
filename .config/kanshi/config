@@ -1,7 +1,9 @@
 profile docked-t32p {
-    output "Lenovo Group Limited LEN T32p-20 *" enable
-    output eDP-1 disable
+    output "Lenovo Group Limited LEN T32p-20 *" enable position 0,0
+    output eDP-1 enable position 3840,0
     ...output "*" disable
+    exec swaymsg '[workspace="^[1-9](:.*)?$"] move workspace to output DP-1'
+    exec swaymsg '[workspace="^10(:.*)?$"] move workspace to output eDP-1'
 }
 
 profile laptop {
