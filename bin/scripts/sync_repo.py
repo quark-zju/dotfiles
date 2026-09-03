@@ -351,6 +351,7 @@ def sync(local_path: str, remote_path: str, remote: str | None) -> None:
     info = ssh_sync.call_remote(remote, remote_repo_info, remote_path, branch)
     remote_path = str(info["path"])
     remote_tip = info["tip"]
+    print(f"sync: {repo} <-> {remote}:{remote_path} ({branch})")
 
     if remote_tip == local_tip:
         return

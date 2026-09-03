@@ -137,8 +137,11 @@ class SyncRepoTest(unittest.TestCase):
             self.git(self.remote, "rev-parse", "main"),
         )
 
-    def test_no_changes_is_silent(self) -> None:
-        self.assertEqual(self.sync(), "")
+    def test_prints_repo_information_when_there_are_no_changes(self) -> None:
+        self.assertEqual(
+            self.sync(),
+            f"sync: {self.local} <-> test:{self.remote} (main)\n",
+        )
 
     def test_fast_forwards_in_both_directions(self) -> None:
         self.commit(self.local, "local", "local")
