@@ -100,6 +100,9 @@ EOF
 elif [[ "${ET_REQUIRE_MASTER:-}" == 1 && "${ET_AUTO_SSH_AUTH:-}" != 1 ]]; then
 	echo "No ET master session named $SESSION_NAME; run the interactive wrapper first" >/dev/stderr
 	exit 1
+elif [[ "${ET_AUTO_SSH_AUTH:-}" != 1 && ! -t 0 ]]; then
+	echo "Cannot start an interactive ET master session without a TTY" >/dev/stderr
+	exit 1
 else
 	ET_SSH_DIR="$HOME/.cache/et-ssh/new-session"
 	mkdir -p "$ET_SSH_DIR"
@@ -150,12 +153,16 @@ EOF
 		MASTER_ARGS+=(-c " echo $MASTER_READY; stty -echo; while IFS= read -r command; do /bin/sh -c \"\$command\"; done")
 		printf -v MASTER_ET_ARGS ' %q' "${MASTER_ARGS[@]}"
 		printf -v MASTER_PATH %q "$ET_SSH_DIR:$PATH"
+		MASTER_CREATED=0
 		if tmux new-session -d -s "$SESSION_NAME" \
 			"ET_AUTO_SSH_AUTH=1 PATH=$MASTER_PATH $ET_BIN$MASTER_ET_ARGS" 2>/dev/null; then
-			start_master_target
+			MASTER_CREATED=1
 		fi
 		while tmux has-session -t "$SESSION_NAME" 2>/dev/null; do
 			if tmux capture-pane -t "$SESSION_NAME" -p | grep -Fq "$MASTER_READY"; then
+				if ((MASTER_CREATED)); then
+					start_master_target
+				fi
 				exec "$0" "$@"
 			fi
 			sleep 0.1
