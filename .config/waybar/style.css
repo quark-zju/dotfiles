@@ -14,16 +14,17 @@ window#waybar {
     min-width: 0;
     padding: 1px 6px;
     border: 0;
+    border-bottom: 2px solid transparent;
     background: #222222;
     color: #888888;
 }
 
-#workspaces button:hover,
-#workspaces button.visible {
+#workspaces button:hover {
     background: #333333;
     color: #ffffff;
 }
 
+#workspaces button.visible,
 #workspaces button.focused {
     border-bottom: 2px solid #4c7899;
     background: #285577;
