@@ -12,6 +12,7 @@ from typing import Any
 
 TITLE_PROMPT_PREFIX = "Generate a concise, single-line task title "
 RECAP_PROMPT_PREFIX = "Write a brief catch-up for a user returning to this Codex task. "
+NOTIFICATION_EXPIRE_MS = 30_000
 
 
 def log_event(event: str, **fields: object) -> None:
@@ -321,7 +322,7 @@ def show_notify(
                 "notify-send",
                 "--app-name=Codex",
                 "--action=default=Focus window",
-                "--expire-time=10000",
+                f"--expire-time={NOTIFICATION_EXPIRE_MS}",
                 html.escape(f"Codex · {title}" if title else "Codex turn complete"),
                 html.escape(message),
             ],
@@ -353,6 +354,13 @@ def notify(payload: dict[str, Any]) -> None:
     prompt = " ".join(saved["prompt"].split())
     if len(prompt) > 1000:
         prompt = prompt[:999] + "…"
+    last_assistant_message = payload.get("last_assistant_message")
+    if isinstance(last_assistant_message, str):
+        summary = " ".join(last_assistant_message.split())
+        if len(summary) > 1000:
+            summary = summary[:999] + "…"
+        if summary:
+            prompt += f"\n\n{summary}"
     title = load_thread_title(session_id)
     ssh_client_pid = os.environ.get("SSH_CLIENT_PID")
     if ssh_client_pid is not None:
