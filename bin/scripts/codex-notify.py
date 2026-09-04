@@ -174,6 +174,7 @@ def sway_state(
 def process_sway_state(
     pid: object, expected_start_time: object
 ) -> tuple[int, bool, bool] | None:
+    import glob
     import json
     import subprocess
 
@@ -188,9 +189,27 @@ def process_sway_state(
         log_event("window_process_changed", pid=pid)
         return None
     try:
+        environment = os.environ.copy()
+        sway_socket = environment.get("SWAYSOCK")
+        if not sway_socket or not os.path.exists(sway_socket):
+            runtime_dir = environment.get("XDG_RUNTIME_DIR")
+            candidates = (
+                glob.glob(os.path.join(runtime_dir, "sway-ipc.*.sock"))
+                if runtime_dir
+                else []
+            )
+            if candidates:
+                recovered_socket = max(candidates, key=os.path.getmtime)
+                environment["SWAYSOCK"] = recovered_socket
+                log_event(
+                    "sway_socket_recovered",
+                    old_socket=sway_socket,
+                    new_socket=recovered_socket,
+                )
         completed = subprocess.run(
             ["swaymsg", "-t", "get_tree", "-r"],
             check=True,
+            env=environment,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
             text=True,
