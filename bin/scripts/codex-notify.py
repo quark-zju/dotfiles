@@ -176,6 +176,7 @@ def process_sway_state(
 ) -> tuple[int, bool, bool] | None:
     import glob
     import json
+    import os
     import subprocess
 
     if not isinstance(pid, int) or not isinstance(expected_start_time, int):
