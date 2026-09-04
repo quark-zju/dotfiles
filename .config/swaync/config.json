@@ -3,5 +3,6 @@
   "positionX": "center",
   "positionY": "bottom",
   "control-center-positionX": "right",
-  "control-center-positionY": "top"
+  "control-center-positionY": "top",
+  "notification-2fa-action": false
 }
