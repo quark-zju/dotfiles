@@ -49,6 +49,23 @@ class ShortenLinuxArgvTest(unittest.TestCase):
         shorten.assert_called_once_with("ssh-sync call source")
 
 
+class InstallUploadedSourceTest(unittest.TestCase):
+    def test_returns_installed_source_path(self):
+        with tempfile.TemporaryDirectory() as root:
+            site_packages = os.path.join(root, "site-packages")
+            home = os.path.join(root, "home")
+            with mock.patch("site.getusersitepackages", return_value=site_packages), \
+                mock.patch.dict(os.environ, {"HOME": home}):
+                installed = ssh_sync._install_uploaded_source("source\n")
+
+            self.assertEqual(installed, os.path.join(site_packages, "ssh_sync.py"))
+            self.assertEqual(Path(installed).read_text(), "source\n")
+            self.assertEqual(
+                os.path.realpath(os.path.join(home, ".local/bin/ssh_sync.py")),
+                installed,
+            )
+
+
 class Control:
     def __init__(self):
         self.cancelled = threading.Event()

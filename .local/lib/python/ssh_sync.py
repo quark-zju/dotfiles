@@ -1794,7 +1794,7 @@ def _install_uploaded_source(source):
     os.makedirs(bin_dir, exist_ok=True)
     command = os.path.join(bin_dir, "ssh_sync.py")
     if os.path.islink(command) and os.path.realpath(command) == destination:
-        return
+        return destination
     temporary = os.path.join(bin_dir, ".ssh_sync.py.%s" % uuid.uuid4().hex)
     try:
         os.symlink(destination, temporary)
@@ -1804,6 +1804,7 @@ def _install_uploaded_source(source):
             os.unlink(temporary)
         except FileNotFoundError:
             pass
+    return destination
 
 
 def _bind_server(address):
@@ -1957,7 +1958,7 @@ def _remote_agent():
     max_frame = globals()["__ssh_sync_max_frame__"]
     peer_name = globals()["__ssh_sync_peer_name__"]
     try:
-        _install_uploaded_source(source)
+        installed_source = _install_uploaded_source(source)
     except Exception as exc:
         _send_frame(
             1,
@@ -1997,14 +1998,14 @@ def _remote_agent():
     def handle_call(request):
         request = {**request, "peer_name": peer_name}
         return _run_worker(
-            request, python_argv + ["-c", source, "_remote_worker"]
+            request, python_argv + [installed_source, "_remote_worker"]
         )
 
     def handle_stream(request, control):
         request = {**request, "peer_name": peer_name}
         return _handle_remote_stream(
             request,
-            python_argv + ["-c", source, "_remote_iterator"],
+            python_argv + [installed_source, "_remote_iterator"],
             control,
         )
 
