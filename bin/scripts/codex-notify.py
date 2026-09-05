@@ -13,7 +13,6 @@ from typing import Any
 TITLE_PROMPT_PREFIX = "Generate a concise, single-line task title "
 RECAP_PROMPT_PREFIX = "Write a brief catch-up for a user returning to this Codex task. "
 NOTIFICATION_EXPIRE_MS = 30_000
-AGENT_NAMES = {"codex": "Codex", "claude": "Claude"}
 
 
 def log_event(event: str, **fields: object) -> None:
@@ -73,13 +72,23 @@ def ancestors(pid: int):
         pid = stat[0]
 
 
+def agent_name() -> str | None:
+    if os.environ.get("CODEX_THREAD_ID"):
+        return "Codex"
+    if os.environ.get("CLAUDE_CODE_SESSION_ID"):
+        return "Claude"
+    return None
+
+
 def agent_process() -> tuple[str, int, int] | None:
+    name = agent_name()
+    if name is None:
+        return None
     for pid in ancestors(os.getppid()):
-        agent_name = AGENT_NAMES.get(process_name(pid))
-        if agent_name is not None:
+        if process_name(pid) == name.lower():
             stat = process_stat(pid)
             if stat is not None:
-                return agent_name, pid, stat[1]
+                return name, pid, stat[1]
     return None
 
 
@@ -364,7 +373,7 @@ def notify(payload: dict[str, Any]) -> None:
     if saved is None or not isinstance(saved.get("prompt"), str):
         return
     agent_name = saved.get("agent_name", "Codex")
-    if agent_name not in AGENT_NAMES.values():
+    if agent_name not in ("Codex", "Claude"):
         return
     prompt = " ".join(saved["prompt"].split())
     if len(prompt) > 1000:
