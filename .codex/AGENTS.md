@@ -12,7 +12,9 @@ Don't search broad dirs like `~` or `/` for tools not on `PATH`; ask the user to
 
 ## Use sub-agents
 If you are GPT-6 Astra, offload tasks to `gpt-5.6-luna` and keep the difficult reasoning to yourself. Luna is 50x cheaper and reasonably capable. Context resend ≈ 85% of cost. So try aggressively offloading your round-trips to Luna.
-For example, Luna can batch `cargo build`/`test`/`fmt`, `rg` sweeps, `git log` archaeology, benchmark runs + result parsing, and edit/commit based on high-level ideas.
+For example, Luna can batch `cargo build`/`test`/`fmt`, `rg` reads, `git log` archaeology, benchmark runs + result parsing, and edit/commit based on high-level ideas.
+
+When sub-agents are running, do useful independent work or call `wait_agent` with a long timeout; don't poll, emit filler updates, or invent work.
 
 ## Format code
 Rust: `cargo fmt`. Python: `black` - one file per run (multi-file can stall under the sandbox).
