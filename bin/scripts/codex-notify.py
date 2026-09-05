@@ -72,18 +72,17 @@ def ancestors(pid: int):
         pid = stat[0]
 
 
-def agent_name() -> str | None:
-    if os.environ.get("CODEX_THREAD_ID"):
+def agent_name(payload: dict[str, Any]) -> str:
+    # Codex hooks do not inherit CODEX_THREAD_ID, so use Codex-specific fields.
+    if isinstance(payload.get("model"), str) and isinstance(
+        payload.get("turn_id"), str
+    ):
         return "Codex"
-    if os.environ.get("CLAUDE_CODE_SESSION_ID"):
-        return "Claude"
-    return None
+    return "Claude"
 
 
-def agent_process() -> tuple[str, int, int] | None:
-    name = agent_name()
-    if name is None:
-        return None
+def agent_process(payload: dict[str, Any]) -> tuple[str, int, int] | None:
+    name = agent_name(payload)
     for pid in ancestors(os.getppid()):
         if process_name(pid) == name.lower():
             stat = process_stat(pid)
@@ -117,15 +116,14 @@ def save_prompt(payload: dict[str, Any]) -> None:
     if prompt.startswith((TITLE_PROMPT_PREFIX, RECAP_PROMPT_PREFIX)):
         log_event("prompt_skipped", session_id=session_id, reason="internal_prompt")
         return
-    process = agent_process()
+    process = agent_process(payload)
     if not process:
         log_event(
             "prompt_skipped",
             session_id=session_id,
             reason="agent_process_not_found",
             parent_pid=os.getppid(),
-            has_codex_thread_id=bool(os.environ.get("CODEX_THREAD_ID")),
-            has_claude_session_id=bool(os.environ.get("CLAUDE_CODE_SESSION_ID")),
+            has_codex_fields=agent_name(payload) == "Codex",
             ancestors=[
                 {"pid": pid, "name": process_name(pid)}
                 for pid in ancestors(os.getppid())
@@ -521,8 +519,7 @@ def main() -> None:
             parent_pid=os.getppid(),
             has_swaysock=bool(os.environ.get("SWAYSOCK")),
             has_ssh_client_pid="SSH_CLIENT_PID" in os.environ,
-            has_codex_thread_id=bool(os.environ.get("CODEX_THREAD_ID")),
-            has_claude_session_id=bool(os.environ.get("CLAUDE_CODE_SESSION_ID")),
+            has_codex_fields=agent_name(payload) == "Codex",
         )
         if not os.environ.get("SWAYSOCK") and "SSH_CLIENT_PID" not in os.environ:
             log_event(
