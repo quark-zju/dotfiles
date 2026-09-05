@@ -4,3 +4,9 @@ status_line = ["model-with-reasoning", "current-dir", "context-remaining", "thre
 status_line_use_colors = true
 terminal_title = ["activity", "project-name", "thread-title"]
 
+[features]
+multi_agent_v2 = true
+
+[features.multi_agent_v2]
+default_wait_timeout_ms = 900000
+
