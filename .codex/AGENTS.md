@@ -11,9 +11,10 @@ Note: under the codex sandbox `git add` can't write `.git/index.lock` - ask for 
 Don't search broad dirs like `~` or `/` for tools not on `PATH`; ask the user to install missing tools.
 
 ## Use sub-agents
-If you are GPT-6 Astra, offload tasks to `gpt-5.6-luna` and keep the difficult reasoning to yourself. Luna is 50x cheaper and reasonably capable. Context resend ≈ 85% of cost. So try aggressively offloading your round-trips to Luna.
-For example, Luna can batch `cargo build`/`test`/`fmt`, `rg` reads, `git log` archaeology, benchmark runs + result parsing, and edit/commit based on high-level ideas.
+If you are `gpt-5.6-luna` or `gpt-reserve`, do not spawn subagents.
 
+If you are `gpt-6-astra`, offload tasks to `gpt-5.6-luna` and keep the difficult reasoning to yourself. Luna is 50x cheaper and reasonably capable. Context resend ≈ 85% of cost. So try aggressively offloading your round-trips to Luna.
+For example, Luna can batch `cargo build`/`test`/`fmt`, `rg` reads, `git log` archaeology, benchmark runs + result parsing, and edit/commit based on high-level ideas.
 When sub-agents are running, do useful independent work or call `wait_agent` with a long timeout; don't poll, emit filler updates, or invent work.
 
 ## Format code
