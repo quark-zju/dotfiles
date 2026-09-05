@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Notify when a local Codex turn completes and focus it on demand."""
+"""Notify when a local coding-agent turn completes and focus it on demand."""
 
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ from typing import Any
 TITLE_PROMPT_PREFIX = "Generate a concise, single-line task title "
 RECAP_PROMPT_PREFIX = "Write a brief catch-up for a user returning to this Codex task. "
 NOTIFICATION_EXPIRE_MS = 30_000
+AGENT_NAMES = {"codex": "Codex", "claude": "Claude"}
 
 
 def log_event(event: str, **fields: object) -> None:
@@ -72,12 +73,13 @@ def ancestors(pid: int):
         pid = stat[0]
 
 
-def codex_process() -> tuple[int, int] | None:
+def agent_process() -> tuple[str, int, int] | None:
     for pid in ancestors(os.getppid()):
-        if process_name(pid) == "codex":
+        agent_name = AGENT_NAMES.get(process_name(pid))
+        if agent_name is not None:
             stat = process_stat(pid)
             if stat is not None:
-                return pid, stat[1]
+                return agent_name, pid, stat[1]
     return None
 
 
@@ -103,16 +105,21 @@ def save_prompt(payload: dict[str, Any]) -> None:
         or prompt.startswith((TITLE_PROMPT_PREFIX, RECAP_PROMPT_PREFIX))
     ):
         return
-    process = codex_process()
+    process = agent_process()
     if not process:
         return
     path = state_path(session_id)
     if path is None:
         return
-    pid, start_time = process
+    agent_name, pid, start_time = process
     path.write_text(
         json.dumps(
-            {"prompt": prompt, "pid": pid, "process_start_time": start_time},
+            {
+                "agent_name": agent_name,
+                "prompt": prompt,
+                "pid": pid,
+                "process_start_time": start_time,
+            },
             ensure_ascii=False,
         )
     )
@@ -280,6 +287,7 @@ def focus_process(pid: object, expected_start_time: object) -> None:
 
 
 def show_notify(
+    agent_name: str,
     title: str | None,
     message: str,
     pid: object,
@@ -320,10 +328,14 @@ def show_notify(
         completed = subprocess.run(
             [
                 "notify-send",
-                "--app-name=Codex",
+                f"--app-name={agent_name}",
                 "--action=default=Focus window",
                 f"--expire-time={NOTIFICATION_EXPIRE_MS}",
-                html.escape(f"Codex · {title}" if title else "Codex turn complete"),
+                html.escape(
+                    f"{agent_name} · {title}"
+                    if title
+                    else f"{agent_name} turn complete"
+                ),
                 html.escape(message),
             ],
             stdout=subprocess.PIPE,
@@ -351,6 +363,9 @@ def notify(payload: dict[str, Any]) -> None:
     saved = load_prompt(session_id)
     if saved is None or not isinstance(saved.get("prompt"), str):
         return
+    agent_name = saved.get("agent_name", "Codex")
+    if agent_name not in AGENT_NAMES.values():
+        return
     prompt = " ".join(saved["prompt"].split())
     if len(prompt) > 1000:
         prompt = prompt[:999] + "…"
@@ -361,7 +376,7 @@ def notify(payload: dict[str, Any]) -> None:
             summary = summary[:999] + "…"
         if summary:
             prompt += f"\n\n{summary}"
-    title = load_thread_title(session_id)
+    title = load_thread_title(session_id) if agent_name == "Codex" else None
     ssh_client_pid = os.environ.get("SSH_CLIENT_PID")
     if ssh_client_pid is not None:
         try:
@@ -382,7 +397,15 @@ def notify(payload: dict[str, Any]) -> None:
                 selected_host=host,
                 available_hosts=hosts,
             )
-            ssh_sync.call_remote(host, show_notify, title, prompt, pid, call_timeout=20)
+            ssh_sync.call_remote(
+                host,
+                show_notify,
+                agent_name,
+                title,
+                prompt,
+                pid,
+                call_timeout=20,
+            )
         except Exception as error:
             log_event(
                 "remote_dispatch_failed",
@@ -393,10 +416,17 @@ def notify(payload: dict[str, Any]) -> None:
         return
     log_event(
         "local_dispatch",
+        agent_name=agent_name,
         pid=saved.get("pid"),
         session_id=session_id,
     )
-    show_notify(title, prompt, saved.get("pid"), saved.get("process_start_time"))
+    show_notify(
+        agent_name,
+        title,
+        prompt,
+        saved.get("pid"),
+        saved.get("process_start_time"),
+    )
 
 
 def main() -> None:
