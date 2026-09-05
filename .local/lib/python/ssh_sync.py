@@ -94,7 +94,7 @@ def shorten_linux_argv(title):
     except Exception:
         pass
 
-shorten_linux_argv("ssh-sync remote agent")
+shorten_linux_argv("ssh-sync agent from " + __SSH_SYNC_PEER_NAME__)
 
 def read_exact(size):
     chunks = []
@@ -152,6 +152,16 @@ def _shorten_linux_argv(title):
     except Exception:
         # This is cosmetic and must not prevent the remote agent from running.
         pass
+
+
+def _shorten_worker_argv(request, operation):
+    function = request["function"]
+    target = function.get("name", "source")
+    title = "ssh-sync %s %s" % (operation, target)
+    peer_name = request.get("peer_name")
+    if peer_name:
+        title += " from " + peer_name
+    _shorten_linux_argv(title)
 
 
 class RemoteError(Exception):
@@ -1295,11 +1305,11 @@ class _Session:
                 self.fd,
                 self.max_frame,
                 lambda request: _run_worker(
-                    request,
+                    {**request, "peer_name": host},
                     [sys.executable, os.path.abspath(__file__), "_remote_worker"],
                 ),
                 lambda request, control: _handle_remote_stream(
-                    request,
+                    {**request, "peer_name": host},
                     [sys.executable, os.path.abspath(__file__), "_remote_iterator"],
                     control,
                 ),
@@ -1441,6 +1451,7 @@ def _exception_data(exc):
 def _remote_worker(result_path):
     try:
         request = _json_loads(sys.stdin.buffer.read())
+        _shorten_worker_argv(request, "call")
         function = request["function"]
         namespace = {"__name__": "__ssh_sync_call__"}
         namespace.update(function.get("globals", {}))
@@ -1459,6 +1470,7 @@ def _remote_worker(result_path):
 
 def _remote_iterator_worker(event_fd):
     request = _json_loads(sys.stdin.buffer.read())
+    _shorten_worker_argv(request, "iterate")
     try:
         function = request["function"]
         namespace = {"__name__": "__ssh_sync_call__"}
@@ -1983,11 +1995,13 @@ def _remote_agent():
     )
 
     def handle_call(request):
+        request = {**request, "peer_name": peer_name}
         return _run_worker(
             request, python_argv + ["-c", source, "_remote_worker"]
         )
 
     def handle_stream(request, control):
+        request = {**request, "peer_name": peer_name}
         return _handle_remote_stream(
             request,
             python_argv + ["-c", source, "_remote_iterator"],
@@ -2319,7 +2333,6 @@ def _install_main(force=False):
 def _main():
     command = sys.argv[1] if len(sys.argv) >= 2 else ""
     process_titles = {
-        "_remote_agent": "ssh-sync remote agent",
         "_remote_worker": "ssh-sync remote worker",
         "_remote_iterator": "ssh-sync remote iterator",
     }

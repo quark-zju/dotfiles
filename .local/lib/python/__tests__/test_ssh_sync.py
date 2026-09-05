@@ -31,6 +31,23 @@ class ShortenLinuxArgvTest(unittest.TestCase):
 
         self.assertEqual(output.strip(), "b'ssh-sync test'")
 
+    def test_worker_title_describes_function_and_peer(self):
+        request = {
+            "function": {"kind": "call", "name": "collect_status"},
+            "peer_name": "laptop",
+        }
+        with mock.patch.object(ssh_sync, "_shorten_linux_argv") as shorten:
+            ssh_sync._shorten_worker_argv(request, "call")
+
+        shorten.assert_called_once_with("ssh-sync call collect_status from laptop")
+
+    def test_worker_title_describes_source(self):
+        request = {"function": {"kind": "exec"}}
+        with mock.patch.object(ssh_sync, "_shorten_linux_argv") as shorten:
+            ssh_sync._shorten_worker_argv(request, "call")
+
+        shorten.assert_called_once_with("ssh-sync call source")
+
 
 class Control:
     def __init__(self):
