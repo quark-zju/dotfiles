@@ -7,7 +7,7 @@ local opt = vim.opt
 opt.relativenumber = false
 opt.conceallevel = 0
 
-if vim.env.SSH_TTY then
+if vim.env.SSH_CLIENT then
   vim.g.clipboard = {
     name = "FileClipboard",
     copy = {
