@@ -9,8 +9,15 @@ Note: under the codex sandbox `git add` can't write `.git/index.lock` - ask for 
 ## Missing tools
 Don't search broad dirs like `~` or `/` for tools not on `PATH`; ask the user to install missing tools.
 
-## Use sub-agents
-If you are GPT-6 Astra, use `gpt-5.6-luna` subagents for the boring execution and keep the hard thinking to yourself.
+## Use sub-agents (offload aggressively)
+If you are GPT-6 Astra, offload execution to `gpt-5.6-luna` subagents and keep the hard reasoning to yourself. Luna carries a much smaller context (~40-50K vs your ~120-140K), so pushing mechanical work onto it cuts your expensive large-context round-trips.
+
+To make offload actually pay off:
+- Delegate in one self-contained shot: goal, scope, file list, acceptance check. Avoid dribbling instructions via repeated follow-ups — every steering round-trip still bills your full context.
+- Offload heavy/boring shell to Luna: batch `cargo build/test/fmt`, multi-file `rg`, `git log` sweeps, benchmark runs, and result parsing/aggregation.
+- Keep in your own loop only read-then-edit steps that need your reasoning (skim a file, then decide and edit). Don't split off a step that is tightly coupled to an edit you are about to make.
+- Give subagents that touch shared mutable state their own worktree (or a disjoint file partition). Don't edit the same file a running subagent is editing — concurrent writes get lost or conflict.
+- Keep subagents async and keep doing your own work while they run (that is the whole point). Only block/serialize when a step genuinely depends on a subagent's result.
 
 ## Format code
 Rust: `cargo fmt && cargo test -q`. Python: `black` - one file per run (multi-file can stall under the sandbox).
