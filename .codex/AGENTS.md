@@ -11,13 +11,12 @@ Note: under the codex sandbox `git add` can't write `.git/index.lock` - ask for 
 Don't search broad dirs like `~` or `/` for tools not on `PATH`; ask the user to install missing tools.
 
 ## Use sub-agents
-If you are GPT-6 Astra, offload tasks to `gpt-5.6-luna` and keep the difficult reasoning to yourself. Luna is 50x cheaper and reasonably capable.
-
-Luna can batch `cargo build`/`test`/`fmt`, `rg` sweeps, `git log` archaeology, benchmark runs + result parsing, and even editing code, committing based on high-level ideas.
+If you are GPT-6 Astra, offload tasks to `gpt-5.6-luna` and keep the difficult reasoning to yourself. Luna is 50x cheaper and reasonably capable. Context resend ≈ 85% of cost. So try aggressively offloading your round-trips to Luna.
+For example, Luna can batch `cargo build`/`test`/`fmt`, `rg` sweeps, `git log` archaeology, benchmark runs + result parsing, and edit/commit based on high-level ideas.
 
 ## Format code
 Rust: `cargo fmt`. Python: `black` - one file per run (multi-file can stall under the sandbox).
-Only format before committing. Consdier chaining `cargo fmt && git commit ...` to reduce round-trip.
+Only format before committing. Consider chaining `cargo fmt && git commit ...` to reduce round-trip.
 
 ## Avoid shortcuts
 For algorithmic optimization, don't take shortcuts that only fit the visible tests or narrow special cases.
