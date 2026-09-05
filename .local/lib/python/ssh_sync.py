@@ -589,6 +589,7 @@ def _function_spec(script):
 
     module_globals = script.__globals__
     sources = []
+    captured_globals = {}
     visited = set()
     unresolved = set()
 
@@ -606,6 +607,13 @@ def _function_spec(script):
                 and value.__name__ == name
             ):
                 add_function(value)
+            elif name in module_globals:
+                try:
+                    _encode_value(value)
+                except TypeError:
+                    unresolved.add(name)
+                else:
+                    captured_globals[name] = value
             else:
                 unresolved.add(name)
         sources.append(_function_source(function))
@@ -616,7 +624,12 @@ def _function_spec(script):
             "function depends on non-builtin globals: %s"
             % ", ".join(sorted(unresolved))
         )
-    return {"kind": "call", "source": "\n".join(sources), "name": script.__name__}
+    return {
+        "kind": "call",
+        "source": "\n".join(sources),
+        "name": script.__name__,
+        "globals": captured_globals,
+    }
 
 
 def _current_source():
@@ -751,9 +764,9 @@ def call_remote(host, script, *args, call_timeout=None, **kwargs):
         export SSH_SYNC_ET_COMMAND='et -c {command} {host}'
 
     Pass a top-level ``def``. Other top-level functions from the same module
-    are included recursively; other globals are not supported, so imports used
-    by these functions should be inside them. Lambdas and closures are not
-    supported::
+    are included recursively. Referenced globals containing standard supported
+    values are snapshotted; imports used by these functions should be inside
+    them. Lambdas and closures are not supported::
 
         import ssh_sync
 
@@ -1383,8 +1396,9 @@ def _exception_data(exc):
 def _remote_worker(result_path):
     try:
         request = _json_loads(sys.stdin.buffer.read())
-        namespace = {"__name__": "__ssh_sync_call__"}
         function = request["function"]
+        namespace = {"__name__": "__ssh_sync_call__"}
+        namespace.update(function.get("globals", {}))
         exec(compile(function["source"], "<ssh-sync-call>", "exec"), namespace, namespace)
         if function["kind"] == "call":
             value = namespace[function["name"]](*request["args"], **request["kwargs"])
@@ -1401,8 +1415,9 @@ def _remote_worker(result_path):
 def _remote_iterator_worker(event_fd):
     request = _json_loads(sys.stdin.buffer.read())
     try:
-        namespace = {"__name__": "__ssh_sync_call__"}
         function = request["function"]
+        namespace = {"__name__": "__ssh_sync_call__"}
+        namespace.update(function.get("globals", {}))
         exec(compile(function["source"], "<ssh-sync-call>", "exec"), namespace, namespace)
         iterator = namespace[function["name"]](*request["args"], **request["kwargs"])
         while True:
