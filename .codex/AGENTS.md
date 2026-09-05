@@ -9,15 +9,12 @@ Note: under the codex sandbox `git add` can't write `.git/index.lock` - ask for 
 ## Missing tools
 Don't search broad dirs like `~` or `/` for tools not on `PATH`; ask the user to install missing tools.
 
-## Use sub-agents (offload aggressively)
-If you are GPT-6 Astra, offload execution to `gpt-5.6-luna` subagents and keep the hard reasoning to yourself. Luna carries a much smaller context (~40-50K vs your ~120-140K), so pushing mechanical work onto it cuts your expensive large-context round-trips.
+## Use sub-agents (offload)
+If you are GPT-6 Astra, offload boring execution to `gpt-5.6-luna` and keep the reasoning to yourself. Luna's context is ~3x smaller, so every task you hand off spares a big round-trip.
 
-To make offload actually pay off:
-- Delegate in one self-contained shot: goal, scope, file list, acceptance check. Avoid dribbling instructions via repeated follow-ups — every steering round-trip still bills your full context.
-- Offload heavy/boring shell to Luna: batch `cargo build/test/fmt`, multi-file `rg`, `git log` sweeps, benchmark runs, and result parsing/aggregation.
-- Keep in your own loop only read-then-edit steps that need your reasoning (skim a file, then decide and edit). Don't split off a step that is tightly coupled to an edit you are about to make.
-- Give subagents that touch shared mutable state their own worktree (or a disjoint file partition). Don't edit the same file a running subagent is editing — concurrent writes get lost or conflict.
-- Keep subagents async and keep doing your own work while they run (that is the whole point). Only block/serialize when a step genuinely depends on a subagent's result.
+Hand off whole, self-contained jobs (goal + scope + acceptance) — avoid steering via repeated follow-ups. Typical Luna fodder: batch `cargo build`/`test`/`fmt`, repo-wide `rg` sweeps, `git log` archaeology, benchmark runs + result parsing.
+Keep in your loop only what needs your judgment: read the relevant lines, then decide and edit. Don't ask Luna for a step you're about to edit.
+Keep it async — keep working while it runs; block only on a true dependency. For tasks touching shared files, give Luna its own worktree/file set so you don't collide.
 
 ## Format code
 Rust: `cargo fmt && cargo test -q`. Python: `black` - one file per run (multi-file can stall under the sandbox).
