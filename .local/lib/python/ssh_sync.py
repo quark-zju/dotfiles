@@ -60,41 +60,21 @@ import uuid
 import zlib
 from multiprocessing.connection import Client, Connection
 
-
 _FRAME_PREFIX = b"SS1:"
-_READY = b"\nSSH_SYNC_STAGE0_READY_V1\n"
+_BOOTSTRAP_READY = b"\nSSH_SYNC_BOOTSTRAP_READY_V1\n"
+_AGENT_READY = b"\nSSH_SYNC_AGENT_READY_V1\n"
 _DEFAULT_MAX_FRAME = 16 * 1024 * 1024
 _DEFAULT_TIMEOUT = 300.0
 _MAX_AGENT = 4 * 1024 * 1024
 _PROTOCOL_VERSION = 1
 _STREAM_CHUNK_SIZE = 32 * 1024
 
-_STAGE0_SOURCE = r'''
+_BOOTSTRAP_SOURCE = r"""
 import hashlib
 import os
-import struct
-import sys
+import site
+import tempfile
 import tty
-
-def shorten_linux_argv(title):
-    if not sys.platform.startswith("linux"):
-        return
-    try:
-        with open("/proc/self/stat", encoding="ascii") as stat_file:
-            fields = stat_file.read().rsplit(")", 1)[1].split()
-        start = int(fields[45])
-        end = int(fields[46])
-        size = end - start
-        if size <= 0:
-            return
-        import ctypes
-        encoded = title.encode("utf-8")[:size - 1]
-        ctypes.memset(start, 0, size)
-        ctypes.memmove(start, encoded, len(encoded))
-    except Exception:
-        pass
-
-shorten_linux_argv("ssh-sync agent from " + __SSH_SYNC_PEER_NAME__)
 
 def read_exact(size):
     chunks = []
@@ -107,26 +87,56 @@ def read_exact(size):
     return b"".join(chunks)
 
 tty.setraw(0)
-os.write(1, b"\nSSH_SYNC_STAGE0_READY_V1\n")
+os.write(1, b"\nSSH_SYNC_BOOTSTRAP_READY_V1\n")
 header = read_exact(36)
-size = struct.unpack("!I", header[:4])[0]
+size = int.from_bytes(header[:4], "big")
 if size > 4 * 1024 * 1024:
     raise ValueError("agent is too large")
-payload = read_exact(size)
-if hashlib.sha256(payload).digest() != header[4:]:
-    raise ValueError("agent digest mismatch")
-source = payload.decode("utf-8")
-sys.argv = ["ssh_sync.py", "_remote_agent"]
-namespace = {
-    "__name__": "__main__",
-    "__ssh_sync_source__": source,
-    "__ssh_sync_digest__": header[4:].hex(),
-    "__ssh_sync_python_argv__": __SSH_SYNC_PYTHON_ARGV__,
-    "__ssh_sync_max_frame__": __SSH_SYNC_MAX_FRAME__,
-    "__ssh_sync_peer_name__": __SSH_SYNC_PEER_NAME__,
-}
-exec(compile(source, "<ssh-sync-agent>", "exec"), namespace, namespace)
-'''
+digest = header[4:]
+site_packages = site.getusersitepackages()
+destination = os.path.join(site_packages, "ssh_sync.py")
+try:
+    with open(destination, "rb") as installed:
+        current = hashlib.sha256(installed.read()).digest()
+except OSError:
+    current = None
+updated = current != digest
+if updated:
+    os.write(1, b"U")
+    payload = read_exact(size)
+    if hashlib.sha256(payload).digest() != digest:
+        raise ValueError("agent digest mismatch")
+    os.makedirs(site_packages, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix=".ssh_sync.py.", dir=site_packages)
+    try:
+        with os.fdopen(fd, "wb") as output:
+            output.write(payload)
+        os.chmod(temporary, 0o755)
+        os.replace(temporary, destination)
+    finally:
+        try:
+            os.unlink(temporary)
+        except FileNotFoundError:
+            pass
+bin_dir = os.path.expanduser("~/.local/bin")
+os.makedirs(bin_dir, exist_ok=True)
+command = os.path.join(bin_dir, "ssh_sync.py")
+if not os.path.islink(command) or os.path.realpath(command) != destination:
+    temporary = os.path.join(bin_dir, ".ssh_sync.py.%d" % os.getpid())
+    try:
+        try:
+            os.unlink(temporary)
+        except FileNotFoundError:
+            pass
+        os.symlink(destination, temporary)
+        os.replace(temporary, command)
+    finally:
+        try:
+            os.unlink(temporary)
+        except FileNotFoundError:
+            pass
+os.write(1, b"D" if updated else b"C")
+"""
 
 
 def _shorten_linux_argv(title):
@@ -308,7 +318,9 @@ class _FrameReader:
                 try:
                     checksum, encoded = line[len(_FRAME_PREFIX) :].split(b":", 1)
                     payload = base64.b64decode(encoded, validate=True)
-                    if "%08x" % (zlib.crc32(payload) & 0xFFFFFFFF) != checksum.decode("ascii"):
+                    if "%08x" % (zlib.crc32(payload) & 0xFFFFFFFF) != checksum.decode(
+                        "ascii"
+                    ):
                         continue
                     return _json_loads(payload)
                 except (ValueError, UnicodeError, json.JSONDecodeError):
@@ -696,8 +708,7 @@ def _transport_command():
     template = os.environ.get("SSH_SYNC_ET_COMMAND")
     if not template:
         raise RuntimeError(
-            "set SSH_SYNC_ET_COMMAND, for example: "
-            "et -c {command} {host}"
+            "set SSH_SYNC_ET_COMMAND, for example: " "et -c {command} {host}"
         )
     return template
 
@@ -727,8 +738,13 @@ def _resolve_timeout(timeout):
 def _transport_argv(template, host, command):
     argv = shlex.split(template)
     if "{host}" not in argv or "{command}" not in argv:
-        raise ValueError("SSH_SYNC_ET_COMMAND must contain {host} and {command} arguments")
-    return [host if arg == "{host}" else command if arg == "{command}" else arg for arg in argv]
+        raise ValueError(
+            "SSH_SYNC_ET_COMMAND must contain {host} and {command} arguments"
+        )
+    return [
+        host if arg == "{host}" else command if arg == "{command}" else arg
+        for arg in argv
+    ]
 
 
 def _read_daemon_hash(host):
@@ -750,9 +766,7 @@ def _connect_daemon(host, code_hash, transport_factory):
                 transport = transport_factory()
             return Client(address, family="AF_UNIX"), info, transport
         if info.get("kind") == "peer":
-            raise RuntimeError(
-                "ssh-sync peer %s uses a different code version" % host
-            )
+            raise RuntimeError("ssh-sync peer %s uses a different code version" % host)
         _daemon_command(address, "stop")
         deadline = time.monotonic() + 2
         while os.path.exists(address) and time.monotonic() < deadline:
@@ -795,7 +809,9 @@ def _connect_daemon(host, code_hash, transport_factory):
             )
         except OSError:
             if time.monotonic() >= deadline:
-                raise RuntimeError("ssh-sync daemon did not start; see %s" % _log_path(host))
+                raise RuntimeError(
+                    "ssh-sync daemon did not start; see %s" % _log_path(host)
+                )
             time.sleep(0.05)
 
 
@@ -883,7 +899,9 @@ def call_remote(host, script, *args, call_timeout=None, **kwargs):
         # The daemon enforces the timeout and reports it as an error; only give
         # up locally if even that fails to arrive.
         if timeout is not None and not connection.poll(timeout + 10):
-            raise TimeoutError("ssh-sync daemon did not answer within %.1fs" % (timeout + 10))
+            raise TimeoutError(
+                "ssh-sync daemon did not answer within %.1fs" % (timeout + 10)
+            )
         response = connection.recv()
     finally:
         connection.close()
@@ -1188,7 +1206,10 @@ def open_process(host, argv, *, cwd=None, env=None, call_timeout=None):
         raise TypeError("cwd must be a string or None")
     if env is not None and (
         not isinstance(env, dict)
-        or not all(isinstance(key, str) and isinstance(value, str) for key, value in env.items())
+        or not all(
+            isinstance(key, str) and isinstance(value, str)
+            for key, value in env.items()
+        )
     ):
         raise TypeError("env must be a mapping of strings or None")
 
@@ -1230,8 +1251,51 @@ def _read_until(fd, marker, deadline=None):
             del data[: len(data) - len(marker)]
         chunk = _read_fd(fd, 65536, deadline)
         if not chunk:
-            raise EOFError("et exited before the remote Python loader was ready")
+            raise EOFError("et exited before the expected readiness marker")
         data.extend(chunk)
+
+
+def _start_transport(host, transport_command, command):
+    import pty
+    import signal
+    import tty
+
+    argv = _transport_argv(transport_command, host, command)
+    pid, master_fd = pty.fork()
+    if pid == 0:
+        try:
+            signal.setitimer(signal.ITIMER_REAL, 0)
+            signal.signal(signal.SIGALRM, signal.SIG_DFL)
+            log_fd = os.open(
+                _log_path(host), os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600
+            )
+            os.dup2(log_fd, 2)
+            if log_fd > 2:
+                os.close(log_fd)
+            os.execvp(argv[0], argv)
+        finally:
+            os._exit(127)
+    tty.setraw(master_fd)
+    return pid, master_fd
+
+
+def _stop_transport(pid, fd):
+    import signal
+
+    if fd is not None:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+    if pid is not None:
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        try:
+            os.waitpid(pid, 0)
+        except ChildProcessError:
+            pass
 
 
 class _Session:
@@ -1245,10 +1309,7 @@ class _Session:
         max_frame,
         deadline=None,
     ):
-        import pty
-        import signal
         import struct
-        import tty
 
         if len(agent_source) > _MAX_AGENT:
             raise ValueError("agent source exceeds 4 MiB")
@@ -1260,41 +1321,51 @@ class _Session:
         python_argv = shlex.split(remote_python)
         if not python_argv:
             raise ValueError("SSH_SYNC_REMOTE_PYTHON is empty")
-        stage0_source = _STAGE0_SOURCE.replace(
-            "__SSH_SYNC_PYTHON_ARGV__", repr(python_argv)
-        ).replace("__SSH_SYNC_MAX_FRAME__", repr(int(max_frame))).replace(
-            "__SSH_SYNC_PEER_NAME__", repr(_peer_name())
+        # Keep the long-lived transport command small.  The first transport
+        # only checks or atomically updates the installed source, then exits.
+        bootstrap_command = "exec " + shlex.join(
+            python_argv + ["-c", _BOOTSTRAP_SOURCE]
         )
-        loader = base64.b64encode(stage0_source.encode("utf-8")).decode("ascii")
-        loader_code = "import base64;exec(base64.b64decode('%s'))" % loader
-        command = "exec " + shlex.join(python_argv + ["-c", loader_code])
-        argv = _transport_argv(transport_command, host, command)
-        pid, master_fd = pty.fork()
-        if pid == 0:
-            try:
-                signal.setitimer(signal.ITIMER_REAL, 0)
-                signal.signal(signal.SIGALRM, signal.SIG_DFL)
-                log_fd = os.open(_log_path(host), os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
-                os.dup2(log_fd, 2)
-                if log_fd > 2:
-                    os.close(log_fd)
-                os.execvp(argv[0], argv)
-            finally:
-                os._exit(127)
-        self.pid = pid
-        self.fd = master_fd
+        bootstrap_pid, bootstrap_fd = _start_transport(
+            host, transport_command, bootstrap_command
+        )
         try:
-            # The transport usually puts its tty into raw mode itself, but until
-            # it does the line discipline echoes everything we write back at us
-            # and canonical mode truncates writes at MAX_CANON. Do not rely on it.
-            tty.setraw(master_fd)
-            initial = _read_until(master_fd, _READY, deadline)
-            raw_digest = bytes.fromhex(digest)
+            _read_until(bootstrap_fd, _BOOTSTRAP_READY, deadline)
             _write_all(
-                master_fd,
-                struct.pack("!I", len(agent_source)) + raw_digest + agent_source,
+                bootstrap_fd,
+                struct.pack("!I", len(agent_source)) + bytes.fromhex(digest),
             )
-            self.reader = _FrameReader(master_fd, initial, max_frame)
+            status = _read_fd(bootstrap_fd, 1, deadline)
+            if status == b"U":
+                _write_all(bootstrap_fd, agent_source)
+                status = _read_fd(bootstrap_fd, 1, deadline)
+                if status != b"D":
+                    raise RuntimeError("remote bootstrap did not confirm the update")
+            elif status != b"C":
+                detail = status + _read_fd(bootstrap_fd, 65536, deadline)
+                raise RuntimeError(
+                    "invalid response from remote bootstrap: %r" % detail
+                )
+        finally:
+            _stop_transport(bootstrap_pid, bootstrap_fd)
+
+        peer_name = _peer_name()
+        agent_command = "exec %s ~/.local/bin/ssh_sync.py %s" % (
+            shlex.join(python_argv),
+            shlex.join(
+                [
+                    "_remote_agent",
+                    digest,
+                    str(max_frame),
+                    peer_name,
+                    json.dumps(python_argv, separators=(",", ":")),
+                ]
+            ),
+        )
+        self.pid, self.fd = _start_transport(host, transport_command, agent_command)
+        try:
+            initial = _read_until(self.fd, _AGENT_READY, deadline)
+            self.reader = _FrameReader(self.fd, initial, max_frame)
             hello = self.reader.recv(deadline)
             if hello.get("operation") != "hello" or hello.get("agent_digest") != digest:
                 raise RuntimeError("invalid remote agent hello")
@@ -1340,26 +1411,11 @@ class _Session:
         )
 
     def close(self):
-        import signal
-
         fd = getattr(self, "fd", None)
         self.fd = None
-        if fd is not None:
-            try:
-                os.close(fd)
-            except OSError:
-                pass
         pid = getattr(self, "pid", None)
         self.pid = None
-        if pid is not None:
-            try:
-                os.kill(pid, signal.SIGTERM)
-            except ProcessLookupError:
-                pass
-            try:
-                os.waitpid(pid, 0)
-            except ChildProcessError:
-                pass
+        _stop_transport(pid, fd)
 
 
 def _iteration_wire_request(request, worker_timeout=None):
@@ -1395,7 +1451,11 @@ def _forward_stream(connection, stream):
                     stream.close(cancel=True)
                     return
                 if command.get("operation") in ("stream_input", "stream_eof"):
-                    values = {key: value for key, value in command.items() if key != "operation"}
+                    values = {
+                        key: value
+                        for key, value in command.items()
+                        if key != "operation"
+                    }
                     stream.send(command["operation"], **values)
             response = stream.receive(0 if handled_input else 0.05)
             if response is None:
@@ -1444,7 +1504,9 @@ def _exception_data(exc):
         "message": str(exc),
         "repr": repr(exc),
         "args": args,
-        "traceback": "".join(traceback.format_exception(type(exc), exc, exc.__traceback__)),
+        "traceback": "".join(
+            traceback.format_exception(type(exc), exc, exc.__traceback__)
+        ),
     }
 
 
@@ -1455,7 +1517,9 @@ def _remote_worker(result_path):
         function = request["function"]
         namespace = {"__name__": "__ssh_sync_call__"}
         namespace.update(function.get("globals", {}))
-        exec(compile(function["source"], "<ssh-sync-call>", "exec"), namespace, namespace)
+        exec(
+            compile(function["source"], "<ssh-sync-call>", "exec"), namespace, namespace
+        )
         if function["kind"] == "call":
             value = namespace[function["name"]](*request["args"], **request["kwargs"])
         else:
@@ -1475,7 +1539,9 @@ def _remote_iterator_worker(event_fd):
         function = request["function"]
         namespace = {"__name__": "__ssh_sync_call__"}
         namespace.update(function.get("globals", {}))
-        exec(compile(function["source"], "<ssh-sync-call>", "exec"), namespace, namespace)
+        exec(
+            compile(function["source"], "<ssh-sync-call>", "exec"), namespace, namespace
+        )
         iterator = namespace[function["name"]](*request["args"], **request["kwargs"])
         while True:
             try:
@@ -1654,8 +1720,12 @@ def _run_process(request, control):
             pass
 
     readers = [
-        threading.Thread(target=read_output, args=("stdout", process.stdout), daemon=True),
-        threading.Thread(target=read_output, args=("stderr", process.stderr), daemon=True),
+        threading.Thread(
+            target=read_output, args=("stdout", process.stdout), daemon=True
+        ),
+        threading.Thread(
+            target=read_output, args=("stderr", process.stderr), daemon=True
+        ),
     ]
     writer = threading.Thread(target=write_input, daemon=True)
     for thread in [*readers, writer]:
@@ -1775,9 +1845,7 @@ def _install_uploaded_source(source):
     except OSError:
         current = None
     if current != source_bytes:
-        fd, temporary = tempfile.mkstemp(
-            prefix=".ssh_sync.py.", dir=site_packages
-        )
+        fd, temporary = tempfile.mkstemp(prefix=".ssh_sync.py.", dir=site_packages)
         try:
             with os.fdopen(fd, "wb") as output:
                 output.write(source_bytes)
@@ -1886,9 +1954,10 @@ def _serve_peer(server, socket_identity, peer_name, code_hash, multiplexer):
                         }
                     )
                     continue
-                if operation not in ("call", "iterate", "process") or request.get(
-                    "host"
-                ) != peer_name:
+                if (
+                    operation not in ("call", "iterate", "process")
+                    or request.get("host") != peer_name
+                ):
                     raise ValueError("invalid peer request")
                 timeout = request.get("timeout")
                 deadline = None if timeout is None else time.monotonic() + timeout
@@ -1951,12 +2020,25 @@ def _serve_peer(server, socket_identity, peer_name, code_hash, multiplexer):
                     pass
 
 
-def _remote_agent():
-    source = globals()["__ssh_sync_source__"]
-    digest = globals()["__ssh_sync_digest__"]
-    python_argv = globals()["__ssh_sync_python_argv__"]
-    max_frame = globals()["__ssh_sync_max_frame__"]
-    peer_name = globals()["__ssh_sync_peer_name__"]
+def _remote_agent(digest, max_frame, peer_name, python_argv):
+    import tty
+
+    tty.setraw(0)
+    os.write(1, _AGENT_READY)
+    source_bytes = _current_source()
+    if hashlib.sha256(source_bytes).hexdigest() != digest:
+        _send_frame(
+            1,
+            {
+                "operation": "hello",
+                "agent_digest": digest,
+                "error": "installed ssh-sync does not match the requested version",
+            },
+            max_frame,
+        )
+        return
+    source = source_bytes.decode("utf-8")
+    _shorten_linux_argv("ssh-sync agent from " + peer_name)
     try:
         installed_source = _install_uploaded_source(source)
     except Exception as exc:
@@ -1997,9 +2079,7 @@ def _remote_agent():
 
     def handle_call(request):
         request = {**request, "peer_name": peer_name}
-        return _run_worker(
-            request, python_argv + [installed_source, "_remote_worker"]
-        )
+        return _run_worker(request, python_argv + [installed_source, "_remote_worker"])
 
     def handle_stream(request, control):
         request = {**request, "peer_name": peer_name}
@@ -2074,9 +2154,10 @@ def _run_daemon(host, code_hash):
                         }
                     )
                     continue
-                if operation not in ("call", "iterate", "process") or request.get(
-                    "host"
-                ) != host:
+                if (
+                    operation not in ("call", "iterate", "process")
+                    or request.get("host") != host
+                ):
                     raise ValueError("invalid daemon request")
                 timeout = request.get("timeout")
                 deadline = None if timeout is None else time.monotonic() + timeout
@@ -2346,8 +2427,13 @@ def _main():
             else hashlib.sha256(_current_source()).hexdigest()
         )
         _run_daemon(sys.argv[2], code_hash)
-    elif command == "_remote_agent":
-        _remote_agent()
+    elif command == "_remote_agent" and len(sys.argv) == 6:
+        _remote_agent(
+            sys.argv[2],
+            int(sys.argv[3]),
+            sys.argv[4],
+            json.loads(sys.argv[5]),
+        )
     elif command == "_remote_worker" and len(sys.argv) >= 3:
         _remote_worker(sys.argv[2])
     elif command == "_remote_iterator" and len(sys.argv) >= 3:

@@ -54,8 +54,9 @@ class InstallUploadedSourceTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as root:
             site_packages = os.path.join(root, "site-packages")
             home = os.path.join(root, "home")
-            with mock.patch("site.getusersitepackages", return_value=site_packages), \
-                mock.patch.dict(os.environ, {"HOME": home}):
+            with mock.patch(
+                "site.getusersitepackages", return_value=site_packages
+            ), mock.patch.dict(os.environ, {"HOME": home}):
                 installed = ssh_sync._install_uploaded_source("source\n")
 
             self.assertEqual(installed, os.path.join(site_packages, "ssh_sync.py"))
@@ -64,6 +65,47 @@ class InstallUploadedSourceTest(unittest.TestCase):
                 os.path.realpath(os.path.join(home, ".local/bin/ssh_sync.py")),
                 installed,
             )
+
+
+class SessionBootstrapTest(unittest.TestCase):
+    def test_checks_install_then_starts_agent_with_short_command(self):
+        digest = "00" * 32
+        reader = mock.Mock()
+        reader.recv.return_value = {"operation": "hello", "agent_digest": digest}
+        with mock.patch.object(
+            ssh_sync, "_start_transport", side_effect=[(10, 20), (11, 21)]
+        ) as start, mock.patch.object(
+            ssh_sync, "_stop_transport"
+        ) as stop, mock.patch.object(
+            ssh_sync, "_read_until", side_effect=[b"", b""]
+        ), mock.patch.object(
+            ssh_sync, "_read_fd", return_value=b"C"
+        ), mock.patch.object(
+            ssh_sync, "_write_all"
+        ), mock.patch.object(
+            ssh_sync, "_FrameReader", return_value=reader
+        ), mock.patch.object(
+            ssh_sync, "_Multiplexer"
+        ), mock.patch.object(
+            ssh_sync, "_peer_name", return_value="laptop"
+        ):
+            session = ssh_sync._Session(
+                "remote",
+                b"entire agent source",
+                digest,
+                "et {host} {command}",
+                "python3",
+                ssh_sync._DEFAULT_MAX_FRAME,
+            )
+            bootstrap_command = start.call_args_list[0].args[2]
+            agent_command = start.call_args_list[1].args[2]
+            self.assertEqual(start.call_count, 2)
+            self.assertIn(ssh_sync._BOOTSTRAP_SOURCE, bootstrap_command)
+            self.assertIn("~/.local/bin/ssh_sync.py _remote_agent", agent_command)
+            self.assertNotIn("entire agent source", agent_command)
+            stop.assert_called_once_with(10, 20)
+            session.close()
+            stop.assert_called_with(11, 21)
 
 
 class Control:
