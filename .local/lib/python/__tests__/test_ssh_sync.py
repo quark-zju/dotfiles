@@ -1,5 +1,6 @@
 import os
 import io
+import subprocess
 import sys
 import tempfile
 import threading
@@ -11,6 +12,24 @@ LIB_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(LIB_DIR))
 
 import ssh_sync  # noqa: E402
+
+
+class ShortenLinuxArgvTest(unittest.TestCase):
+    @unittest.skipUnless(sys.platform.startswith("linux"), "requires Linux /proc")
+    def test_replaces_process_arguments(self):
+        source = (
+            "import ssh_sync;"
+            "ssh_sync._shorten_linux_argv('ssh-sync test');"
+            "print(open('/proc/self/cmdline', 'rb').read().rstrip(b'\\0'))"
+        )
+        environment = os.environ.copy()
+        environment["PYTHONPATH"] = str(LIB_DIR)
+
+        output = subprocess.check_output(
+            [sys.executable, "-c", source], env=environment, text=True
+        )
+
+        self.assertEqual(output.strip(), "b'ssh-sync test'")
 
 
 class Control:

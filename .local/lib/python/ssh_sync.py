@@ -76,6 +76,26 @@ import struct
 import sys
 import tty
 
+def shorten_linux_argv(title):
+    if not sys.platform.startswith("linux"):
+        return
+    try:
+        with open("/proc/self/stat", encoding="ascii") as stat_file:
+            fields = stat_file.read().rsplit(")", 1)[1].split()
+        start = int(fields[45])
+        end = int(fields[46])
+        size = end - start
+        if size <= 0:
+            return
+        import ctypes
+        encoded = title.encode("utf-8")[:size - 1]
+        ctypes.memset(start, 0, size)
+        ctypes.memmove(start, encoded, len(encoded))
+    except Exception:
+        pass
+
+shorten_linux_argv("ssh-sync remote agent")
+
 def read_exact(size):
     chunks = []
     while size:
@@ -107,6 +127,31 @@ namespace = {
 }
 exec(compile(source, "<ssh-sync-agent>", "exec"), namespace, namespace)
 '''
+
+
+def _shorten_linux_argv(title):
+    """Best-effort replacement of the Linux process argument memory."""
+    if not sys.platform.startswith("linux"):
+        return
+    try:
+        # Fields 48 and 49 are arg_start and arg_end.  Split after the final
+        # parenthesis because the comm field may itself contain parentheses.
+        with open("/proc/self/stat", encoding="ascii") as stat_file:
+            fields = stat_file.read().rsplit(")", 1)[1].split()
+        start = int(fields[45])
+        end = int(fields[46])
+        size = end - start
+        if size <= 0:
+            return
+
+        import ctypes
+
+        encoded = title.encode("utf-8")[: size - 1]
+        ctypes.memset(start, 0, size)
+        ctypes.memmove(start, encoded, len(encoded))
+    except Exception:
+        # This is cosmetic and must not prevent the remote agent from running.
+        pass
 
 
 class RemoteError(Exception):
@@ -2273,6 +2318,13 @@ def _install_main(force=False):
 
 def _main():
     command = sys.argv[1] if len(sys.argv) >= 2 else ""
+    process_titles = {
+        "_remote_agent": "ssh-sync remote agent",
+        "_remote_worker": "ssh-sync remote worker",
+        "_remote_iterator": "ssh-sync remote iterator",
+    }
+    if command in process_titles:
+        _shorten_linux_argv(process_titles[command])
     if command == "_daemon":
         code_hash = (
             sys.argv[3]
