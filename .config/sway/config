@@ -2,7 +2,7 @@
 #
 # Fedora dependencies used directly by this file:
 #   sudo dnf install sway waybar foot wmenu swaylock swayidle kanshi SwayNotificationCenter \
-#       network-manager-applet blueman xfce-polkit \
+#       network-manager-applet blueman xfce-polkit wl-clipboard \
 #       xorg-x11-server-Xwayland i3
 # Additional window switcher: github.com/quark-zju/i3-selwin
 #
