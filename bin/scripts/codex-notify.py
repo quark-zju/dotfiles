@@ -108,42 +108,100 @@ def state_path(session_id: str) -> Path | None:
 def save_prompt(payload: dict[str, Any]) -> None:
     session_id = payload.get("session_id")
     prompt = payload.get("prompt")
-    if (
-        not isinstance(session_id, str)
-        or not isinstance(prompt, str)
-        or prompt.startswith((TITLE_PROMPT_PREFIX, RECAP_PROMPT_PREFIX))
-    ):
+    if not isinstance(session_id, str):
+        log_event("prompt_skipped", reason="invalid_session_id")
+        return
+    if not isinstance(prompt, str):
+        log_event("prompt_skipped", session_id=session_id, reason="invalid_prompt")
+        return
+    if prompt.startswith((TITLE_PROMPT_PREFIX, RECAP_PROMPT_PREFIX)):
+        log_event("prompt_skipped", session_id=session_id, reason="internal_prompt")
         return
     process = agent_process()
     if not process:
+        log_event(
+            "prompt_skipped",
+            session_id=session_id,
+            reason="agent_process_not_found",
+            parent_pid=os.getppid(),
+            has_codex_thread_id=bool(os.environ.get("CODEX_THREAD_ID")),
+            has_claude_session_id=bool(os.environ.get("CLAUDE_CODE_SESSION_ID")),
+            ancestors=[
+                {"pid": pid, "name": process_name(pid)}
+                for pid in ancestors(os.getppid())
+            ],
+        )
         return
     path = state_path(session_id)
     if path is None:
+        log_event("prompt_skipped", session_id=session_id, reason="no_state_path")
         return
     agent_name, pid, start_time = process
-    path.write_text(
-        json.dumps(
-            {
-                "agent_name": agent_name,
-                "prompt": prompt,
-                "pid": pid,
-                "process_start_time": start_time,
-            },
-            ensure_ascii=False,
+    try:
+        path.write_text(
+            json.dumps(
+                {
+                    "agent_name": agent_name,
+                    "prompt": prompt,
+                    "pid": pid,
+                    "process_start_time": start_time,
+                },
+                ensure_ascii=False,
+            )
         )
+    except OSError as error:
+        log_event(
+            "prompt_save_failed",
+            session_id=session_id,
+            path=str(path),
+            error=repr(error),
+        )
+        return
+    log_event(
+        "prompt_saved",
+        session_id=session_id,
+        agent_name=agent_name,
+        pid=pid,
+        path=str(path),
     )
 
 
 def load_prompt(session_id: str) -> dict[str, Any] | None:
     path = state_path(session_id)
     if path is None:
+        log_event("prompt_load_failed", session_id=session_id, reason="no_state_path")
         return None
     try:
         value = json.loads(path.read_text())
         path.unlink()
-    except (OSError, json.JSONDecodeError):
+    except OSError as error:
+        log_event(
+            "prompt_load_failed",
+            session_id=session_id,
+            path=str(path),
+            reason="io_error",
+            error=repr(error),
+        )
         return None
-    return value if isinstance(value, dict) else None
+    except json.JSONDecodeError as error:
+        log_event(
+            "prompt_load_failed",
+            session_id=session_id,
+            path=str(path),
+            reason="invalid_json",
+            error=repr(error),
+        )
+        return None
+    if not isinstance(value, dict):
+        log_event(
+            "prompt_load_failed",
+            session_id=session_id,
+            path=str(path),
+            reason="invalid_state",
+        )
+        return None
+    log_event("prompt_loaded", session_id=session_id, path=str(path))
+    return value
 
 
 def load_thread_title(session_id: str) -> str | None:
@@ -368,12 +426,22 @@ def show_notify(
 def notify(payload: dict[str, Any]) -> None:
     session_id = payload.get("session_id")
     if not isinstance(session_id, str):
+        log_event("notification_skipped", reason="invalid_session_id")
         return
     saved = load_prompt(session_id)
-    if saved is None or not isinstance(saved.get("prompt"), str):
+    if saved is None:
+        log_event("notification_skipped", session_id=session_id, reason="no_prompt")
+        return
+    if not isinstance(saved.get("prompt"), str):
+        log_event(
+            "notification_skipped", session_id=session_id, reason="invalid_prompt"
+        )
         return
     agent_name = saved.get("agent_name", "Codex")
     if agent_name not in ("Codex", "Claude"):
+        log_event(
+            "notification_skipped", session_id=session_id, reason="invalid_agent"
+        )
         return
     prompt = " ".join(saved["prompt"].split())
     if len(prompt) > 1000:
@@ -441,17 +509,42 @@ def notify(payload: dict[str, Any]) -> None:
 def main() -> None:
     try:
         payload = json.load(sys.stdin)
-        if not isinstance(payload, dict) or (
-            not os.environ.get("SWAYSOCK") and "SSH_CLIENT_PID" not in os.environ
-        ):
+        if not isinstance(payload, dict):
+            log_event("hook_skipped", reason="invalid_payload")
             return
         event = payload.get("hook_event_name")
+        session_id = payload.get("session_id")
+        log_event(
+            "hook_received",
+            hook_event=event,
+            session_id=session_id,
+            parent_pid=os.getppid(),
+            has_swaysock=bool(os.environ.get("SWAYSOCK")),
+            has_ssh_client_pid="SSH_CLIENT_PID" in os.environ,
+            has_codex_thread_id=bool(os.environ.get("CODEX_THREAD_ID")),
+            has_claude_session_id=bool(os.environ.get("CLAUDE_CODE_SESSION_ID")),
+        )
+        if not os.environ.get("SWAYSOCK") and "SSH_CLIENT_PID" not in os.environ:
+            log_event(
+                "hook_skipped",
+                hook_event=event,
+                session_id=session_id,
+                reason="no_display_route",
+            )
+            return
         if event == "UserPromptSubmit":
             save_prompt(payload)
         elif event == "Stop":
             notify(payload)
-    except (OSError, ValueError, json.JSONDecodeError):
-        pass
+        else:
+            log_event(
+                "hook_skipped",
+                hook_event=event,
+                session_id=session_id,
+                reason="unsupported_event",
+            )
+    except (OSError, ValueError, json.JSONDecodeError) as error:
+        log_event("hook_failed", error=repr(error))
     finally:
         print("{}")
 
