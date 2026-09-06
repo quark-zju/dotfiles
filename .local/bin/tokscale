@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run tokscale with an optionally Git-backed config directory.
+"""Run tokscale with an optionally Git-backed aggregate repository.
 
 The remote repository is authoritative before each run.  Local changes are
 discarded with reset/clean; after tokscale exits, changes are committed and a
@@ -17,16 +17,12 @@ import sys
 from pathlib import Path
 
 
-STATE_DIR = Path.home() / ".cache" / "tokscale-config-repo"
-DEFAULT_GITIGNORE = """# Regenerable or machine-local Tokscale state
-cache/
-antigravity-cache/
-trae-cache/
-warp-cache/
-cursor-cache/
-*.lock
-credentials.json
-*-credentials.json
+REPO_DIR = Path.home() / ".cache" / "tokscale-config-repo"
+DEFAULT_GITIGNORE = """# The remote repository stores only device aggregates.
+*
+!.gitignore
+!devices/
+!devices/**
 """
 
 
@@ -80,11 +76,11 @@ def local_branch(repo: Path) -> str | None:
 
 
 def prepare_repo(remote: str) -> Path | None:
-    STATE_DIR.parent.mkdir(parents=True, exist_ok=True)
+    REPO_DIR.parent.mkdir(parents=True, exist_ok=True)
 
-    if not STATE_DIR.exists():
+    if not REPO_DIR.exists():
         result = subprocess.run(
-            ["git", "clone", remote, str(STATE_DIR)],
+            ["git", "clone", remote, str(REPO_DIR)],
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -92,34 +88,34 @@ def prepare_repo(remote: str) -> Path | None:
         if result.returncode != 0:
             fail_git("clone", result)
             return None
-    elif not (STATE_DIR / ".git").exists():
-        warn(f"{STATE_DIR} exists but is not a Git checkout; refusing to replace it")
+    elif not (REPO_DIR / ".git").exists():
+        warn(f"{REPO_DIR} exists but is not a Git checkout; refusing to replace it")
         return None
 
     try:
-        current_remote_result = git("remote", "get-url", "origin", cwd=STATE_DIR, check=False)
+        current_remote_result = git("remote", "get-url", "origin", cwd=REPO_DIR, check=False)
         if current_remote_result.returncode != 0:
-            git("remote", "add", "origin", remote, cwd=STATE_DIR)
+            git("remote", "add", "origin", remote, cwd=REPO_DIR)
         elif current_remote_result.stdout.strip() != remote:
-            git("remote", "set-url", "origin", remote, cwd=STATE_DIR)
+            git("remote", "set-url", "origin", remote, cwd=REPO_DIR)
     except subprocess.CalledProcessError as exc:
         warn(f"cannot configure origin: {exc}")
         return None
 
-    fetched = git("fetch", "origin", cwd=STATE_DIR, check=False)
+    fetched = git("fetch", "origin", cwd=REPO_DIR, check=False)
     if fetched.returncode != 0:
         fail_git("fetch", fetched)
         return None
 
-    branch = remote_branch(STATE_DIR)
+    branch = remote_branch(REPO_DIR)
     if branch:
         # The remote HEAD is the source of truth.  Remove ordinary untracked
         # files, but preserve ignored machine-local caches and lock files.
-        reset = git("reset", "--hard", f"origin/{branch}", cwd=STATE_DIR, check=False)
+        reset = git("reset", "--hard", f"origin/{branch}", cwd=REPO_DIR, check=False)
         if reset.returncode != 0:
             fail_git("reset to remote HEAD", reset)
             return None
-        cleaned = git("clean", "-fd", cwd=STATE_DIR, check=False)
+        cleaned = git("clean", "-fd", cwd=REPO_DIR, check=False)
         if cleaned.returncode != 0:
             fail_git("clean local changes", cleaned)
             return None
@@ -127,26 +123,27 @@ def prepare_repo(remote: str) -> Path | None:
         # A reachable but empty bare repo has no HEAD/branch to reset to.
         # Bootstrap a conventional main branch locally; the post-run commit
         # will become the remote's first commit.
-        branch = local_branch(STATE_DIR)
+        branch = local_branch(REPO_DIR)
         if not branch:
-            created = git("symbolic-ref", "HEAD", "refs/heads/main", cwd=STATE_DIR, check=False)
+            created = git("symbolic-ref", "HEAD", "refs/heads/main", cwd=REPO_DIR, check=False)
             if created.returncode != 0:
                 fail_git("initialize main branch for empty remote", created)
                 return None
 
-    ignore = STATE_DIR / ".gitignore"
+    ignore = REPO_DIR / ".gitignore"
     if not ignore.exists():
         ignore.write_text(DEFAULT_GITIGNORE, encoding="utf-8")
-        added = git("add", ".gitignore", cwd=STATE_DIR, check=False)
+        added = git("add", ".gitignore", cwd=REPO_DIR, check=False)
         if added.returncode != 0:
             fail_git("stage .gitignore", added)
             return None
 
-    return STATE_DIR
+    (REPO_DIR / "devices").mkdir(exist_ok=True)
+    return REPO_DIR
 
 
 def commit_and_push(repo: Path, branch: str | None) -> None:
-    added = git("add", "-A", cwd=repo, check=False)
+    added = git("add", "--", ".gitignore", "devices", cwd=repo, check=False)
     if added.returncode != 0:
         fail_git("stage local changes", added)
         return
@@ -181,8 +178,6 @@ def main() -> int:
         repo = prepare_repo(remote)
         if repo is None:
             return 1
-        child_env["TOKSCALE_CONFIG_DIR"] = str(repo)
-
         try:
             result = subprocess.run(["bunx", "tokscale", *sys.argv[1:]], env=child_env)
         finally:
