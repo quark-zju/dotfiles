@@ -367,6 +367,57 @@ def _number(value: object, *, decimals: int = 2) -> str:
         return "0"
 
 
+def _usage_payload(devices: list[tuple[str, dict[str, object]]]) -> dict[str, object]:
+    """Flatten the aggregate snapshots into rows the SPA can filter/group.
+
+    Each client entry in a device's daily contribution becomes one row carrying
+    the date, device id, harness (client), model id and the inclusive token /
+    cost totals.  This lets the frontend aggregate by model, device or harness
+    and apply a client-side power filter without further round-trips.
+    """
+    rows: list[dict[str, object]] = []
+    clients: set[str] = set()
+    models: set[str] = set()
+    start: str | None = None
+    end: str | None = None
+    for device_id, data in devices:
+        for day in data.get("contributions") or []:
+            date = day.get("date")
+            if not isinstance(date, str) or not date:
+                continue
+            if start is None or date < start:
+                start = date
+            if end is None or date > end:
+                end = date
+            for client in day.get("clients") or []:
+                if not isinstance(client, dict):
+                    continue
+                harness = str(client.get("client") or "")
+                model = str(client.get("modelId") or "")
+                if not harness and not model:
+                    continue
+                clients.add(harness)
+                models.add(model)
+                tokens = int(sum(int(v or 0) for v in (client.get("tokens") or {}).values()))
+                rows.append(
+                    {
+                        "d": date,
+                        "v": device_id,
+                        "c": harness,
+                        "m": model,
+                        "t": tokens,
+                        "k": float(client.get("cost", 0) or 0),
+                    }
+                )
+    return {
+        "range": {"start": start, "end": end},
+        "devices": [device_id for device_id, _ in devices],
+        "clients": sorted(clients),
+        "models": sorted(models),
+        "rows": rows,
+    }
+
+
 def _profile_page(devices: list[tuple[str, dict[str, object]]], selected: str | None = None) -> str:
     selected_data = next((data for device_id, data in devices if device_id == selected), None)
     if selected_data is None and devices:
@@ -418,6 +469,419 @@ table{{width:100%;border-collapse:collapse;background:white}}th,td{{padding:9px;
 </style></head><body><nav><b>Devices</b><ul>{links}</ul></nav><main>{content}</main></body></html>"""
 
 
+_APP_HTML = r"""<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Tokscale Aggregate</title>
+<style>
+:root{--bg:#0b0f16;--card:#11161f;--border:#1e2630;--border2:#2a3441;--text:#e6edf3;
+--muted:#8b96a5;--accent:#3b7bd6;--accent2:#5b8def;--chip:#1a2230;}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--text);
+font:15px/1.5 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;-webkit-font-smoothing:antialiased}
+.page{max-width:1180px;margin:0 auto;padding:2.25rem 1.5rem 4rem}
+.head{display:flex;align-items:flex-start;justify-content:space-between;gap:1.5rem;flex-wrap:wrap}
+.head h1{margin:0 0 .25rem;font-size:1.4rem;font-weight:650;letter-spacing:-.01em}
+.muted{color:var(--muted)}
+.stats{display:flex;gap:1.75rem;flex-wrap:wrap}
+.stat{display:flex;flex-direction:column;align-items:flex-end;font-variant-numeric:tabular-nums}
+.stat b{font-size:1.05rem;font-weight:650}
+.stat span{font-size:.72rem;color:var(--muted)}
+.controls{display:flex;flex-wrap:wrap;gap:.9rem 1.25rem;align-items:flex-end;
+margin:1.4rem 0 1.1rem;padding:1rem 1.1rem;background:var(--card);border:1px solid var(--border);border-radius:.9rem}
+.ctl{display:flex;flex-direction:column;gap:.35rem}
+.ctl.grow{flex:1;min-width:200px}
+.ctl-label{font-size:.68rem;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--muted)}
+.seg{display:inline-flex;padding:2px;border:1px solid var(--border2);border-radius:.5rem;background:var(--chip)}
+.seg button{border:0;background:transparent;color:var(--muted);font:inherit;font-size:.8rem;font-weight:600;
+padding:.32rem .7rem;border-radius:.38rem;cursor:pointer}
+.seg button.active{background:var(--accent);color:#fff}
+select,input.filter{background:var(--chip);border:1px solid var(--border2);color:var(--text);
+font:inherit;font-size:.86rem;border-radius:.5rem;padding:.42rem .6rem;min-width:150px}
+input.filter{width:100%;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.8rem}
+select:focus,input.filter:focus{outline:2px solid var(--accent2);outline-offset:1px}
+.card{background:var(--card);border:1px solid var(--border);border-radius:.9rem;padding:1.1rem 1.2rem;margin-bottom:1.4rem}
+.card-head{display:flex;align-items:baseline;justify-content:space-between;gap:1rem;margin-bottom:.75rem;flex-wrap:wrap}
+.card-head h2{margin:0;font-size:1.05rem;font-weight:650}
+.chart-wrap{position:relative}
+.chart{width:100%;height:auto;display:block}
+.ytick{fill:var(--muted);font-size:11px}
+.xtick{fill:var(--muted);font-size:11px}
+.tt{position:absolute;z-index:20;width:220px;background:#0e141d;border:1px solid var(--border2);
+border-radius:.55rem;padding:.7rem .8rem;box-shadow:0 12px 30px rgba(0,0,0,.45);cursor:default;pointer-events:none}
+.tt-date{color:var(--muted);font-size:.72rem;margin-bottom:.3rem}
+.tt-total{display:flex;justify-content:space-between;align-items:baseline;gap:.6rem;padding-bottom:.45rem;border-bottom:1px solid var(--border)}
+.tt-total b{font-size:.95rem;font-weight:650}
+.tt-list{margin-top:.4rem;display:grid;gap:.25rem}
+.tt-row{display:grid;grid-template-columns:auto 1fr auto;gap:.5rem;align-items:center;font-variant-numeric:tabular-nums}
+.tt-row .lbl{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text);font-size:.74rem}
+.tt-row .val{color:var(--text);font-size:.74rem;font-weight:600}
+.dot{width:.5rem;height:.5rem;border-radius:999px}
+.hm{font-variant-numeric:tabular-nums}
+.hm-grid{display:grid;gap:3px;width:max-content}
+.hm-month{font-size:.62rem;color:var(--muted);align-self:end}
+.hm-day{font-size:.62rem;color:var(--muted);display:flex;align-items:center}
+.hm-cell{width:11px;height:11px;border-radius:2px;box-shadow:inset 0 0 0 1px rgba(255,255,255,.04)}
+.hm-foot{display:flex;align-items:center;justify-content:space-between;gap:1rem;margin-top:.7rem;flex-wrap:wrap}
+.hm-legend{display:inline-flex;align-items:center;gap:3px}
+.hm-swatch{width:11px;height:11px;border-radius:2px}
+.empty{color:var(--muted);padding:1.5rem 0;text-align:center}
+@media(max-width:640px){.stats{gap:1rem}.stat{align-items:flex-start}}
+</style>
+</head><body>
+<div id="root"></div>
+<script type="module">
+import React, { useState, useMemo, useRef, useEffect } from "https://esm.sh/react@18.3.1";
+import { createRoot } from "https://esm.sh/react-dom@18.3.1/client";
+import htm from "https://esm.sh/htm@3.1.1";
+const html = htm.bind(React.createElement);
+
+/* ---------- formatting ---------- */
+function fmtTokens(n) {
+  n = Number(n) || 0;
+  const a = Math.abs(n);
+  if (a >= 1e9) return (n / 1e9).toFixed(1) + "B";
+  if (a >= 1e6) return (n / 1e6).toFixed(1) + "M";
+  if (a >= 1e3) return (n / 1e3).toFixed(1) + "K";
+  return String(Math.round(n));
+}
+function fmtMoney(n) { return "$" + Number(n || 0).toFixed(2); }
+function monthDay(date) {
+  const d = new Date(date + "T00:00:00Z");
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
+}
+function shortMonth(date) {
+  const d = new Date(date + "T00:00:00Z");
+  return d.toLocaleDateString("en-US", { month: "short", timeZone: "UTC" });
+}
+function enumerateDates(a, b) {
+  const out = [];
+  const d = new Date(a + "T00:00:00Z");
+  const end = new Date(b + "T00:00:00Z");
+  while (d <= end) { out.push(d.toISOString().slice(0, 10)); d.setUTCDate(d.getUTCDate() + 1); }
+  return out;
+}
+function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+
+/* ---------- power filter ----------
+ * Tokens like:  model:gpt-5 device:dev_x harness:codex   plus bare words.
+ * Whitespace-separated AND.  `key:value` is a substring match on one field;
+ * bare words match any of model/device/harness.
+ */
+function parseFilter(str) {
+  const terms = (str || "").split(/\s+/).filter(Boolean);
+  const conds = [];
+  for (const t of terms) {
+    const m = /^(\w+):(.+)$/.exec(t);
+    if (m) {
+      const f = m[1].toLowerCase();
+      const v = m[2].toLowerCase();
+      const k = f === "harness" || f === "client" ? "c" : f === "device" ? "v" : f === "model" ? "m" : null;
+      conds.push((r) => (k ? String(r[k]).toLowerCase().includes(v) : true));
+    } else {
+      const v = t.toLowerCase();
+      conds.push((r) => [r.c, r.v, r.m].some((x) => String(x).toLowerCase().includes(v)));
+    }
+  }
+  return conds.length ? (r) => conds.every((c) => c(r)) : () => true;
+}
+
+/* ---------- chart data ---------- */
+function trailingAverage(vals, w) {
+  const out = [];
+  const window = Math.max(1, w || 30);
+  let sum = 0;
+  for (let i = 0; i < vals.length; i++) { sum += vals[i]; if (i >= window) sum -= vals[i - window]; out.push(sum / Math.min(window, i + 1)); }
+  return out;
+}
+
+function buildUsage(rows, metric, groupBy, smooth) {
+  const keyField = groupBy === "model" ? "m" : groupBy === "device" ? "v" : "c";
+  const val = metric === "cost" ? (r) => r.k : (r) => r.t;
+  const byDate = new Map();
+  let min = null, max = null;
+  for (const r of rows) {
+    const d = r.d;
+    let m = byDate.get(d);
+    if (!m) { m = new Map(); byDate.set(d, m); }
+    const k = r[keyField] || "(none)";
+    m.set(k, (m.get(k) || 0) + val(r));
+    if (min === null || d < min) min = d;
+    if (max === null || d > max) max = d;
+  }
+  if (!min || !max) return null;
+  const dates = enumerateDates(min, max);
+  const keyTot = new Map();
+  for (const [d, m] of byDate) for (const [k, v] of m) keyTot.set(k, (keyTot.get(k) || 0) + v);
+  const desc = [...keyTot.entries()].sort((a, b) => b[1] - a[1]).map(([k]) => k);
+  const MAX = 12;
+  const top = desc.slice(0, MAX - 1);
+  const rest = desc.slice(MAX - 1);
+  const series = [];
+  for (const k of top) {
+    series.push({ key: k, label: k, values: dates.map((d) => byDate.get(d)?.get(k) || 0) });
+  }
+  if (rest.length) {
+    series.push({ key: "__other__", label: "Other (" + rest.length + ")", values: dates.map((d) => { let s = 0; for (const k of rest) s += byDate.get(d)?.get(k) || 0; return s; }) });
+  }
+  series.forEach((s) => {
+    s.total = s.values.reduce((a, b) => a + b, 0);
+    s.color = colorFor(s.key, series.indexOf(s), groupBy);
+  });
+  series.sort((a, b) => b.total - a.total);
+
+  const display = smooth ? series.map((s) => ({ ...s, values: trailingAverage(s.values, 30) })) : series;
+  const perDateTotal = dates.map((d, i) => display.reduce((s, x) => s + x.values[i], 0));
+  const yMax = Math.max(1, ...perDateTotal);
+  return { dates, series: display, perDateTotal, yMax, min, max };
+}
+
+/* ---------- colors ---------- */
+const PALETTE = ["#5b8def", "#3fb68b", "#e08a3c", "#c95d74", "#9a6ff0", "#4fbfc9", "#c9a227", "#6f9d3c", "#d45c5c", "#5c7ea6", "#a1662f", "#7f6fbf"];
+const HARNESS_COLORS = { claude: "#d97757", codex: "#37b28a", opencode: "#3b7bd6", kimi: "#c9b500", copilot: "#6f9d3c", dsh: "#9a6ff0", gemini: "#4fbfc9", grok: "#c95d74", cursor: "#5c7ea6" };
+function colorFor(key, index, groupBy) {
+  if (key === "__other__") return "#6b7280";
+  if (groupBy === "harness" && HARNESS_COLORS[key]) return HARNESS_COLORS[key];
+  return PALETTE[index % PALETTE.length];
+}
+
+/* ---------- stacked area ---------- */
+function UsageChart({ rows, metric, groupBy, smooth }) {
+  const data = useMemo(() => (rows.length ? buildUsage(rows, metric, groupBy, smooth) : null), [rows, metric, groupBy, smooth]);
+  const wrapRef = useRef(null);
+  const [hover, setHover] = useState(null);
+
+  if (!data) return html`<div className="empty">No data matches the current filter.</div>`;
+
+  const { dates, series, yMax } = data;
+  const W = 940, H = 300, padL = 56, padR = 16, padT = 16, padB = 30;
+  const plotW = W - padL - padR, plotH = H - padT - padB;
+  const n = dates.length;
+  const xAt = (i) => (n > 1 ? padL + (i * plotW) / (n - 1) : padL + plotW / 2);
+  const yAt = (v) => padT + plotH - (v / yMax) * plotH;
+  const xs = dates.map((_, i) => xAt(i));
+
+  // Build stacked band paths (ascending total so the largest sits on top).
+  const asc = [...series].reverse();
+  let cum = 0;
+  const bands = asc.map((s) => {
+    const yBottom = [], yTop = [];
+    for (let i = 0; i < n; i++) { yBottom.push(yAt(cum)); cum += s.values[i]; yTop.push(yAt(cum)); }
+    let d = `M ${xs[0]},${yTop[0]}`;
+    for (let i = 1; i < n; i++) d += ` L ${xs[i]},${yTop[i]}`;
+    for (let i = n - 1; i >= 0; i--) d += ` L ${xs[i]},${yBottom[i]}`;
+    d += " Z";
+    return { s, d };
+  });
+  bands.reverse(); // restore descending order for render (later = higher on top)
+
+  const ticks = [];
+  for (let i = 0; i <= 4; i++) ticks.push((yMax * i) / 4);
+  const labelStep = Math.max(1, Math.ceil(n / 8));
+
+  const activeIdx = hover ? clamp(hover.i, 0, n - 1) : null;
+  const active = activeIdx === null ? null : {
+    idx: activeIdx,
+    rows: series.map((s) => ({ s, value: s.values[activeIdx] })).filter(({ value }) => value > 0).sort((a, b) => b.value - a.value),
+    total: series.reduce((sum, s) => sum + s.values[activeIdx], 0),
+  };
+
+  function onMove(e) {
+    const rect = wrapRef.current.getBoundingClientRect();
+    const frac = (e.clientX - rect.left) / rect.width;
+    setHover({ i: Math.round(frac * (n - 1)), x: e.clientX - rect.left });
+  }
+
+  const tooltip = active && html`<div className="tt" style=${{ left: clamp(hover.x, 12, wrapRef.current.clientWidth - 230), top: 8 }}>
+    <div className="tt-date">${monthDay(dates[active.idx])}</div>
+    <div className="tt-total"><span>Total ${metric === "cost" ? "cost" : "tokens"}</span><b>${metric === "cost" ? fmtMoney(active.total) : fmtTokens(active.total)}</b></div>
+    <div className="tt-list">
+      ${active.rows.map(({ s, value }) => html`<div key=${s.key} className="tt-row">
+        <span className="dot" style=${{ background: s.color }}></span>
+        <span className="lbl">${s.label}</span><span className="val">${metric === "cost" ? fmtMoney(value) : fmtTokens(value)}</span>
+      </div>`)}
+    </div>
+  </div>`;
+
+  return html`<div className="chart-wrap" ref=${wrapRef} onMouseMove=${onMove} onMouseLeave=${() => setHover(null)}>
+    ${tooltip}
+    <svg viewBox="0 0 ${W} ${H}" className="chart" preserveAspectRatio="xMidYMid meet">
+      ${ticks.map((tv) => {
+        const y = yAt(tv);
+        return html`<g key=${tv}>
+          <line x1=${padL} y1=${y} x2=${W - padR} y2=${y} stroke="rgba(255,255,255,.06)"/>
+          <text x=${padL - 8} y=${y} textAnchor="end" dominantBaseline="middle" className="ytick">${fmtTokens(tv)}</text>
+        </g>`;
+      })}
+      ${bands.map(({ s, d }) => html`<path key=${s.key} d=${d} fill=${s.color} fillOpacity="0.72" stroke=${s.color} strokeOpacity="0.5" strokeWidth="1"/>`)}
+      ${activeIdx !== null ? html`<line x1=${xAt(activeIdx)} y1=${padT} x2=${xAt(activeIdx)} y2=${padT + plotH} stroke="rgba(255,255,255,.35)" strokeDasharray="3 3"/>` : null}
+      ${dates.map((d, i) => (i % labelStep === 0 ? html`<text key=${d} x=${xAt(i)} y=${H - 8} textAnchor="middle" className="xtick">${monthDay(d)}</text>` : null))}
+    </svg>
+  </div>`;
+}
+
+/* ---------- contributions heatmap ---------- */
+function buildHeatmap(rows, metric) {
+  const byDate = new Map();
+  let min = null, max = null;
+  for (const r of rows) {
+    const d = r.d;
+    byDate.set(d, (byDate.get(d) || 0) + (metric === "cost" ? r.k : r.t));
+    if (min === null || d < min) min = d;
+    if (max === null || d > max) max = d;
+  }
+  if (!min || !max) return { weeks: [], activeDays: 0, min, max };
+  const start = new Date(min + "T00:00:00Z");
+  const calStart = new Date(start);
+  calStart.setUTCDate(calStart.getUTCDate() - start.getUTCDay());
+  const end = new Date(max + "T00:00:00Z");
+  const calEnd = new Date(end);
+  calEnd.setUTCDate(calEnd.getUTCDate() + (6 - end.getUTCDay()));
+
+  const weeks = [];
+  const cur = new Date(calStart);
+  while (cur <= calEnd) {
+    const week = [];
+    for (let i = 0; i < 7; i++) { week.push(new Date(cur)); cur.setUTCDate(cur.getUTCDate() + 1); }
+    weeks.push(week);
+  }
+  const vals = [...byDate.values()].filter((v) => v > 0).sort((a, b) => a - b);
+  const q = (p) => vals.length ? vals[Math.min(vals.length - 1, Math.floor(p * (vals.length - 1)))] : 1;
+  const q1 = q(0.25), q2 = q(0.5), q3 = q(0.75);
+  const level = (v) => (v <= 0 ? 0 : v <= q1 ? 1 : v <= q2 ? 2 : v <= q3 ? 3 : 4);
+
+  const monthMarkers = [];
+  let lastMonth = null;
+  weeks.forEach((week, wi) => {
+    const first = week.find((d) => { const k = d.toISOString().slice(0, 10); return k >= min && k <= max; });
+    if (first) {
+      const mo = first.toISOString().slice(0, 7);
+      if (lastMonth === null || mo !== lastMonth) { monthMarkers.push({ week: wi, label: shortMonth(first.toISOString().slice(0, 10)) }); lastMonth = mo; }
+    }
+  });
+
+  let activeDays = 0;
+  for (const v of byDate.values()) if (v > 0) activeDays += 1;
+  return { weeks, byDate, level, monthMarkers, activeDays, min, max };
+}
+
+const CELL_COLORS = ["#161b22", "#0d3a66", "#155a94", "#2077c1", "#3f9ce0"];
+const DAY_LABELS = [null, "Mon", null, "Wed", null, "Fri", null];
+
+function ContributionHeatmap({ rows, metric }) {
+  const data = useMemo(() => buildHeatmap(rows, metric), [rows, metric]);
+  if (!data.weeks.length) return html`<div className="empty">No data matches the current filter.</div>`;
+  const { weeks, byDate, level, monthMarkers, activeDays, min, max } = data;
+  const N = weeks.length;
+  const columns = `30px repeat(${N}, 11px)`;
+
+  return html`<div className="hm">
+    <div className="hm-grid" style=${{ gridTemplateColumns: columns, gridTemplateRows: `14px repeat(7, 11px)` }}>
+      ${monthMarkers.map((m) => html`<span key=${m.week + "-" + m.label} className="hm-month" style=${{ gridColumn: m.week + 2, gridRow: 1 }}>${m.label}</span>`)}
+      ${DAY_LABELS.map((l, di) => html`<span key=${di} className="hm-day" style=${{ gridColumn: 1, gridRow: di + 2 }}>${l || ""}</span>`)}
+      ${weeks.flatMap((week, wi) => week.map((d, di) => {
+        const key = d.toISOString().slice(0, 10);
+        const inRange = key >= min && key <= max;
+        const v = inRange ? (byDate.get(key) || 0) : 0;
+        const lv = inRange && v > 0 ? level(v) : 0;
+        return html`<div key=${key} className="hm-cell" style=${{ gridColumn: wi + 2, gridRow: di + 2, background: CELL_COLORS[lv], visibility: inRange ? "visible" : "hidden" }} title=${key + ": " + fmtTokens(v)}></div>`;
+      }))}
+    </div>
+    <div className="hm-foot">
+      <span className="muted">${activeDays} active ${activeDays === 1 ? "day" : "days"}</span>
+      <span className="hm-legend"><span className="muted">Less</span>${CELL_COLORS.map((c, i) => html`<span key=${i} className="hm-swatch" style=${{ background: c }}></span>`)}<span className="muted">More</span></span>
+    </div>
+  </div>`;
+}
+
+/* ---------- controls ---------- */
+function Segmented({ value, options, onChange }) {
+  return html`<div className="seg">
+    ${options.map((o) => html`<button key=${o.value} className=${value === o.value ? "active" : ""} onClick=${() => onChange(o.value)}>${o.label}</button>`)}
+  </div>`;
+}
+
+function Controls({ metric, setMetric, groupBy, setGroupBy, filter, setFilter, smooth, setSmooth }) {
+  return html`<div className="controls">
+    <label className="ctl"><span className="ctl-label">Metric</span>
+      <${Segmented} value=${metric} onChange=${setMetric} options=${[{ value: "tokens", label: "Tokens" }, { value: "cost", label: "Cost" }]} />
+    </label>
+    <label className="ctl"><span className="ctl-label">Group by</span>
+      <select value=${groupBy} onChange=${(e) => setGroupBy(e.target.value)}>
+        <option value="model">Model</option>
+        <option value="device">Device</option>
+        <option value="harness">Harness</option>
+      </select>
+    </label>
+    <label className="ctl grow"><span className="ctl-label">Power filter</span>
+      <input className="filter" type="text" value=${filter} onChange=${(e) => setFilter(e.target.value)} placeholder="model:gpt-5 harness:codex ..." spellCheck={false} />
+    </label>
+    <label className="ctl"><span className="ctl-label">Smooth</span>
+      <${Segmented} value=${smooth ? "on" : "off"} onChange=${(v) => setSmooth(v === "on")} options=${[{ value: "off", label: "Daily" }, { value: "on", label: "30d avg" }]} />
+    </label>
+  </div>`;
+}
+
+/* ---------- app ---------- */
+function App() {
+  const [payload, setPayload] = useState(null);
+  const [error, setError] = useState(null);
+  const [metric, setMetric] = useState("tokens");
+  const [groupBy, setGroupBy] = useState("model");
+  const [filter, setFilter] = useState("");
+  const [smooth, setSmooth] = useState(false);
+
+  useEffect(() => {
+    fetch("/api/usage").then((r) => r.json()).then(setPayload).catch((e) => setError(String(e)));
+  }, []);
+
+  const rows = payload?.rows || [];
+  const pred = useMemo(() => parseFilter(filter), [filter]);
+  const filtered = useMemo(() => rows.filter(pred), [rows, pred]);
+
+  const stats = useMemo(() => {
+    let tokens = 0, cost = 0; const days = new Set();
+    for (const r of filtered) { tokens += r.t; cost += r.k; days.add(r.d); }
+    return { tokens, cost, days: days.size, start: payload?.range?.start, end: payload?.range?.end };
+  }, [filtered, payload]);
+
+  return html`<div className="page">
+    <header className="head">
+      <div><h1>Tokscale Aggregate</h1><p className="muted">Model usage across all devices, from the git-backed snapshot.</p></div>
+      <div className="stats">
+        <div className="stat"><b>${fmtTokens(stats.tokens)}</b><span>total tokens</span></div>
+        <div className="stat"><b>${fmtMoney(stats.cost)}</b><span>total cost</span></div>
+        <div className="stat"><b>${stats.days}</b><span>active days</span></div>
+        <div className="stat"><b>${stats.start ? monthDay(stats.start) : "–"} – ${stats.end ? monthDay(stats.end) : "–"}</b><span>date range</span></div>
+      </div>
+    </header>
+
+    <${Controls} metric=${metric} setMetric=${setMetric} groupBy=${groupBy} setGroupBy=${setGroupBy} filter=${filter} setFilter=${setFilter} smooth=${smooth} setSmooth=${setSmooth} />
+
+    ${error ? html`<div className="empty">Failed to load /api/usage: ${error}</div>` : null}
+    ${!payload && !error ? html`<div className="empty">Loading…</div>` : null}
+
+    <section className="card">
+      <div className="card-head"><h2>Usage over time</h2><span className="muted">Grouped by ${groupBy} · ${smooth ? "30-day average" : "daily"}</span></div>
+      <${UsageChart} rows=${filtered} metric=${metric} groupBy=${groupBy} smooth=${smooth} />
+    </section>
+
+    <section className="card">
+      <div className="card-head"><h2>Contributions</h2><span className="muted">${metric === "cost" ? "Cost" : "Token"} density by day</span></div>
+      <${ContributionHeatmap} rows=${filtered} metric=${metric} />
+    </section>
+  </div>`;
+}
+
+if (typeof document !== "undefined") createRoot(document.getElementById("root")).render(html`<${App} />`);
+
+export { App, UsageChart, ContributionHeatmap, buildUsage, buildHeatmap, parseFilter };
+
+</script>
+</body></html>
+"""
+
+
 class _WebHandler(BaseHTTPRequestHandler):
     repo: Path
 
@@ -425,13 +889,16 @@ class _WebHandler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         path = unquote(parsed.path).rstrip("/")
         if path == "":
-            path = "/profile"
+            path = "/"
         devices = [(file.stem, data) for file in _device_files(self.repo) if (data := _load_device(file))]
         if path == "/api/devices":
             body = json.dumps({device_id: data for device_id, data in devices}, sort_keys=True).encode()
             content_type = "application/json"
-        elif path == "/profile":
-            body = _profile_page(devices).encode()
+        elif path == "/api/usage":
+            body = json.dumps(_usage_payload(devices), sort_keys=True).encode()
+            content_type = "application/json"
+        elif path in {"/", "/profile"}:
+            body = _APP_HTML.encode()
             content_type = "text/html; charset=utf-8"
         elif path.startswith("/profile/") and path.count("/") == 2:
             device_id = path.rsplit("/", 1)[1]
@@ -473,7 +940,7 @@ def run_web() -> int:
     except OSError as exc:
         warn(f"cannot start web server on {host}:{port}: {exc}")
         return 1
-    print(f"Tokscale local profile: http://{host}:{server.server_port}/profile")
+    print(f"Tokscale aggregate dashboard: http://{host}:{server.server_port}/")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
