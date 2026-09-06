@@ -398,15 +398,27 @@ def _usage_payload(devices: list[tuple[str, dict[str, object]]]) -> dict[str, ob
                     continue
                 clients.add(harness)
                 models.add(model)
-                tokens = int(sum(int(v or 0) for v in (client.get("tokens") or {}).values()))
+                tokens_map = client.get("tokens") or {}
+                input_t = int(tokens_map.get("input", 0) or 0)
+                output_t = int(tokens_map.get("output", 0) or 0)
+                cache_read = int(tokens_map.get("cacheRead", 0) or 0)
+                cache_write = int(tokens_map.get("cacheWrite", 0) or 0)
+                reasoning = int(tokens_map.get("reasoning", 0) or 0)
                 rows.append(
                     {
                         "d": date,
                         "v": device_id,
                         "c": harness,
                         "m": model,
-                        "t": tokens,
+                        "t": input_t + output_t + cache_read + cache_write + reasoning,
                         "k": float(client.get("cost", 0) or 0),
+                        "b": {
+                            "i": input_t,
+                            "o": output_t,
+                            "cr": cache_read,
+                            "cw": cache_write,
+                            "r": reasoning,
+                        },
                     }
                 )
     return {
@@ -514,9 +526,17 @@ border-radius:.55rem;padding:.7rem .8rem;box-shadow:0 12px 30px rgba(0,0,0,.45);
 .tt-total b{font-size:.95rem;font-weight:650}
 .tt-list{margin-top:.4rem;display:grid;gap:.25rem}
 .tt-row{display:grid;grid-template-columns:auto 1fr auto;gap:.5rem;align-items:center;font-variant-numeric:tabular-nums}
+.tt-row.no-dot{grid-template-columns:1fr auto}
 .tt-row .lbl{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text);font-size:.74rem}
 .tt-row .val{color:var(--text);font-size:.74rem;font-weight:600}
 .dot{width:.5rem;height:.5rem;border-radius:999px}
+.tt-sec{color:var(--muted);font-size:.6rem;font-weight:600;letter-spacing:.06em;text-transform:uppercase;margin:.55rem 0 .25rem}
+.tt-break{display:grid;gap:.2rem;margin-top:.3rem}
+.legend{display:flex;flex-wrap:wrap;gap:.5rem 1rem;margin-top:.7rem}
+.legend-item{display:inline-flex;align-items:center;gap:.4rem;font-size:.75rem;color:var(--muted)}
+.legend-label{color:var(--text);max-width:18rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.legend-val{font-weight:600;font-variant-numeric:tabular-nums}
+.hm-body{position:relative}
 .hm{font-variant-numeric:tabular-nums}
 .hm-grid{display:grid;gap:3px;width:max-content}
 .hm-month{font-size:.62rem;color:var(--muted);align-self:end}
@@ -661,12 +681,14 @@ function UsageChart({ rows, metric, groupBy, smooth }) {
   const yAt = (v) => padT + plotH - (v / yMax) * plotH;
   const xs = dates.map((_, i) => xAt(i));
 
-  // Build stacked band paths (ascending total so the largest sits on top).
+  // Build stacked band paths. Each date accumulates across series (ascending
+  // total) so the largest series sits on top; the running total resets every
+  // day, so a day's stack never carries into the next day.
   const asc = [...series].reverse();
-  let cum = 0;
+  const cum = new Array(n).fill(0);
   const bands = asc.map((s) => {
     const yBottom = [], yTop = [];
-    for (let i = 0; i < n; i++) { yBottom.push(yAt(cum)); cum += s.values[i]; yTop.push(yAt(cum)); }
+    for (let i = 0; i < n; i++) { yBottom.push(yAt(cum[i])); cum[i] += s.values[i]; yTop.push(yAt(cum[i])); }
     let d = `M ${xs[0]},${yTop[0]}`;
     for (let i = 1; i < n; i++) d += ` L ${xs[i]},${yTop[i]}`;
     for (let i = n - 1; i >= 0; i--) d += ` L ${xs[i]},${yBottom[i]}`;
@@ -675,6 +697,7 @@ function UsageChart({ rows, metric, groupBy, smooth }) {
   });
   bands.reverse(); // restore descending order for render (later = higher on top)
 
+  const ylabel = (v) => (metric === "cost" ? "$" + Math.round(v) : fmtTokens(v));
   const ticks = [];
   for (let i = 0; i <= 4; i++) ticks.push((yMax * i) / 4);
   const labelStep = Math.max(1, Math.ceil(n / 8));
@@ -689,10 +712,10 @@ function UsageChart({ rows, metric, groupBy, smooth }) {
   function onMove(e) {
     const rect = wrapRef.current.getBoundingClientRect();
     const frac = (e.clientX - rect.left) / rect.width;
-    setHover({ i: Math.round(frac * (n - 1)), x: e.clientX - rect.left });
+    setHover({ i: Math.round(frac * (n - 1)), x: e.clientX - rect.left, y: e.clientY - rect.top });
   }
 
-  const tooltip = active && html`<div className="tt" style=${{ left: clamp(hover.x, 12, wrapRef.current.clientWidth - 230), top: 8 }}>
+  const tooltip = active && html`<div className="tt" style=${{ left: clamp(hover.x + 16, 12, wrapRef.current.clientWidth - 230), top: clamp(hover.y + 8, 12, wrapRef.current.clientHeight - 190) }}>
     <div className="tt-date">${monthDay(dates[active.idx])}</div>
     <div className="tt-total"><span>Total ${metric === "cost" ? "cost" : "tokens"}</span><b>${metric === "cost" ? fmtMoney(active.total) : fmtTokens(active.total)}</b></div>
     <div className="tt-list">
@@ -710,13 +733,20 @@ function UsageChart({ rows, metric, groupBy, smooth }) {
         const y = yAt(tv);
         return html`<g key=${tv}>
           <line x1=${padL} y1=${y} x2=${W - padR} y2=${y} stroke="rgba(255,255,255,.06)"/>
-          <text x=${padL - 8} y=${y} textAnchor="end" dominantBaseline="middle" className="ytick">${fmtTokens(tv)}</text>
+          <text x=${padL - 8} y=${y} textAnchor="end" dominantBaseline="middle" className="ytick">${ylabel(tv)}</text>
         </g>`;
       })}
       ${bands.map(({ s, d }) => html`<path key=${s.key} d=${d} fill=${s.color} fillOpacity="0.72" stroke=${s.color} strokeOpacity="0.5" strokeWidth="1"/>`)}
       ${activeIdx !== null ? html`<line x1=${xAt(activeIdx)} y1=${padT} x2=${xAt(activeIdx)} y2=${padT + plotH} stroke="rgba(255,255,255,.35)" strokeDasharray="3 3"/>` : null}
       ${dates.map((d, i) => (i % labelStep === 0 ? html`<text key=${d} x=${xAt(i)} y=${H - 8} textAnchor="middle" className="xtick">${monthDay(d)}</text>` : null))}
     </svg>
+    <div className="legend">
+      ${series.map((s) => html`<span key=${s.key} className="legend-item">
+        <span className="dot" style=${{ background: s.color }}></span>
+        <span className="legend-label">${s.label}</span>
+        <span className="legend-val">${metric === "cost" ? fmtMoney(s.total) : fmtTokens(s.total)}</span>
+      </span>`)}
+    </div>
   </div>`;
 }
 
@@ -768,24 +798,73 @@ function buildHeatmap(rows, metric) {
 const CELL_COLORS = ["#161b22", "#0d3a66", "#155a94", "#2077c1", "#3f9ce0"];
 const DAY_LABELS = [null, "Mon", null, "Wed", null, "Fri", null];
 
+function dayDetail(date, rows, metric) {
+  const day = rows.filter((r) => r.d === date);
+  let tokens = 0, cost = 0;
+  const b = { i: 0, o: 0, cr: 0, cw: 0, r: 0 };
+  const harness = new Map();
+  for (const r of day) {
+    tokens += r.t; cost += r.k;
+    if (r.b) { b.i += r.b.i || 0; b.o += r.b.o || 0; b.cr += r.b.cr || 0; b.cw += r.b.cw || 0; b.r += r.b.r || 0; }
+    const c = r.c || "(none)";
+    harness.set(c, (harness.get(c) || 0) + (metric === "cost" ? r.k : r.t));
+  }
+  const harnesses = [...harness.entries()].sort((a, b2) => b2[1] - a[1]).slice(0, 5)
+    .map(([name, value]) => ({ name, value, color: HARNESS_COLORS[name] || "#5b8def" }));
+  return { tokens, cost, b, harnesses };
+}
+
 function ContributionHeatmap({ rows, metric }) {
   const data = useMemo(() => buildHeatmap(rows, metric), [rows, metric]);
+  const wrapRef = useRef(null);
+  const [hover, setHover] = useState(null);
   if (!data.weeks.length) return html`<div className="empty">No data matches the current filter.</div>`;
   const { weeks, byDate, level, monthMarkers, activeDays, min, max } = data;
   const N = weeks.length;
   const columns = `30px repeat(${N}, 11px)`;
 
+  const detail = hover ? dayDetail(hover.date, rows, metric) : null;
+  const breakdown = detail ? [
+    ["Input", detail.b.i], ["Output", detail.b.o], ["Cache read", detail.b.cr],
+    ["Cache write", detail.b.cw], ["Reasoning", detail.b.r],
+  ].filter(([, v]) => v > 0) : [];
+
+  function move(d, e) {
+    const rect = wrapRef.current.getBoundingClientRect();
+    setHover({ date: d, x: e.clientX - rect.left, y: e.clientY - rect.top });
+  }
+
+  const tooltip = detail && html`<div className="tt hm-tt" style=${{ left: clamp(hover.x + 14, 8, wrapRef.current.clientWidth - 230), top: clamp(hover.y + 6, 8, Math.max(8, wrapRef.current.clientHeight - 230)) }}>
+    <div className="tt-date">${monthDay(hover.date)}</div>
+    <div className="tt-total"><span>Total ${metric === "cost" ? "cost" : "tokens"}</span><b>${metric === "cost" ? fmtMoney(detail.cost) : fmtTokens(detail.tokens)}</b></div>
+    ${metric === "tokens" && breakdown.length ? html`<div className="tt-break">
+      ${breakdown.map(([label, v]) => html`<div key=${label} className="tt-row no-dot"><span className="lbl">${label}</span><span className="val">${fmtTokens(v)}</span></div>`)}
+    </div>` : null}
+    ${detail.harnesses.length ? html`<div className="tt-group">
+      <div className="tt-sec">Clients</div>
+      <div className="tt-break">
+        ${detail.harnesses.map((h) => html`<div key=${h.name} className="tt-row">
+          <span className="dot" style=${{ background: h.color }}></span>
+          <span className="lbl">${h.name}</span><span className="val">${metric === "cost" ? fmtMoney(h.value) : fmtTokens(h.value)}</span>
+        </div>`)}
+      </div>
+    </div>` : null}
+  </div>`;
+
   return html`<div className="hm">
-    <div className="hm-grid" style=${{ gridTemplateColumns: columns, gridTemplateRows: `14px repeat(7, 11px)` }}>
-      ${monthMarkers.map((m) => html`<span key=${m.week + "-" + m.label} className="hm-month" style=${{ gridColumn: m.week + 2, gridRow: 1 }}>${m.label}</span>`)}
-      ${DAY_LABELS.map((l, di) => html`<span key=${di} className="hm-day" style=${{ gridColumn: 1, gridRow: di + 2 }}>${l || ""}</span>`)}
-      ${weeks.flatMap((week, wi) => week.map((d, di) => {
-        const key = d.toISOString().slice(0, 10);
-        const inRange = key >= min && key <= max;
-        const v = inRange ? (byDate.get(key) || 0) : 0;
-        const lv = inRange && v > 0 ? level(v) : 0;
-        return html`<div key=${key} className="hm-cell" style=${{ gridColumn: wi + 2, gridRow: di + 2, background: CELL_COLORS[lv], visibility: inRange ? "visible" : "hidden" }} title=${key + ": " + fmtTokens(v)}></div>`;
-      }))}
+    <div className="hm-body" ref=${wrapRef}>
+      ${tooltip}
+      <div className="hm-grid" style=${{ gridTemplateColumns: columns, gridTemplateRows: `14px repeat(7, 11px)` }}>
+        ${monthMarkers.map((m) => html`<span key=${m.week + "-" + m.label} className="hm-month" style=${{ gridColumn: m.week + 2, gridRow: 1 }}>${m.label}</span>`)}
+        ${DAY_LABELS.map((l, di) => html`<span key=${di} className="hm-day" style=${{ gridColumn: 1, gridRow: di + 2 }}>${l || ""}</span>`)}
+        ${weeks.flatMap((week, wi) => week.map((d, di) => {
+          const key = d.toISOString().slice(0, 10);
+          const inRange = key >= min && key <= max;
+          const v = inRange ? (byDate.get(key) || 0) : 0;
+          const lv = inRange && v > 0 ? level(v) : 0;
+          return html`<div key=${key} className="hm-cell" style=${{ gridColumn: wi + 2, gridRow: di + 2, background: CELL_COLORS[lv], visibility: inRange ? "visible" : "hidden" }} onMouseMove=${inRange ? (e) => move(key, e) : null} onMouseLeave=${inRange ? () => setHover(null) : null}></div>`;
+        }))}
+      </div>
     </div>
     <div className="hm-foot">
       <span className="muted">${activeDays} active ${activeDays === 1 ? "day" : "days"}</span>
