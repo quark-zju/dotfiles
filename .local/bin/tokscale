@@ -20,10 +20,99 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from tokscale_merge import merge_device
-
-
 REPO_DIR = Path.home() / ".cache" / "tokscale-config-repo"
+
+
+def _day_totals(clients: list[dict[str, object]]) -> tuple[dict[str, object], dict[str, int]]:
+    totals: dict[str, object] = {"tokens": 0, "cost": 0.0, "messages": 0}
+    breakdown = {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0, "reasoning": 0}
+    for item in clients:
+        tokens = item.get("tokens") or {}
+        totals["tokens"] = int(totals["tokens"]) + sum(int(tokens.get(key, 0) or 0) for key in breakdown)
+        totals["cost"] = float(totals["cost"]) + float(item.get("cost", 0) or 0)
+        totals["messages"] = int(totals["messages"]) + int(item.get("messages", 0) or 0)
+        for key in breakdown:
+            breakdown[key] += int(tokens.get(key, 0) or 0)
+    return totals, breakdown
+
+
+def _rebuild_day(day: dict[str, object], clients: list[dict[str, object]]) -> dict[str, object]:
+    result = dict(day)
+    totals, breakdown = _day_totals(clients)
+    result["clients"] = clients
+    result["totals"] = totals
+    result["tokenBreakdown"] = breakdown
+    return result
+
+
+def _summary(days: list[dict[str, object]]) -> dict[str, object]:
+    total_tokens = sum(int((d.get("totals") or {}).get("tokens", 0) or 0) for d in days)
+    total_cost = sum(float((d.get("totals") or {}).get("cost", 0) or 0) for d in days)
+    clients = sorted({c.get("client") for d in days for c in d.get("clients") or [] if c.get("client")})
+    models = sorted({c.get("modelId") for d in days for c in d.get("clients") or [] if c.get("modelId")})
+    return {
+        "totalTokens": total_tokens,
+        "totalCost": total_cost,
+        "totalDays": len(days),
+        "activeDays": sum(1 for d in days if (d.get("totals") or {}).get("tokens", 0) > 0),
+        "averagePerDay": total_tokens / len(days) if days else 0,
+        "maxCostInSingleDay": max((float((d.get("totals") or {}).get("cost", 0) or 0) for d in days), default=0),
+        "clients": clients,
+        "models": models,
+    }
+
+
+def merge_device(existing: dict[str, object] | None, payload: dict[str, object]) -> dict[str, object]:
+    """Merge a submit snapshot without mutating either input.
+
+    Full-history submissions replace all dates for their scoped clients, while
+    partial submissions replace only the client cells they actually contain.
+
+    >>> p = {"device": {"id": "d"}, "scanScope": {"fullHistory": True}, "contributions": [{"date": "2026-01-01", "clients": [{"client": "claude", "tokens": {"input": 2, "output": 1}, "cost": 0.1, "messages": 1}]}]}
+    >>> merge_device(None, p)["summary"]["totalTokens"]
+    3
+    >>> q = {"device": {"id": "d"}, "scanScope": {"fullHistory": False}, "summary": {"clients": ["claude"]}, "contributions": [{"date": "2026-01-01", "clients": [{"client": "claude", "tokens": {"input": 3, "output": 1}, "cost": 0.2, "messages": 1}]}]}
+    >>> merge_device(merge_device(None, p), q)["summary"]["totalTokens"]
+    4
+    """
+    from copy import deepcopy
+    from datetime import date
+
+    old = deepcopy(existing or {})
+    incoming = deepcopy(payload)
+    full_history = bool((incoming.get("scanScope") or {}).get("fullHistory"))
+    scope = set((incoming.get("summary") or {}).get("clients") or [])
+    scope.update(((incoming.get("scanScope") or {}).get("parserVersions") or {}).keys())
+    for day in incoming.get("contributions") or []:
+        scope.update(c.get("client") for c in day.get("clients") or [] if c.get("client"))
+    days = {d["date"]: deepcopy(d) for d in old.get("contributions") or [] if isinstance(d, dict) and d.get("date")}
+    if full_history:
+        for key, day in list(days.items()):
+            kept = [c for c in day.get("clients") or [] if c.get("client") not in scope]
+            if kept:
+                days[key] = _rebuild_day(day, kept)
+            else:
+                del days[key]
+    for incoming_day in incoming.get("contributions") or []:
+        key = incoming_day.get("date")
+        if not key:
+            continue
+        old_day = days.get(key, {"date": key})
+        new_clients = incoming_day.get("clients") or []
+        names = {c.get("client") for c in new_clients if c.get("client")}
+        kept = [c for c in old_day.get("clients") or [] if c.get("client") not in names]
+        days[key] = _rebuild_day({**old_day, **incoming_day}, kept + new_clients)
+    ordered = [days[key] for key in sorted(days, key=date.fromisoformat)]
+    result = old
+    result.update({k: deepcopy(incoming[k]) for k in ("device", "meta", "scanScope", "mcpServers") if k in incoming})
+    result["contributions"] = ordered
+    result["summary"] = _summary(ordered)
+    if "timeMetrics" in incoming:
+        if full_history or not old.get("timeMetrics"):
+            result["timeMetrics"] = incoming["timeMetrics"]
+        else:
+            result["timeMetrics"] = {k: max(int((old["timeMetrics"] or {}).get(k, 0) or 0), int((incoming["timeMetrics"] or {}).get(k, 0) or 0)) for k in ("totalActiveTimeMs", "longestContinuousMs", "maxConcurrentSessions", "sessionCount")}
+    return result
 
 
 def warn(message: str) -> None:
