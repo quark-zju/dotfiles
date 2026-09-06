@@ -134,13 +134,29 @@ def prepare_repo(remote: str) -> Path | None:
                 fail_git("initialize main branch for empty remote", created)
                 return None
 
+    # This repository is now an aggregate store, not a Tokscale config
+    # checkout.  Rewrite the managed ignore file and remove files tracked by
+    # the old config-repository design, leaving only devices/.
     ignore = REPO_DIR / ".gitignore"
-    if not ignore.exists():
-        ignore.write_text(DEFAULT_GITIGNORE, encoding="utf-8")
-        added = git("add", ".gitignore", cwd=REPO_DIR, check=False)
-        if added.returncode != 0:
-            fail_git("stage .gitignore", added)
+    ignore.write_text(DEFAULT_GITIGNORE, encoding="utf-8")
+    tracked = git("ls-files", "-z", cwd=REPO_DIR, check=False)
+    if tracked.returncode != 0:
+        fail_git("inspect tracked aggregate files", tracked)
+        return None
+    stale = [
+        path
+        for path in tracked.stdout.split("\0")
+        if path and path != ".gitignore" and not path.startswith("devices/")
+    ]
+    if stale:
+        removed = git("rm", "-f", "--", *stale, cwd=REPO_DIR, check=False)
+        if removed.returncode != 0:
+            fail_git("remove old config files from aggregate repo", removed)
             return None
+    added = git("add", ".gitignore", cwd=REPO_DIR, check=False)
+    if added.returncode != 0:
+        fail_git("stage .gitignore", added)
+        return None
 
     (REPO_DIR / "devices").mkdir(exist_ok=True)
     return REPO_DIR
