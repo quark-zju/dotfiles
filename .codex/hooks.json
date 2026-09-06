@@ -1,6 +1,18 @@
 {
-  "description": "Desktop notifications for completed Codex turns.",
+  "description": "Model-specific context and desktop notifications for Codex turns.",
   "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/bin/scripts/codex-model-context.py",
+            "timeout": 3,
+            "additionalContextLimit": 100
+          }
+        ]
+      }
+    ],
     "UserPromptSubmit": [
       {
         "hooks": [
