@@ -38,6 +38,14 @@ def _day_totals(clients: list[dict[str, object]]) -> tuple[dict[str, object], di
 
 def _rebuild_day(day: dict[str, object], clients: list[dict[str, object]]) -> dict[str, object]:
     result = dict(day)
+    clients = sorted(
+        clients,
+        key=lambda item: (
+            str(item.get("client", "")),
+            str(item.get("provider", "")),
+            str(item.get("modelId", "")),
+        ),
+    )
     totals, breakdown = _day_totals(clients)
     result["clients"] = clients
     result["totals"] = totals
@@ -102,7 +110,10 @@ def merge_device(existing: dict[str, object] | None, payload: dict[str, object])
         names = {c.get("client") for c in new_clients if c.get("client")}
         kept = [c for c in old_day.get("clients") or [] if c.get("client") not in names]
         days[key] = _rebuild_day({**old_day, **incoming_day}, kept + new_clients)
-    ordered = [days[key] for key in sorted(days, key=date.fromisoformat)]
+    ordered = [
+        _rebuild_day(days[key], days[key].get("clients") or [])
+        for key in sorted(days, key=date.fromisoformat)
+    ]
     result = old
     result.update({k: deepcopy(incoming[k]) for k in ("device", "meta", "scanScope", "mcpServers") if k in incoming})
     result["contributions"] = ordered
@@ -357,6 +368,12 @@ def main() -> int:
     remote = os.environ.get("TOKSCALE_REMOTE", "").strip()
     child_env = os.environ.copy()
 
+    # Arguments select an explicit tokscale subcommand (for example
+    # `submit` or `autosubmit`).  Those commands must remain untouched and
+    # must not trigger this wrapper's aggregate synchronization flow.
+    if sys.argv[1:]:
+        return subprocess.run(["bunx", "tokscale", *sys.argv[1:]], env=child_env).returncode
+
     if remote:
         repo = prepare_repo(remote)
         if repo is None:
@@ -371,7 +388,7 @@ def main() -> int:
             commit_and_push(repo, remote_branch(repo) or local_branch(repo))
         return result.returncode
 
-    return subprocess.run(["bunx", "tokscale", *sys.argv[1:]], env=child_env).returncode
+    return subprocess.run(["bunx", "tokscale"], env=child_env).returncode
 
 
 if __name__ == "__main__":
