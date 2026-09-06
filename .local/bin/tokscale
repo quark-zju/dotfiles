@@ -20,6 +20,8 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+from tokscale_merge import merge_device
+
 
 REPO_DIR = Path.home() / ".cache" / "tokscale-config-repo"
 
@@ -203,15 +205,18 @@ class _SubmitHandler(BaseHTTPRequestHandler):
 
             devices = self.repo / "devices"
             devices.mkdir(exist_ok=True)
-            state = dict(payload)
+            existing = None
+            final = devices / f"{device_id}.json"
+            if final.exists():
+                existing = json.loads(final.read_text(encoding="utf-8"))
+            state = merge_device(existing, payload)
             state["device"] = device
             state["receivedAt"] = datetime.now(timezone.utc).isoformat()
             tmp = devices / f".{device_id}.json.tmp"
-            final = devices / f"{device_id}.json"
             tmp.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8")
             os.replace(tmp, final)
 
-            summary = payload.get("summary") or {}
+            summary = state.get("summary") or {}
             body = {
                 "submissionId": f"local-{device_id}",
                 "username": "local",
