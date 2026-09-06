@@ -22,12 +22,6 @@ from pathlib import Path
 
 
 REPO_DIR = Path.home() / ".cache" / "tokscale-config-repo"
-DEFAULT_GITIGNORE = """# The remote repository stores only device aggregates.
-*
-!.gitignore
-!devices/
-!devices/**
-"""
 
 
 def warn(message: str) -> None:
@@ -134,11 +128,10 @@ def prepare_repo(remote: str) -> Path | None:
                 fail_git("initialize main branch for empty remote", created)
                 return None
 
-    # This repository is now an aggregate store, not a Tokscale config
-    # checkout.  Rewrite the managed ignore file and remove files tracked by
-    # the old config-repository design, leaving only devices/.
-    ignore = REPO_DIR / ".gitignore"
-    ignore.write_text(DEFAULT_GITIGNORE, encoding="utf-8")
+    # This repository is an aggregate store, not a Tokscale config checkout.
+    # Remove files tracked by the old config-repository design, leaving only
+    # devices/. There is deliberately no .gitignore: the repository is
+    # dedicated to this wrapper and every tracked file should be a device file.
     tracked = git("ls-files", "-z", cwd=REPO_DIR, check=False)
     if tracked.returncode != 0:
         fail_git("inspect tracked aggregate files", tracked)
@@ -146,24 +139,27 @@ def prepare_repo(remote: str) -> Path | None:
     stale = [
         path
         for path in tracked.stdout.split("\0")
-        if path and path != ".gitignore" and not path.startswith("devices/")
+        if path and not path.startswith("devices/")
     ]
     if stale:
         removed = git("rm", "-f", "--", *stale, cwd=REPO_DIR, check=False)
         if removed.returncode != 0:
             fail_git("remove old config files from aggregate repo", removed)
             return None
-    added = git("add", ".gitignore", cwd=REPO_DIR, check=False)
-    if added.returncode != 0:
-        fail_git("stage .gitignore", added)
-        return None
+    old_ignore = REPO_DIR / ".gitignore"
+    if old_ignore.exists():
+        try:
+            old_ignore.unlink()
+        except OSError as exc:
+            warn(f"cannot remove obsolete .gitignore: {exc}")
+            return None
 
     (REPO_DIR / "devices").mkdir(exist_ok=True)
     return REPO_DIR
 
 
 def commit_and_push(repo: Path, branch: str | None) -> None:
-    added = git("add", "--", ".gitignore", "devices", cwd=repo, check=False)
+    added = git("add", "--", "devices", cwd=repo, check=False)
     if added.returncode != 0:
         fail_git("stage local changes", added)
         return
