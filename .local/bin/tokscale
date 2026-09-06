@@ -235,8 +235,8 @@ def prepare_repo(remote: str) -> Path | None:
 
     # This repository is an aggregate store, not a Tokscale config checkout.
     # Remove files tracked by the old config-repository design, leaving only
-    # devices/. There is deliberately no .gitignore: the repository is
-    # dedicated to this wrapper and every tracked file should be a device file.
+    # devices/ plus the hostname.json mapping. There is deliberately no
+    # .gitignore: every tracked file should be a device file or the mapping.
     tracked = git("ls-files", "-z", cwd=REPO_DIR, check=False)
     if tracked.returncode != 0:
         fail_git("inspect tracked aggregate files", tracked)
@@ -244,7 +244,7 @@ def prepare_repo(remote: str) -> Path | None:
     stale = [
         path
         for path in tracked.stdout.split("\0")
-        if path and not path.startswith("devices/")
+        if path and path != "hostname.json" and not path.startswith("devices/")
     ]
     if stale:
         removed = git("rm", "-f", "--", *stale, cwd=REPO_DIR, check=False)
@@ -264,7 +264,7 @@ def prepare_repo(remote: str) -> Path | None:
 
 
 def commit_and_push(repo: Path, branch: str | None) -> None:
-    added = git("add", "--", "devices", cwd=repo, check=False)
+    added = git("add", "--", "devices", "hostname.json", cwd=repo, check=False)
     if added.returncode != 0:
         fail_git("stage local changes", added)
         return
@@ -289,6 +289,32 @@ def commit_and_push(repo: Path, branch: str | None) -> None:
     pushed = git("push", "origin", f"HEAD:refs/heads/{branch}", cwd=repo, check=False)
     if pushed.returncode != 0:
         fail_git("push (remote changed or unavailable; no merge/rebase attempted)", pushed)
+
+
+def _record_hostname(repo: Path, device_id: str) -> None:
+    """Record which host contributed a device snapshot in hostname.json.
+
+    The device id is an opaque token, not the host that produced the data, so
+    the git-backed repo keeps an explicit device -> hostname map.  The host
+    running the wrapper is the one that submitted, so machine_hostname() is the
+    authority here.
+    """
+    hostname = machine_hostname()
+    path = repo / "hostname.json"
+    mapping: dict[str, str] = {}
+    if path.exists():
+        try:
+            value = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(value, dict):
+                mapping = dict(value)
+        except (OSError, json.JSONDecodeError):
+            pass
+    if mapping.get(device_id) == hostname:
+        return
+    mapping[device_id] = hostname
+    tmp = repo / ".hostname.json.tmp"
+    tmp.write_text(json.dumps(mapping, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    os.replace(tmp, path)
 
 
 class _SubmitHandler(BaseHTTPRequestHandler):
@@ -318,6 +344,7 @@ class _SubmitHandler(BaseHTTPRequestHandler):
             tmp = devices / f".{device_id}.json.tmp"
             tmp.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8")
             os.replace(tmp, final)
+            _record_hostname(self.repo, device_id)
 
             summary = state.get("summary") or {}
             body = {
@@ -367,19 +394,30 @@ def _number(value: object, *, decimals: int = 2) -> str:
         return "0"
 
 
-def _usage_payload(devices: list[tuple[str, dict[str, object]]]) -> dict[str, object]:
+def _usage_payload(devices: list[tuple[str, dict[str, object]]], repo: Path) -> dict[str, object]:
     """Flatten the aggregate snapshots into rows the SPA can filter/group.
 
     Each client entry in a device's daily contribution becomes one row carrying
     the date, device id, harness (client), model id and the inclusive token /
-    cost totals.  This lets the frontend aggregate by model, device or harness
-    and apply a client-side power filter without further round-trips.
+    cost totals.  This lets the frontend aggregate by model, host or harness
+    and apply a client-side power filter without further round-trips.  The
+    device -> hostname map is loaded from hostname.json so the UI can group by
+    host.
     """
     rows: list[dict[str, object]] = []
     clients: set[str] = set()
     models: set[str] = set()
     start: str | None = None
     end: str | None = None
+    hosts: dict[str, str] = {}
+    host_path = repo / "hostname.json"
+    if host_path.exists():
+        try:
+            value = json.loads(host_path.read_text(encoding="utf-8"))
+            if isinstance(value, dict):
+                hosts = {str(key): str(val) for key, val in value.items()}
+        except (OSError, json.JSONDecodeError):
+            pass
     for device_id, data in devices:
         for day in data.get("contributions") or []:
             date = day.get("date")
@@ -426,6 +464,7 @@ def _usage_payload(devices: list[tuple[str, dict[str, object]]]) -> dict[str, ob
         "devices": [device_id for device_id, _ in devices],
         "clients": sorted(clients),
         "models": sorted(models),
+        "hosts": hosts,
         "rows": rows,
     }
 
@@ -588,7 +627,8 @@ function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
  * Whitespace-separated AND.  `key:value` is a substring match on one field;
  * bare words match any of model/device/harness.
  */
-function parseFilter(str) {
+function parseFilter(str, hosts = {}) {
+  const hostOf = (r) => (hosts && hosts[r.v]) || r.v;
   const terms = (str || "").split(/\s+/).filter(Boolean);
   const conds = [];
   for (const t of terms) {
@@ -596,11 +636,12 @@ function parseFilter(str) {
     if (m) {
       const f = m[1].toLowerCase();
       const v = m[2].toLowerCase();
+      if (f === "host") { conds.push((r) => String(hostOf(r)).toLowerCase().includes(v)); continue; }
       const k = f === "harness" || f === "client" ? "c" : f === "device" ? "v" : f === "model" ? "m" : null;
       conds.push((r) => (k ? String(r[k]).toLowerCase().includes(v) : true));
     } else {
       const v = t.toLowerCase();
-      conds.push((r) => [r.c, r.v, r.m].some((x) => String(x).toLowerCase().includes(v)));
+      conds.push((r) => [r.c, r.v, r.m, hostOf(r)].some((x) => String(x).toLowerCase().includes(v)));
     }
   }
   return conds.length ? (r) => conds.every((c) => c(r)) : () => true;
@@ -615,8 +656,9 @@ function trailingAverage(vals, w) {
   return out;
 }
 
-function buildUsage(rows, metric, groupBy, smooth) {
-  const keyField = groupBy === "model" ? "m" : groupBy === "device" ? "v" : "c";
+function buildUsage(rows, metric, groupBy, smooth, hosts = {}) {
+  const hostOf = (r) => (hosts && hosts[r.v]) || r.v;
+  const keyOf = groupBy === "model" ? (r) => r.m : groupBy === "harness" ? (r) => r.c : (r) => hostOf(r);
   const val = metric === "cost" ? (r) => r.k : (r) => r.t;
   const byDate = new Map();
   let min = null, max = null;
@@ -624,7 +666,7 @@ function buildUsage(rows, metric, groupBy, smooth) {
     const d = r.d;
     let m = byDate.get(d);
     if (!m) { m = new Map(); byDate.set(d, m); }
-    const k = r[keyField] || "(none)";
+    const k = keyOf(r) || "(none)";
     m.set(k, (m.get(k) || 0) + val(r));
     if (min === null || d < min) min = d;
     if (max === null || d > max) max = d;
@@ -666,8 +708,8 @@ function colorFor(key, index, groupBy) {
 }
 
 /* ---------- stacked area ---------- */
-function UsageChart({ rows, metric, groupBy, smooth }) {
-  const data = useMemo(() => (rows.length ? buildUsage(rows, metric, groupBy, smooth) : null), [rows, metric, groupBy, smooth]);
+function UsageChart({ rows, metric, groupBy, smooth, hosts = {} }) {
+  const data = useMemo(() => (rows.length ? buildUsage(rows, metric, groupBy, smooth, hosts) : null), [rows, metric, groupBy, smooth, hosts]);
   const wrapRef = useRef(null);
   const [hover, setHover] = useState(null);
 
@@ -677,25 +719,45 @@ function UsageChart({ rows, metric, groupBy, smooth }) {
   const W = 940, H = 300, padL = 56, padR = 16, padT = 16, padB = 30;
   const plotW = W - padL - padR, plotH = H - padT - padB;
   const n = dates.length;
-  const xAt = (i) => (n > 1 ? padL + (i * plotW) / (n - 1) : padL + plotW / 2);
+  const isBar = !smooth;                       // daily => stacked bars; 30d avg => stacked area
+  const xAt = (i) => padL + ((i + 0.5) * plotW) / n;  // slot centres
   const yAt = (v) => padT + plotH - (v / yMax) * plotH;
   const xs = dates.map((_, i) => xAt(i));
 
-  // Build stacked band paths. Each date accumulates across series (ascending
-  // total) so the largest series sits on top; the running total resets every
-  // day, so a day's stack never carries into the next day.
+  // Build stacked geometries (ascending total so the largest sits on top).
+  // The running total resets every day, so one day never carries into the next.
   const asc = [...series].reverse();
-  const cum = new Array(n).fill(0);
-  const bands = asc.map((s) => {
-    const yBottom = [], yTop = [];
-    for (let i = 0; i < n; i++) { yBottom.push(yAt(cum[i])); cum[i] += s.values[i]; yTop.push(yAt(cum[i])); }
-    let d = `M ${xs[0]},${yTop[0]}`;
-    for (let i = 1; i < n; i++) d += ` L ${xs[i]},${yTop[i]}`;
-    for (let i = n - 1; i >= 0; i--) d += ` L ${xs[i]},${yBottom[i]}`;
-    d += " Z";
-    return { s, d };
-  });
-  bands.reverse(); // restore descending order for render (later = higher on top)
+
+  const barRects = [];
+  if (isBar) {
+    const bw = Math.max(1, Math.min(30, (plotW / n) * 0.72));
+    for (let i = 0; i < n; i++) {
+      let cum = 0;
+      for (const s of asc) {
+        const v1 = cum + s.values[i];
+        if (v1 > cum) {
+          const yTop = yAt(v1), yBot = yAt(cum);
+          barRects.push({ s, i, x: xAt(i) - bw / 2, y: yTop, h: yBot - yTop, w: bw });
+        }
+        cum = v1;
+      }
+    }
+  }
+
+  const bands = [];
+  if (!isBar) {
+    const cum = new Array(n).fill(0);
+    for (const s of asc) {
+      const yBottom = [], yTop = [];
+      for (let i = 0; i < n; i++) { yBottom.push(yAt(cum[i])); cum[i] += s.values[i]; yTop.push(yAt(cum[i])); }
+      let d = `M ${xs[0]},${yTop[0]}`;
+      for (let i = 1; i < n; i++) d += ` L ${xs[i]},${yTop[i]}`;
+      for (let i = n - 1; i >= 0; i--) d += ` L ${xs[i]},${yBottom[i]}`;
+      d += " Z";
+      bands.push({ s, d });
+    }
+    bands.reverse(); // restore descending order for render (later = higher on top)
+  }
 
   const ylabel = (v) => (metric === "cost" ? "$" + Math.round(v) : fmtTokens(v));
   const ticks = [];
@@ -711,8 +773,12 @@ function UsageChart({ rows, metric, groupBy, smooth }) {
 
   function onMove(e) {
     const rect = wrapRef.current.getBoundingClientRect();
-    const frac = (e.clientX - rect.left) / rect.width;
-    setHover({ i: Math.round(frac * (n - 1)), x: e.clientX - rect.left, y: e.clientY - rect.top });
+    const scale = rect.width / W;                       // viewBox width -> rendered px
+    const plotLeftPx = padL * scale;                    // offset of plot area incl. y-axis text
+    const slotWpx = (plotW * scale) / n;
+    const raw = ((e.clientX - rect.left) - plotLeftPx) / slotWpx;
+    const i = isBar ? clamp(Math.floor(raw), 0, n - 1) : clamp(Math.round(raw - 0.5), 0, n - 1);
+    setHover({ i, x: e.clientX - rect.left, y: e.clientY - rect.top });
   }
 
   const tooltip = active && html`<div className="tt" style=${{ left: clamp(hover.x + 16, 12, wrapRef.current.clientWidth - 230), top: clamp(hover.y + 8, 12, wrapRef.current.clientHeight - 190) }}>
@@ -736,7 +802,9 @@ function UsageChart({ rows, metric, groupBy, smooth }) {
           <text x=${padL - 8} y=${y} textAnchor="end" dominantBaseline="middle" className="ytick">${ylabel(tv)}</text>
         </g>`;
       })}
-      ${bands.map(({ s, d }) => html`<path key=${s.key} d=${d} fill=${s.color} fillOpacity="0.72" stroke=${s.color} strokeOpacity="0.5" strokeWidth="1"/>`)}
+      ${isBar
+        ? barRects.map((b) => html`<rect key=${b.s.key + "-" + b.i} x=${b.x} y=${b.y} width=${b.w} height=${Math.max(0, b.h)} fill=${b.s.color} fillOpacity="0.9"/>`)
+        : bands.map(({ s, d }) => html`<path key=${s.key} d=${d} fill=${s.color} fillOpacity="0.72" stroke=${s.color} strokeOpacity="0.5" strokeWidth="1"/>`)}
       ${activeIdx !== null ? html`<line x1=${xAt(activeIdx)} y1=${padT} x2=${xAt(activeIdx)} y2=${padT + plotH} stroke="rgba(255,255,255,.35)" strokeDasharray="3 3"/>` : null}
       ${dates.map((d, i) => (i % labelStep === 0 ? html`<text key=${d} x=${xAt(i)} y=${H - 8} textAnchor="middle" className="xtick">${monthDay(d)}</text>` : null))}
     </svg>
@@ -888,15 +956,15 @@ function Controls({ metric, setMetric, groupBy, setGroupBy, filter, setFilter, s
     <label className="ctl"><span className="ctl-label">Group by</span>
       <select value=${groupBy} onChange=${(e) => setGroupBy(e.target.value)}>
         <option value="model">Model</option>
-        <option value="device">Device</option>
+        <option value="host">Host</option>
         <option value="harness">Harness</option>
       </select>
     </label>
     <label className="ctl grow"><span className="ctl-label">Power filter</span>
-      <input className="filter" type="text" value=${filter} onChange=${(e) => setFilter(e.target.value)} placeholder="model:gpt-5 harness:codex ..." spellCheck={false} />
+      <input className="filter" type="text" value=${filter} onChange=${(e) => setFilter(e.target.value)} placeholder="host:x13 model:gpt-5 harness:codex ..." spellCheck={false} />
     </label>
-    <label className="ctl"><span className="ctl-label">Smooth</span>
-      <${Segmented} value=${smooth ? "on" : "off"} onChange=${(v) => setSmooth(v === "on")} options=${[{ value: "off", label: "Daily" }, { value: "on", label: "30d avg" }]} />
+    <label className="ctl"><span className="ctl-label">Display</span>
+      <${Segmented} value=${smooth ? "on" : "off"} onChange=${(v) => setSmooth(v === "on")} options=${[{ value: "off", label: "Daily (bars)" }, { value: "on", label: "30d avg" }]} />
     </label>
   </div>`;
 }
@@ -915,7 +983,8 @@ function App() {
   }, []);
 
   const rows = payload?.rows || [];
-  const pred = useMemo(() => parseFilter(filter), [filter]);
+  const hosts = payload?.hosts || {};
+  const pred = useMemo(() => parseFilter(filter, hosts), [filter, hosts]);
   const filtered = useMemo(() => rows.filter(pred), [rows, pred]);
 
   const stats = useMemo(() => {
@@ -926,7 +995,7 @@ function App() {
 
   return html`<div className="page">
     <header className="head">
-      <div><h1>Tokscale Aggregate</h1><p className="muted">Model usage across all devices, from the git-backed snapshot.</p></div>
+      <div><h1>Tokscale Aggregate</h1><p className="muted">Model usage across all hosts, from the git-backed snapshot.</p></div>
       <div className="stats">
         <div className="stat"><b>${fmtTokens(stats.tokens)}</b><span>total tokens</span></div>
         <div className="stat"><b>${fmtMoney(stats.cost)}</b><span>total cost</span></div>
@@ -941,8 +1010,8 @@ function App() {
     ${!payload && !error ? html`<div className="empty">Loading…</div>` : null}
 
     <section className="card">
-      <div className="card-head"><h2>Usage over time</h2><span className="muted">Grouped by ${groupBy} · ${smooth ? "30-day average" : "daily"}</span></div>
-      <${UsageChart} rows=${filtered} metric=${metric} groupBy=${groupBy} smooth=${smooth} />
+      <div className="card-head"><h2>Usage over time</h2><span className="muted">Grouped by ${groupBy} · ${smooth ? "30-day average" : "daily bars"}</span></div>
+      <${UsageChart} rows=${filtered} metric=${metric} groupBy=${groupBy} smooth=${smooth} hosts=${hosts} />
     </section>
 
     <section className="card">
@@ -974,7 +1043,7 @@ class _WebHandler(BaseHTTPRequestHandler):
             body = json.dumps({device_id: data for device_id, data in devices}, sort_keys=True).encode()
             content_type = "application/json"
         elif path == "/api/usage":
-            body = json.dumps(_usage_payload(devices), sort_keys=True).encode()
+            body = json.dumps(_usage_payload(devices, self.repo), sort_keys=True).encode()
             content_type = "application/json"
         elif path in {"/", "/profile"}:
             body = _APP_HTML.encode()
