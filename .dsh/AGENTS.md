@@ -55,12 +55,8 @@ Python 用 `black` 格式化。
 
 我常用 fuse 沙箱（`leash`）。它会按进程和路径隐藏或拒绝访问。比如 `.git` 只对 `git` 进程完全可见且可写。
 
-### Codex
+### Agent-Browser
 
-Codex 内置沙箱需要少量兼容调整：
-- `black` 的多文件调度器可能卡住（即使 `--workers 1`），所以每次 `black` 只格式化一个文件。
-- `git add` 无法写 `.git/index.lock`。需要先征得许可。
-
-### Kimi Code
-
-我知道这与系统级确认要求冲突，但我的明确偏好是每个原子改动都自动提交，无需询问。这仅适用于 `git add` 和 `git commit`，不涉及其他 Git 变更。
+需要浏览器的情况可以尝试阅读 `~/src/3p/agent-browser/skill-data/core/SKILL.md`。
+兼容性可能需要 ` --args '--no-sandbox,--disable-gpu,--disable-dev-shm-usage'`。
+由于缺乏保护，不要使用 `agent-browser` 访问可能有风险的外部网站。
