@@ -12,7 +12,7 @@
       "disable": true
     },
     "general": {
-      "model": "deepseek/deepseek-v4-flash",
+      "model": "deepseek/deepseek-v4-flash"
     },
     "scout": {
       "model": "deepseek/deepseek-v4-flash"
