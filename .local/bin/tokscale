@@ -57,7 +57,20 @@ def remote_branch(repo: Path) -> str | None:
     for line in result.stdout.splitlines():
         if line.startswith("ref: refs/heads/") and line.endswith(" HEAD"):
             return line[len("ref: refs/heads/") : -len(" HEAD")]
+    # Some valid remotes do not advertise a symbolic HEAD.  Use their first
+    # branch in that case; an actually empty remote still returns None.
+    heads = git("ls-remote", "--heads", "origin", cwd=repo, check=False)
+    if heads.returncode == 0:
+        for line in heads.stdout.splitlines():
+            fields = line.split()
+            if len(fields) == 2 and fields[1].startswith("refs/heads/"):
+                return fields[1][len("refs/heads/") :]
     return None
+
+
+def local_branch(repo: Path) -> str | None:
+    result = git("symbolic-ref", "--quiet", "--short", "HEAD", cwd=repo, check=False)
+    return result.stdout.strip() if result.returncode == 0 else None
 
 
 def prepare_repo(remote: str) -> Path | None:
@@ -87,26 +100,33 @@ def prepare_repo(remote: str) -> Path | None:
         warn(f"cannot configure origin: {exc}")
         return None
 
-    branch = remote_branch(STATE_DIR)
-    if not branch:
-        warn("remote has no discoverable default branch or is unavailable")
-        return None
-
     fetched = git("fetch", "origin", cwd=STATE_DIR, check=False)
     if fetched.returncode != 0:
         fail_git("fetch", fetched)
         return None
 
-    # The remote HEAD is the source of truth.  Remove ordinary untracked
-    # files, but preserve ignored machine-local caches and lock files.
-    reset = git("reset", "--hard", f"origin/{branch}", cwd=STATE_DIR, check=False)
-    if reset.returncode != 0:
-        fail_git("reset to remote HEAD", reset)
-        return None
-    cleaned = git("clean", "-fd", cwd=STATE_DIR, check=False)
-    if cleaned.returncode != 0:
-        fail_git("clean local changes", cleaned)
-        return None
+    branch = remote_branch(STATE_DIR)
+    if branch:
+        # The remote HEAD is the source of truth.  Remove ordinary untracked
+        # files, but preserve ignored machine-local caches and lock files.
+        reset = git("reset", "--hard", f"origin/{branch}", cwd=STATE_DIR, check=False)
+        if reset.returncode != 0:
+            fail_git("reset to remote HEAD", reset)
+            return None
+        cleaned = git("clean", "-fd", cwd=STATE_DIR, check=False)
+        if cleaned.returncode != 0:
+            fail_git("clean local changes", cleaned)
+            return None
+    else:
+        # A reachable but empty bare repo has no HEAD/branch to reset to.
+        # Bootstrap a conventional main branch locally; the post-run commit
+        # will become the remote's first commit.
+        branch = local_branch(STATE_DIR)
+        if not branch:
+            created = git("symbolic-ref", "HEAD", "refs/heads/main", cwd=STATE_DIR, check=False)
+            if created.returncode != 0:
+                fail_git("initialize main branch for empty remote", created)
+                return None
 
     ignore = STATE_DIR / ".gitignore"
     if not ignore.exists():
@@ -157,7 +177,7 @@ def main() -> int:
             result = subprocess.run(["bunx", "tokscale", *sys.argv[1:]], env=child_env)
         finally:
             # A failed command still gets its local config committed/pushed.
-            commit_and_push(repo, remote_branch(repo))
+            commit_and_push(repo, remote_branch(repo) or local_branch(repo))
         return result.returncode
 
     return subprocess.run(["bunx", "tokscale", *sys.argv[1:]], env=child_env).returncode
