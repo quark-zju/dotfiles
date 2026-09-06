@@ -21,6 +21,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 REPO_DIR = Path.home() / ".cache" / "tokscale-config-repo"
+TOKSCALE_COMMAND = ["bunx", "tokscale@latest"]
 
 
 def _day_totals(clients: list[dict[str, object]]) -> tuple[dict[str, object], dict[str, int]]:
@@ -356,7 +357,7 @@ def run_dummy_submit(repo: Path) -> None:
     # requires some token-shaped value before it will construct the request.
     env.setdefault("TOKSCALE_API_TOKEN", "tt_local_dummy")
     try:
-        result = subprocess.run(["bunx", "tokscale", "submit"], env=env)
+        result = subprocess.run([*TOKSCALE_COMMAND, "submit"], env=env)
         if result.returncode != 0:
             warn(f"dummy submit exited with status {result.returncode}")
     finally:
@@ -372,14 +373,14 @@ def main() -> int:
     # `submit` or `autosubmit`).  Those commands must remain untouched and
     # must not trigger this wrapper's aggregate synchronization flow.
     if sys.argv[1:]:
-        return subprocess.run(["bunx", "tokscale", *sys.argv[1:]], env=child_env).returncode
+        return subprocess.run([*TOKSCALE_COMMAND, *sys.argv[1:]], env=child_env).returncode
 
     if remote:
         repo = prepare_repo(remote)
         if repo is None:
             return 1
         try:
-            result = subprocess.run(["bunx", "tokscale", *sys.argv[1:]], env=child_env)
+            result = subprocess.run([*TOKSCALE_COMMAND], env=child_env)
         finally:
             # Submit the host's current data to the local aggregator after the
             # requested command exits, even when that command failed.
@@ -388,7 +389,7 @@ def main() -> int:
             commit_and_push(repo, remote_branch(repo) or local_branch(repo))
         return result.returncode
 
-    return subprocess.run(["bunx", "tokscale"], env=child_env).returncode
+    return subprocess.run([*TOKSCALE_COMMAND], env=child_env).returncode
 
 
 if __name__ == "__main__":
