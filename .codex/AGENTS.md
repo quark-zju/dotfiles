@@ -11,9 +11,15 @@ Note: under the codex sandbox `git add` can't write `.git/index.lock` - ask for 
 Don't search broad dirs like `~` or `/` for tools not on `PATH`; ask the user to install missing tools.
 
 ## Use sub-agents
-GPT-6 family: Offload round-trips and broad reads to `gpt-5.6-luna`. Keep the difficult reasoning to yourself. Use `wait_agent`. Do not invent work while waiting. Rational: Luna consumes 50x less usage. Context resend ≈ 85% of usage. Optimize usage.
+GPT-6 family:
+- Prefer `gpt-5.6-luna` for bounded exploration and execution; keep difficult reasoning and consequential review with the main agent.
+- Delegate when it saves overall usage or time. GPT-5.6 Luna uses roughly 1/50 as much quota as GPT-6 Astra.
+- Define scope, file ownership, and expected results. Return concise evidence; distinguish findings from hypotheses.
+- Give one agent ownership of testing and commits; avoid concurrent edits during finalization. Batch routine steps and stop on failure.
+- Continue independent necessary work while agents run; otherwise use `wait_agent`. Avoid short polling and invented busywork.
 
-GPT-5 family: Do not start sub-agents.
+GPT-5 family:
+- Do not start sub-agents.
 
 ## Format code
 Rust: `cargo fmt`. Python: `black` - one file per run (multi-file can stall under the sandbox).
