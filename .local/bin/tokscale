@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import socket
 import subprocess
 import sys
 from pathlib import Path
@@ -31,6 +32,11 @@ credentials.json
 
 def warn(message: str) -> None:
     print(f"tokscale wrapper: warning: {message}", file=sys.stderr)
+
+
+def machine_hostname() -> str:
+    hostname = socket.gethostname().strip()
+    return " ".join(hostname.split()) or "unknown-host"
 
 
 def git(*args: str, cwd: Path | None = None, check: bool = True) -> subprocess.CompletedProcess[str]:
@@ -148,7 +154,11 @@ def commit_and_push(repo: Path, branch: str | None) -> None:
     status = git("diff", "--cached", "--quiet", cwd=repo, check=False)
     if status.returncode == 1:
         committed = git(
-            "commit", "-m", "chore: sync tokscale local state", cwd=repo, check=False
+            "commit",
+            "-m",
+            f"chore: sync tokscale local state ({machine_hostname()})",
+            cwd=repo,
+            check=False,
         )
         if committed.returncode != 0:
             fail_git("commit", committed)
