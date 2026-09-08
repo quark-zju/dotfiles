@@ -8,15 +8,17 @@ Add `-m 'Result: ...'` for meaningful data not tracked in the repo (e.g. benchma
 Note: under the codex sandbox `git add` can't write `.git/index.lock` - ask for permission.
 
 ## Using sub-agents
-GPT-6:
+GPT-6 family ONLY:
 - Prefer `gpt-5.6-luna` for bounded exploration and execution; keep difficult reasoning and consequential review with the main agent.
 - Delegate when it saves overall usage or time. GPT-5.6 Luna uses roughly 1/50 as much quota.
 - Define scope, file ownership, and expected results. Return concise evidence; distinguish findings from hypotheses.
 - Give one agent ownership of testing and commits; avoid concurrent edits during finalization. Batch routine steps and stop on failure.
 - Continue independent necessary work while agents run; otherwise use `wait_agent`. Avoid short polling and invented busywork.
 
-GPT-5:
+GPT-5 family:
 - Do not start usb-agents.
+
+SessionStart hook should confirm the session model.
 
 ## Missing tools
 Don't search broad dirs like `~` or `/` for tools not on `PATH`; ask the user to install missing tools.
