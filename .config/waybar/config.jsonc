@@ -1,5 +1,6 @@
 {
     "position": "bottom",
+    "reload_style_on_change": true,
     "modules-left": ["sway/workspaces", "sway/mode"],
     "modules-right": [
         "clock",
