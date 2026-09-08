@@ -164,6 +164,7 @@ mode "resize" {
 bindsym $mod+r mode "resize"
 
 # Waybar implements D-Bus menus exported by StatusNotifierItem tray icons.
+exec touch /tmp/workspace-highlight.css
 bar {
     swaybar_command waybar
     position bottom
