@@ -13,6 +13,8 @@ from typing import Any
 TITLE_PROMPT_PREFIX = "Generate a concise, single-line task title "
 RECAP_PROMPT_PREFIX = "Write a brief catch-up for a user returning to this Codex task. "
 NOTIFICATION_EXPIRE_MS = 30_000
+WORKSPACE_HIGHLIGHT_PATH = "/tmp/workspace-highlight.css"
+WORKSPACE_HIGHLIGHT_STATE_PATH = "/tmp/workspace-highlight.json"
 
 
 def log_event(event: str, **fields: object) -> None:
@@ -104,7 +106,7 @@ def state_path(session_id: str) -> Path | None:
     return directory / name
 
 
-def save_prompt(payload: dict[str, Any]) -> None:
+def save_prompt(payload: dict[str, Any]) -> dict[str, object] | None:
     session_id = payload.get("session_id")
     prompt = payload.get("prompt")
     if not isinstance(session_id, str):
@@ -136,17 +138,13 @@ def save_prompt(payload: dict[str, Any]) -> None:
         return
     agent_name, pid, start_time = process
     try:
-        path.write_text(
-            json.dumps(
-                {
-                    "agent_name": agent_name,
-                    "prompt": prompt,
-                    "pid": pid,
-                    "process_start_time": start_time,
-                },
-                ensure_ascii=False,
-            )
-        )
+        state = {
+            "agent_name": agent_name,
+            "prompt": prompt,
+            "pid": pid,
+            "process_start_time": start_time,
+        }
+        path.write_text(json.dumps(state, ensure_ascii=False))
     except OSError as error:
         log_event(
             "prompt_save_failed",
@@ -162,6 +160,7 @@ def save_prompt(payload: dict[str, Any]) -> None:
         pid=pid,
         path=str(path),
     )
+    return state
 
 
 def load_prompt(session_id: str) -> dict[str, Any] | None:
@@ -222,12 +221,15 @@ def load_thread_title(session_id: str) -> str | None:
 
 def sway_state(
     node: dict[str, object],
-    terminals: dict[int, tuple[int, int | None]],
+    terminals: dict[int, tuple[int, int | None, str | None]],
     focused: dict[str, int],
     workspace_id: int | None = None,
+    workspace_name: str | None = None,
 ) -> None:
     if node.get("type") == "workspace" and isinstance(node.get("id"), int):
         workspace_id = node["id"]
+        if isinstance(node.get("name"), str):
+            workspace_name = node["name"]
     pid = node.get("pid")
     container_id = node.get("id")
     if (
@@ -235,13 +237,13 @@ def sway_state(
         and isinstance(pid, int)
         and isinstance(container_id, int)
     ):
-        terminals[pid] = (container_id, workspace_id)
+        terminals[pid] = (container_id, workspace_id, workspace_name)
     if node.get("focused") is True and isinstance(container_id, int):
         focused["container"] = container_id
         if workspace_id is not None:
             focused["workspace"] = workspace_id
     for child in node.get("nodes", []) + node.get("floating_nodes", []):
-        sway_state(child, terminals, focused, workspace_id)
+        sway_state(child, terminals, focused, workspace_id, workspace_name)
 
 
 def run_swaymsg(*args: str, **kwargs: object):
@@ -271,7 +273,7 @@ def run_swaymsg(*args: str, **kwargs: object):
 
 def process_sway_state(
     pid: object, expected_start_time: object
-) -> tuple[int, bool, bool] | None:
+) -> tuple[int, str | None, bool, bool] | None:
     import json
     import subprocess
 
@@ -299,7 +301,7 @@ def process_sway_state(
     except (OSError, subprocess.CalledProcessError, json.JSONDecodeError) as error:
         log_event("sway_query_failed", pid=pid, error=repr(error))
         return None
-    terminals: dict[int, tuple[int, int | None]] = {}
+    terminals: dict[int, tuple[int, int | None, str | None]] = {}
     focused: dict[str, int] = {}
     sway_state(tree, terminals, focused)
     process_ancestors = []
@@ -308,7 +310,7 @@ def process_sway_state(
         location = terminals.get(ancestor)
         if location is None:
             continue
-        container_id, workspace_id = location
+        container_id, workspace_id, workspace_name = location
         is_focused = container_id == focused.get("container")
         workspace_is_focused = workspace_id == focused.get("workspace")
         log_event(
@@ -322,7 +324,7 @@ def process_sway_state(
             is_focused=is_focused,
             workspace_is_focused=workspace_is_focused,
         )
-        return container_id, is_focused, workspace_is_focused
+        return container_id, workspace_name, is_focused, workspace_is_focused
     log_event(
         "window_not_found",
         pid=pid,
@@ -330,6 +332,125 @@ def process_sway_state(
         terminal_pids=sorted(terminals),
     )
     return None
+
+
+def css_identifier_escape(value: str) -> str:
+    """Escape a workspace name for use in a GTK CSS ID selector."""
+    return "".join(
+        char
+        if char.isalnum() or char in "-_" or ord(char) >= 0x80
+        else f"\\{ord(char):x} "
+        for char in value
+    )
+
+
+def write_workspace_highlights(
+    run_id: str,
+    workspace_name: str | None,
+    pid: int | None = None,
+    process_start_time: int | None = None,
+) -> None:
+    """Add or remove one session's running workspace and regenerate its CSS."""
+    import fcntl
+    import json
+    from pathlib import Path
+
+    try:
+        with Path(WORKSPACE_HIGHLIGHT_PATH).open("r+") as style:
+            fcntl.flock(style, fcntl.LOCK_EX)
+            try:
+                state_path = Path(WORKSPACE_HIGHLIGHT_STATE_PATH)
+                value = json.loads(state_path.read_text())
+                sessions = value if isinstance(value, dict) else {}
+            except (OSError, json.JSONDecodeError):
+                sessions = {}
+
+            for key, entry in list(sessions.items()):
+                if not isinstance(entry, dict):
+                    del sessions[key]
+                    continue
+                entry_pid = entry.get("pid")
+                entry_start_time = entry.get("process_start_time")
+                stat = process_stat(entry_pid) if isinstance(entry_pid, int) else None
+                if (
+                    stat is None
+                    or not isinstance(entry_start_time, int)
+                    or stat[1] != entry_start_time
+                ):
+                    del sessions[key]
+
+            if workspace_name is None:
+                sessions.pop(run_id, None)
+            elif isinstance(pid, int) and isinstance(process_start_time, int):
+                sessions[run_id] = {
+                    "workspace": workspace_name,
+                    "pid": pid,
+                    "process_start_time": process_start_time,
+                }
+
+            state_path.write_text(
+                json.dumps(sessions, ensure_ascii=False, sort_keys=True)
+            )
+            workspaces = sorted(
+                {
+                    entry["workspace"]
+                    for entry in sessions.values()
+                    if isinstance(entry, dict)
+                    and isinstance(entry.get("workspace"), str)
+                }
+            )
+            if workspaces:
+                selectors = ",\n".join(
+                    "#workspaces button#sway-workspace-"
+                    f"{css_identifier_escape(name)}:not(.urgent)"
+                    for name in workspaces
+                )
+                css = (
+                    "/* Generated by codex-notify.py: running Codex workspaces. */\n"
+                    f"{selectors} {{\n"
+                    "    background: #2e7d32;\n"
+                    "    color: #ffffff;\n"
+                    "}\n"
+                )
+            else:
+                css = ""
+            style.seek(0)
+            style.write(css)
+            style.truncate()
+    except OSError as error:
+        log_event(
+            "workspace_highlight_failed",
+            run_id=run_id,
+            workspace=workspace_name,
+            error=repr(error),
+        )
+        return
+    log_event(
+        "workspace_highlight_updated",
+        run_id=run_id,
+        workspace=workspace_name,
+        running_workspaces=workspaces,
+    )
+
+
+def mark_process_workspace_running(
+    run_id: str,
+    pid: object,
+    expected_start_time: object | None = None,
+) -> None:
+    if expected_start_time is None:
+        stat = process_stat(pid) if isinstance(pid, int) else None
+        if stat is None:
+            return
+        expected_start_time = stat[1]
+    state = process_sway_state(pid, expected_start_time)
+    if state is None:
+        return
+    workspace_name = state[1]
+    if workspace_name is not None and isinstance(pid, int):
+        write_workspace_highlights(
+            run_id, workspace_name, pid, expected_start_time
+        )
 
 
 def focus_process(pid: object, expected_start_time: object) -> None:
@@ -348,6 +469,64 @@ def focus_process(pid: object, expected_start_time: object) -> None:
             "focus_requested",
             container=container_id,
             returncode=completed.returncode,
+        )
+
+
+def update_running_workspace(
+    payload: dict[str, Any], saved: dict[str, object] | None
+) -> None:
+    session_id = payload.get("session_id")
+    if not isinstance(session_id, str):
+        return
+    turn_id = payload.get("turn_id")
+    run_id = (
+        f"{session_id}:{turn_id}" if isinstance(turn_id, str) else session_id
+    )
+    ssh_client_pid = os.environ.get("SSH_CLIENT_PID")
+    if ssh_client_pid is not None:
+        try:
+            pid = int(ssh_client_pid)
+            if pid <= 0:
+                raise ValueError("non-positive SSH_CLIENT_PID")
+            import ssh_sync
+
+            hosts = ssh_sync.list_hosts()
+            if not hosts:
+                log_event(
+                    "workspace_highlight_failed",
+                    session_id=session_id,
+                    reason="remote_no_hosts",
+                )
+                return
+            if saved is None:
+                ssh_sync.call_remote(
+                    hosts[0],
+                    write_workspace_highlights,
+                    run_id,
+                    None,
+                    call_timeout=20,
+                )
+            else:
+                ssh_sync.call_remote(
+                    hosts[0],
+                    mark_process_workspace_running,
+                    run_id,
+                    pid,
+                    call_timeout=20,
+                )
+        except Exception as error:
+            log_event(
+                "workspace_highlight_failed",
+                session_id=session_id,
+                reason="remote_dispatch_failed",
+                error=repr(error),
+            )
+        return
+    if saved is None:
+        write_workspace_highlights(run_id, None)
+    else:
+        mark_process_workspace_running(
+            run_id, saved.get("pid"), saved.get("process_start_time")
         )
 
 
@@ -370,7 +549,7 @@ def show_notify(
     state = process_sway_state(pid, expected_start_time)
     if state is None:
         return
-    container_id, is_focused, workspace_is_focused = state
+    container_id, _, is_focused, workspace_is_focused = state
     if is_focused:
         log_event("notification_skipped", container=container_id, reason="focused")
         return
@@ -530,8 +709,11 @@ def main() -> None:
             )
             return
         if event == "UserPromptSubmit":
-            save_prompt(payload)
+            saved = save_prompt(payload)
+            if saved is not None:
+                update_running_workspace(payload, saved)
         elif event == "Stop":
+            update_running_workspace(payload, None)
             notify(payload)
         else:
             log_event(
