@@ -4,6 +4,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -331,14 +332,22 @@ class ServerConcurrencyTest(unittest.TestCase):
     class Multiplexer:
         def __init__(self):
             self.closed = threading.Event()
+            self.call_started = threading.Event()
+            self.release_call = threading.Event()
             self.opened = threading.Event()
             self.stream = ServerConcurrencyTest.Stream()
+
+        def request(self, _request, _deadline):
+            self.call_started.set()
+            if not self.release_call.wait(2):
+                raise TimeoutError("test call was not released")
+            return {"ok": True}
 
         def open_stream(self, _request):
             self.opened.set()
             return self.stream
 
-    def test_peer_accepts_another_client_while_stream_is_open(self):
+    def test_peer_answers_control_request_while_call_is_blocked(self):
         with tempfile.TemporaryDirectory() as runtime_dir:
             with mock.patch.object(ssh_sync, "_runtime_dir", return_value=runtime_dir):
                 peer_name = "test-peer"
@@ -352,6 +361,34 @@ class ServerConcurrencyTest(unittest.TestCase):
                     daemon=True,
                 )
                 server_thread.start()
+
+                call = ssh_sync.Client(
+                    ssh_sync._socket_path(peer_name), family="AF_UNIX"
+                )
+                call.send(
+                    {
+                        "operation": "call",
+                        "host": peer_name,
+                        "request_id": "call",
+                        "function": {},
+                        "args": (),
+                        "kwargs": {},
+                        "timeout": None,
+                    }
+                )
+                self.assertTrue(multiplexer.call_started.wait(1))
+
+                control = ssh_sync.Client(
+                    ssh_sync._socket_path(peer_name), family="AF_UNIX"
+                )
+                control.send({"operation": "info"})
+                self.assertTrue(control.poll(1))
+                self.assertTrue(control.recv()["ok"])
+                control.close()
+
+                multiplexer.release_call.set()
+                self.assertTrue(call.recv()["ok"])
+                call.close()
 
                 stream = ssh_sync.Client(
                     ssh_sync._socket_path(peer_name), family="AF_UNIX"
@@ -387,8 +424,107 @@ class ServerConcurrencyTest(unittest.TestCase):
                 control.send({"operation": "stop"})
                 self.assertTrue(control.recv()["ok"])
                 control.close()
-                server_thread.join(1)
+                server_thread.join(2)
                 self.assertFalse(server_thread.is_alive())
+
+    def test_daemon_answers_info_while_session_startup_is_blocked(self):
+        session_started = threading.Event()
+        release_session = threading.Event()
+        errors = []
+
+        class Session:
+            def __init__(
+                self,
+                _host,
+                _agent_source,
+                digest,
+                transport_command,
+                remote_python,
+                max_frame,
+                _deadline,
+            ):
+                self.digest = digest
+                self.transport_command = transport_command
+                self.remote_python = remote_python
+                self.max_frame = max_frame
+                session_started.set()
+                release_session.wait()
+
+            def call(self, _request, _worker_timeout, _response_deadline):
+                return {"ok": True}
+
+            def close(self):
+                pass
+
+        with tempfile.TemporaryDirectory() as runtime_dir:
+            host = "test-host"
+            address = os.path.join(
+                runtime_dir, "control", ssh_sync._host_key(host) + ".sock"
+            )
+
+            def drive_clients():
+                try:
+                    deadline = time.monotonic() + 2
+                    while not os.path.exists(address):
+                        if time.monotonic() >= deadline:
+                            raise TimeoutError("daemon socket was not created")
+                        time.sleep(0.01)
+                    call = ssh_sync.Client(address, family="AF_UNIX")
+                    call.send(
+                        {
+                            "operation": "call",
+                            "host": host,
+                            "request_id": "call",
+                            "function": {},
+                            "args": (),
+                            "kwargs": {},
+                            "agent_source": b"source",
+                            "agent_digest": "digest",
+                            "transport_command": "transport",
+                            "remote_python": "python",
+                            "max_frame": 65536,
+                            "timeout": None,
+                        }
+                    )
+                    if not session_started.wait(1):
+                        raise TimeoutError("session startup did not begin")
+
+                    info = ssh_sync.Client(address, family="AF_UNIX")
+                    info.send({"operation": "info"})
+                    if not info.poll(1):
+                        raise TimeoutError("daemon did not answer info")
+                    if not info.recv()["ok"]:
+                        raise AssertionError("daemon info failed")
+                    info.close()
+
+                    release_session.set()
+                    if not call.recv()["ok"]:
+                        raise AssertionError("daemon call failed")
+                    call.close()
+
+                    stop = ssh_sync.Client(address, family="AF_UNIX")
+                    stop.send({"operation": "stop"})
+                    if not stop.recv()["ok"]:
+                        raise AssertionError("daemon stop failed")
+                    stop.close()
+                except BaseException as error:
+                    errors.append(error)
+                    release_session.set()
+
+            client_thread = threading.Thread(target=drive_clients, daemon=True)
+            client_thread.start()
+            with mock.patch.object(
+                ssh_sync, "_runtime_dir", return_value=runtime_dir
+            ), mock.patch.object(ssh_sync, "_Session", Session), mock.patch(
+                "signal.signal"
+            ), mock.patch(
+                "signal.setitimer"
+            ):
+                ssh_sync._run_daemon(host, "test-hash")
+            client_thread.join(2)
+
+        self.assertFalse(client_thread.is_alive())
+        self.assertEqual(errors, [])
 
 
 class RemoteProcessTest(unittest.TestCase):

@@ -1921,46 +1921,40 @@ def _serve_peer(server, socket_identity, peer_name, code_hash, multiplexer):
     with open(hash_path, "w", encoding="ascii") as hash_file:
         hash_file.write(code_hash + "\n")
     server.settimeout(1)
-    running = True
-    try:
-        while running and not multiplexer.closed.is_set():
+    running = threading.Event()
+    running.set()
+    # Control requests must remain responsive while a data request is blocked.
+    data_lock = threading.Lock()
+
+    def handle_connection(connection):
+        try:
             try:
-                current = os.stat(address)
-            except FileNotFoundError:
+                request = connection.recv()
+            except EOFError:
                 return
-            if (current.st_dev, current.st_ino) != socket_identity:
+            operation = request.get("operation")
+            if operation in ("info", "stop"):
+                if operation == "stop":
+                    running.clear()
+                connection.send(
+                    {
+                        "ok": True,
+                        "host": peer_name,
+                        "pid": os.getpid(),
+                        "kind": "peer",
+                        "code_hash": code_hash,
+                        "protocol_version": _PROTOCOL_VERSION,
+                    }
+                )
                 return
-            try:
-                client, _ = server.accept()
-            except socket.timeout:
-                continue
-            connection = Connection(client.detach())
-            try:
-                try:
-                    request = connection.recv()
-                except EOFError:
-                    continue
-                operation = request.get("operation")
-                if operation in ("info", "stop"):
-                    running = operation != "stop"
-                    connection.send(
-                        {
-                            "ok": True,
-                            "host": peer_name,
-                            "pid": os.getpid(),
-                            "kind": "peer",
-                            "code_hash": code_hash,
-                            "protocol_version": _PROTOCOL_VERSION,
-                        }
-                    )
-                    continue
-                if (
-                    operation not in ("call", "iterate", "process")
-                    or request.get("host") != peer_name
-                ):
-                    raise ValueError("invalid peer request")
-                timeout = request.get("timeout")
-                deadline = None if timeout is None else time.monotonic() + timeout
+            if (
+                operation not in ("call", "iterate", "process")
+                or request.get("host") != peer_name
+            ):
+                raise ValueError("invalid peer request")
+            timeout = request.get("timeout")
+            deadline = None if timeout is None else time.monotonic() + timeout
+            with data_lock:
                 if deadline is None:
                     worker_timeout = None
                     response_deadline = None
@@ -1992,19 +1986,36 @@ def _serve_peer(server, socket_identity, peer_name, code_hash, multiplexer):
                     }
                     response = multiplexer.request(wire_request, response_deadline)
                     connection.send(response)
-            except TimeoutError as exc:
-                try:
-                    connection.send({"timeout_error": str(exc)})
-                except OSError:
-                    pass
-            except Exception:
-                try:
-                    connection.send({"daemon_error": traceback.format_exc()})
-                except OSError:
-                    pass
-            finally:
-                if connection is not None:
-                    connection.close()
+        except TimeoutError as exc:
+            try:
+                connection.send({"timeout_error": str(exc)})
+            except OSError:
+                pass
+        except Exception:
+            try:
+                connection.send({"daemon_error": traceback.format_exc()})
+            except OSError:
+                pass
+        finally:
+            if connection is not None:
+                connection.close()
+
+    try:
+        while running.is_set() and not multiplexer.closed.is_set():
+            try:
+                current = os.stat(address)
+            except FileNotFoundError:
+                return
+            if (current.st_dev, current.st_ino) != socket_identity:
+                return
+            try:
+                client, _ = server.accept()
+            except socket.timeout:
+                continue
+            connection = Connection(client.detach())
+            threading.Thread(
+                target=handle_connection, args=(connection,), daemon=True
+            ).start()
     finally:
         server.close()
         try:
@@ -2128,39 +2139,44 @@ def _run_daemon(host, code_hash):
     signal.setitimer(signal.ITIMER_REAL, 1, 1)
 
     session = None
-    running = True
-    try:
-        while running:
-            client, _ = server.accept()
-            connection = Connection(client.detach())
+    running = threading.Event()
+    running.set()
+    # Data requests share mutable session state and retain their original order.
+    # Control requests bypass this lock so a stuck session remains manageable.
+    data_lock = threading.Lock()
+
+    def handle_connection(connection):
+        nonlocal session
+        try:
             try:
-                try:
-                    request = connection.recv()
-                except EOFError:
-                    # The client hung up before asking for anything. Anything
-                    # further below is a real failure and must be reported.
-                    continue
-                operation = request.get("operation")
-                if operation in ("info", "stop"):
-                    running = operation != "stop"
-                    connection.send(
-                        {
-                            "ok": True,
-                            "host": host,
-                            "pid": os.getpid(),
-                            "kind": "outbound",
-                            "code_hash": code_hash,
-                            "protocol_version": _PROTOCOL_VERSION,
-                        }
-                    )
-                    continue
-                if (
-                    operation not in ("call", "iterate", "process")
-                    or request.get("host") != host
-                ):
-                    raise ValueError("invalid daemon request")
-                timeout = request.get("timeout")
-                deadline = None if timeout is None else time.monotonic() + timeout
+                request = connection.recv()
+            except EOFError:
+                # The client hung up before asking for anything. Anything
+                # further below is a real failure and must be reported.
+                return
+            operation = request.get("operation")
+            if operation in ("info", "stop"):
+                if operation == "stop":
+                    running.clear()
+                connection.send(
+                    {
+                        "ok": True,
+                        "host": host,
+                        "pid": os.getpid(),
+                        "kind": "outbound",
+                        "code_hash": code_hash,
+                        "protocol_version": _PROTOCOL_VERSION,
+                    }
+                )
+                return
+            if (
+                operation not in ("call", "iterate", "process")
+                or request.get("host") != host
+            ):
+                raise ValueError("invalid daemon request")
+            timeout = request.get("timeout")
+            deadline = None if timeout is None else time.monotonic() + timeout
+            with data_lock:
                 max_frame = request.get("max_frame", _DEFAULT_MAX_FRAME)
                 if (
                     session is None
@@ -2212,19 +2228,31 @@ def _run_daemon(host, code_hash):
                     raise
                 if response is not None:
                     connection.send(response)
-            except TimeoutError as exc:
-                try:
-                    connection.send({"timeout_error": str(exc)})
-                except OSError:
-                    pass
-            except Exception:
-                try:
-                    connection.send({"daemon_error": traceback.format_exc()})
-                except OSError:
-                    pass
-            finally:
-                if connection is not None:
-                    connection.close()
+        except TimeoutError as exc:
+            try:
+                connection.send({"timeout_error": str(exc)})
+            except OSError:
+                pass
+        except Exception:
+            try:
+                connection.send({"daemon_error": traceback.format_exc()})
+            except OSError:
+                pass
+        finally:
+            if connection is not None:
+                connection.close()
+
+    server.settimeout(1)
+    try:
+        while running.is_set():
+            try:
+                client, _ = server.accept()
+            except socket.timeout:
+                continue
+            connection = Connection(client.detach())
+            threading.Thread(
+                target=handle_connection, args=(connection,), daemon=True
+            ).start()
     finally:
         signal.setitimer(signal.ITIMER_REAL, 0)
         if session is not None:
