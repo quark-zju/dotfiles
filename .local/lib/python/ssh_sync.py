@@ -63,6 +63,7 @@ from multiprocessing.connection import Client, Connection
 _FRAME_PREFIX = b"SS1:"
 _BOOTSTRAP_READY = b"\nSSH_SYNC_BOOTSTRAP_READY_V1\n"
 _AGENT_READY = b"\nSSH_SYNC_AGENT_READY_V1\n"
+_CONTROL_TIMEOUT = 1.0
 _DEFAULT_MAX_FRAME = 16 * 1024 * 1024
 _DEFAULT_TIMEOUT = 300.0
 _MAX_AGENT = 4 * 1024 * 1024
@@ -796,23 +797,24 @@ def _connect_daemon(host, code_hash, transport_factory):
 
     deadline = time.monotonic() + 5
     while True:
-        try:
-            connection = Client(address, family="AF_UNIX")
-            return (
-                connection,
-                {
-                    "kind": "outbound",
-                    "code_hash": code_hash,
-                    "protocol_version": _PROTOCOL_VERSION,
-                },
-                transport,
+        info = _daemon_command(address, "info")
+        endpoint_hash = None
+        if info is not None:
+            endpoint_hash = info.get("code_hash") or _read_daemon_hash(host)
+        if endpoint_hash == code_hash:
+            transport_for_request = (
+                transport if info.get("kind", "outbound") == "outbound" else None
             )
-        except OSError:
-            if time.monotonic() >= deadline:
-                raise RuntimeError(
-                    "ssh-sync daemon did not start; see %s" % _log_path(host)
-                )
-            time.sleep(0.05)
+            return (
+                Client(address, family="AF_UNIX"),
+                info,
+                transport_for_request,
+            )
+        if time.monotonic() >= deadline:
+            raise RuntimeError(
+                "ssh-sync daemon did not start; see %s" % _log_path(host)
+            )
+        time.sleep(0.05)
 
 
 def _write_captured(stream, data):
@@ -1876,22 +1878,27 @@ def _install_uploaded_source(source):
 
 
 def _bind_server(address):
-    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    try:
-        server.bind(address)
-    except OSError as exc:
-        if exc.errno != errno.EADDRINUSE:
-            server.close()
-            raise
-        server.close()
+    while True:
+        server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         try:
-            existing = Client(address, family="AF_UNIX")
-            existing.close()
-            return None
-        except OSError:
-            os.unlink(address)
-            server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
             server.bind(address)
+            break
+        except OSError as exc:
+            server.close()
+            if exc.errno != errno.EADDRINUSE:
+                raise
+        try:
+            stale = os.stat(address)
+        except FileNotFoundError:
+            continue
+        if _daemon_command(address, "info") is not None:
+            return None
+        try:
+            current = os.stat(address)
+        except FileNotFoundError:
+            continue
+        if (current.st_dev, current.st_ino) == (stale.st_dev, stale.st_ino):
+            os.unlink(address)
     server.listen(8)
     stat = os.stat(address)
     return server, (stat.st_dev, stat.st_ino)
@@ -2271,15 +2278,21 @@ def _run_daemon(host, code_hash):
                     pass
 
 
-def _daemon_command(address, operation):
-    """Send a control request to one daemon socket, or None if it is stale."""
+def _daemon_command(address, operation, timeout=None):
+    """Send a bounded control request, or return None if it is unresponsive."""
+    if timeout is None:
+        timeout = _CONTROL_TIMEOUT
     try:
         connection = Client(address, family="AF_UNIX")
     except OSError:
         return None
     try:
         connection.send({"operation": operation})
+        if not connection.poll(timeout):
+            return None
         return connection.recv()
+    except (EOFError, OSError):
+        return None
     finally:
         connection.close()
 
@@ -2310,7 +2323,7 @@ def _control_main(command, hosts):
     for address in addresses:
         info = _daemon_command(address, operation)
         if info is None:
-            # A stale socket; _run_daemon removes it when it next starts up.
+            # A stale or unresponsive socket is replaced by the next daemon.
             continue
         found = True
         if not info.get("ok"):

@@ -138,6 +138,64 @@ class ListHostsTest(unittest.TestCase):
         )
 
 
+class DaemonControlTest(unittest.TestCase):
+    def test_bind_replaces_socket_that_accepts_but_does_not_answer(self):
+        with tempfile.TemporaryDirectory() as runtime_dir:
+            address = os.path.join(runtime_dir, "control.sock")
+            old_server, old_identity = ssh_sync._bind_server(address)
+            request_received = threading.Event()
+            release = threading.Event()
+
+            def ignore_request():
+                client, _ = old_server.accept()
+                connection = ssh_sync.Connection(client.detach())
+                connection.recv()
+                request_received.set()
+                release.wait(1)
+                connection.close()
+
+            thread = threading.Thread(target=ignore_request, daemon=True)
+            thread.start()
+            try:
+                with mock.patch.object(ssh_sync, "_CONTROL_TIMEOUT", 0.05):
+                    new_server, new_identity = ssh_sync._bind_server(address)
+                self.assertTrue(request_received.wait(1))
+                self.assertNotEqual(new_identity, old_identity)
+            finally:
+                release.set()
+                old_server.close()
+                new_server.close()
+                thread.join(1)
+
+    def test_connect_waits_for_daemon_to_answer(self):
+        endpoint = {
+            "ok": True,
+            "kind": "outbound",
+            "code_hash": "hash",
+            "protocol_version": 1,
+        }
+        connection = mock.Mock()
+        with tempfile.TemporaryDirectory() as runtime_dir, mock.patch.object(
+            ssh_sync, "_runtime_dir", return_value=runtime_dir
+        ), mock.patch.object(
+            ssh_sync,
+            "_daemon_command",
+            side_effect=[None, None, endpoint],
+        ) as command, mock.patch.object(
+            ssh_sync, "Client", return_value=connection
+        ) as client, mock.patch.object(
+            ssh_sync.subprocess, "Popen"
+        ), mock.patch.object(
+            ssh_sync.time, "sleep"
+        ):
+            address = ssh_sync._socket_path("host")
+            result = ssh_sync._connect_daemon("host", "hash", lambda: "transport")
+
+        self.assertEqual(result, (connection, endpoint, "transport"))
+        self.assertEqual(command.call_count, 3)
+        client.assert_called_once_with(address, family="AF_UNIX")
+
+
 class ExecCommandTest(unittest.TestCase):
     def test_uses_first_running_host_by_default(self):
         args = ssh_sync._command_parser().parse_args(["exec", "result = 42"])
