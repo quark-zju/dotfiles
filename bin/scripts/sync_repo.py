@@ -14,6 +14,8 @@ from pathlib import Path
 
 import ssh_sync
 
+SSH_TIMEOUT = 30
+
 
 class SyncError(Exception):
     pass
@@ -257,19 +259,19 @@ def remote_update_branch(
 def ssh_call(remote: str, function, *args, verbose: bool):
     if verbose:
         print(f"ssh_sync: {remote}: call {function.__name__}()")
-    return ssh_sync.call_remote(remote, function, *args)
+    return ssh_sync.call_remote(remote, function, *args, call_timeout=SSH_TIMEOUT)
 
 
 def ssh_process(remote: str, argv: list[str], *, cwd: str, verbose: bool):
     if verbose:
         print(f"ssh_sync: {remote}: run {shlex.join(argv)} (cwd {cwd})")
-    return ssh_sync.open_process(remote, argv, cwd=cwd)
+    return ssh_sync.open_process(remote, argv, cwd=cwd, call_timeout=SSH_TIMEOUT)
 
 
 def ssh_iter(remote: str, function, *args, verbose: bool):
     if verbose:
         print(f"ssh_sync: {remote}: iterate {function.__name__}()")
-    return ssh_sync.iter_remote(remote, function, *args, call_timeout=0)
+    return ssh_sync.iter_remote(remote, function, *args, call_timeout=SSH_TIMEOUT)
 
 
 def first_remote(verbose: bool) -> str:

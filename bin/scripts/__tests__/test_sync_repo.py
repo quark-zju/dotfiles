@@ -9,6 +9,7 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 SPEC = importlib.util.spec_from_file_location(
     "sync_repo", Path(__file__).resolve().parents[1] / "sync_repo.py"
@@ -82,6 +83,26 @@ class LocalSshSync:
     @staticmethod
     def open_process(_host, argv, *, cwd=None, **_kwargs):
         return LocalRemoteProcess(argv, cwd)
+
+
+class SshTimeoutTest(unittest.TestCase):
+    def test_all_remote_operations_use_short_timeout(self) -> None:
+        ssh_sync = mock.Mock()
+
+        with mock.patch.object(sync_repo, "ssh_sync", ssh_sync):
+            sync_repo.ssh_call("host", str, "value", verbose=False)
+            sync_repo.ssh_process("host", ["true"], cwd="/repo", verbose=False)
+            sync_repo.ssh_iter("host", str, "value", verbose=False)
+
+        ssh_sync.call_remote.assert_called_once_with(
+            "host", str, "value", call_timeout=sync_repo.SSH_TIMEOUT
+        )
+        ssh_sync.open_process.assert_called_once_with(
+            "host", ["true"], cwd="/repo", call_timeout=sync_repo.SSH_TIMEOUT
+        )
+        ssh_sync.iter_remote.assert_called_once_with(
+            "host", str, "value", call_timeout=sync_repo.SSH_TIMEOUT
+        )
 
 
 class SyncRepoTest(unittest.TestCase):
