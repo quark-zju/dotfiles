@@ -2282,10 +2282,15 @@ def _daemon_command(address, operation, timeout=None):
     """Send a bounded control request, or return None if it is unresponsive."""
     if timeout is None:
         timeout = _CONTROL_TIMEOUT
+    client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     try:
-        connection = Client(address, family="AF_UNIX")
+        client.settimeout(timeout)
+        client.connect(address)
+        client.settimeout(None)
     except OSError:
+        client.close()
         return None
+    connection = Connection(client.detach())
     try:
         connection.send({"operation": operation})
         if not connection.poll(timeout):

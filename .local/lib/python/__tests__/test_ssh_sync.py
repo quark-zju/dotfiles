@@ -139,6 +139,17 @@ class ListHostsTest(unittest.TestCase):
 
 
 class DaemonControlTest(unittest.TestCase):
+    def test_command_bounds_socket_connection(self):
+        client = mock.Mock()
+        client.connect.side_effect = ssh_sync.socket.timeout
+        with mock.patch.object(ssh_sync.socket, "socket", return_value=client):
+            self.assertIsNone(
+                ssh_sync._daemon_command("unresponsive.sock", "info", timeout=0.05)
+            )
+
+        client.settimeout.assert_called_once_with(0.05)
+        client.close.assert_called_once_with()
+
     def test_bind_replaces_socket_that_accepts_but_does_not_answer(self):
         with tempfile.TemporaryDirectory() as runtime_dir:
             address = os.path.join(runtime_dir, "control.sock")
