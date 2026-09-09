@@ -337,9 +337,11 @@ def process_sway_state(
 def css_identifier_escape(value: str) -> str:
     """Escape a workspace name for use in a GTK CSS ID selector."""
     return "".join(
-        char
-        if char.isalnum() or char in "-_" or ord(char) >= 0x80
-        else f"\\{ord(char):x} "
+        (
+            char
+            if char.isalnum() or char in "-_" or ord(char) >= 0x80
+            else f"\\{ord(char):x} "
+        )
         for char in value
     )
 
@@ -349,6 +351,7 @@ def write_workspace_highlights(
     workspace_name: str | None,
     pid: int | None = None,
     process_start_time: int | None = None,
+    clear_session: bool = False,
 ) -> None:
     """Add or remove one session's running workspace and regenerate its CSS."""
     import fcntl
@@ -379,7 +382,12 @@ def write_workspace_highlights(
                 ):
                     del sessions[key]
 
-            if workspace_name is None:
+            if clear_session:
+                prefix = f"{run_id}:"
+                for key in list(sessions):
+                    if key == run_id or key.startswith(prefix):
+                        del sessions[key]
+            elif workspace_name is None:
                 sessions.pop(run_id, None)
             elif isinstance(pid, int) and isinstance(process_start_time, int):
                 sessions[run_id] = {
@@ -433,6 +441,11 @@ def write_workspace_highlights(
     )
 
 
+def clear_session_workspace_highlights(session_id: str) -> None:
+    """Remove all running turns belonging to one Codex session."""
+    write_workspace_highlights(session_id, None, clear_session=True)
+
+
 def mark_process_workspace_running(
     run_id: str,
     pid: object,
@@ -448,9 +461,7 @@ def mark_process_workspace_running(
         return
     workspace_name = state[1]
     if workspace_name is not None and isinstance(pid, int):
-        write_workspace_highlights(
-            run_id, workspace_name, pid, expected_start_time
-        )
+        write_workspace_highlights(run_id, workspace_name, pid, expected_start_time)
 
 
 def focus_process(pid: object, expected_start_time: object) -> None:
@@ -473,15 +484,15 @@ def focus_process(pid: object, expected_start_time: object) -> None:
 
 
 def update_running_workspace(
-    payload: dict[str, Any], saved: dict[str, object] | None
+    payload: dict[str, Any],
+    saved: dict[str, object] | None,
+    clear_session: bool = False,
 ) -> None:
     session_id = payload.get("session_id")
     if not isinstance(session_id, str):
         return
     turn_id = payload.get("turn_id")
-    run_id = (
-        f"{session_id}:{turn_id}" if isinstance(turn_id, str) else session_id
-    )
+    run_id = f"{session_id}:{turn_id}" if isinstance(turn_id, str) else session_id
     ssh_client_pid = os.environ.get("SSH_CLIENT_PID")
     if ssh_client_pid is not None:
         try:
@@ -499,13 +510,21 @@ def update_running_workspace(
                 )
                 return
             if saved is None:
-                ssh_sync.call_remote(
-                    hosts[0],
-                    write_workspace_highlights,
-                    run_id,
-                    None,
-                    call_timeout=20,
-                )
+                if clear_session:
+                    ssh_sync.call_remote(
+                        hosts[0],
+                        clear_session_workspace_highlights,
+                        session_id,
+                        call_timeout=20,
+                    )
+                else:
+                    ssh_sync.call_remote(
+                        hosts[0],
+                        write_workspace_highlights,
+                        run_id,
+                        None,
+                        call_timeout=20,
+                    )
             else:
                 ssh_sync.call_remote(
                     hosts[0],
@@ -523,7 +542,10 @@ def update_running_workspace(
             )
         return
     if saved is None:
-        write_workspace_highlights(run_id, None)
+        if clear_session:
+            clear_session_workspace_highlights(session_id)
+        else:
+            write_workspace_highlights(run_id, None)
     else:
         mark_process_workspace_running(
             run_id, saved.get("pid"), saved.get("process_start_time")
@@ -616,9 +638,7 @@ def notify(payload: dict[str, Any]) -> None:
         return
     agent_name = saved.get("agent_name", "Codex")
     if agent_name not in ("Codex", "Claude"):
-        log_event(
-            "notification_skipped", session_id=session_id, reason="invalid_agent"
-        )
+        log_event("notification_skipped", session_id=session_id, reason="invalid_agent")
         return
     prompt = " ".join(saved["prompt"].split())
     if len(prompt) > 1000:
@@ -712,9 +732,12 @@ def main() -> None:
             saved = save_prompt(payload)
             if saved is not None:
                 update_running_workspace(payload, saved)
-        elif event == "Stop":
+        elif event in ("Stop", "Interrupt"):
             update_running_workspace(payload, None)
-            notify(payload)
+            if event == "Stop":
+                notify(payload)
+        elif event == "SessionEnd":
+            update_running_workspace(payload, None, clear_session=True)
         else:
             log_event(
                 "hook_skipped",
