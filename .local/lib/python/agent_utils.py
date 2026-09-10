@@ -28,6 +28,19 @@ AMBIENT_CONTEXT_RE = re.compile(
     re.DOTALL,
 )
 MY_REQUEST_RE = re.compile(r"\A\s*##\s+My request:\s*", re.IGNORECASE)
+FILES_MENTIONED_RE = re.compile(
+    r"\A\s*#\s+Files mentioned by the user:\s*.*?" r"^\s*##\s+My request:\s*",
+    re.DOTALL | re.IGNORECASE | re.MULTILINE,
+)
+IMAGE_BLOCK_RE = re.compile(
+    r"<image\b(?P<attrs>[^>]*)>\s*</image>",
+    re.DOTALL | re.IGNORECASE,
+)
+IMAGE_NAME_RE = re.compile(
+    r"\bname\s*=\s*(?:\"(?P<double>[^\"]+)\"|'(?P<single>[^']+)'|"
+    r"(?P<bracket>\[[^\]]+\])|(?P<bare>[^\s>]+))",
+    re.IGNORECASE,
+)
 
 # Derived from https://github.com/casonadams/opencode-secret-redactor/blob/main/src/patterns.ts
 #
@@ -263,7 +276,7 @@ def match_obj(obj, template, matched_out) -> bool:
 
 
 def clean_codex_user_prompt(value: str) -> str:
-    """Remove Codex-injected ambient context preceding the real user prompt."""
+    """Remove Codex-injected context while retaining attachment references."""
     cleaned = value
     removed_ambient_context = False
     while True:
@@ -274,6 +287,16 @@ def clean_codex_user_prompt(value: str) -> str:
         removed_ambient_context = True
     if removed_ambient_context:
         cleaned = MY_REQUEST_RE.sub("", cleaned, count=1)
+    cleaned = FILES_MENTIONED_RE.sub("", cleaned, count=1)
+
+    def image_reference(match):
+        name_match = IMAGE_NAME_RE.search(match.group("attrs"))
+        if not name_match:
+            return "[Image]"
+        name = next(value for value in name_match.groupdict().values() if value)
+        return name if name.startswith("[") and name.endswith("]") else f"[{name}]"
+
+    cleaned = IMAGE_BLOCK_RE.sub(image_reference, cleaned)
     return cleaned.strip()
 
 
