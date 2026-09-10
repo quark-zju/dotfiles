@@ -193,15 +193,62 @@ def remote_find_common(path: str, branch: str, candidates: list[str]) -> str | N
     import subprocess
 
     ref = "refs/heads/" + branch
-    for candidate in candidates:
-        completed = subprocess.run(
-            ["git", "-C", path, "merge-base", "--is-ancestor", candidate, ref],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        if completed.returncode == 0:
+    checked = subprocess.run(
+        ["git", "-C", path, "cat-file", "--batch-check=%(objectname) %(objecttype)"],
+        input=("\n".join(candidates) + "\n").encode(),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    if checked.returncode:
+        message = checked.stderr.decode(errors="replace").strip()
+        raise RuntimeError(message or "git cat-file --batch-check failed")
+    existing = [
+        candidate
+        for candidate, result in zip(candidates, checked.stdout.decode().splitlines())
+        if result == candidate + " commit"
+    ]
+    if not existing:
+        return None
+
+    completed = subprocess.run(
+        [
+            "git",
+            "-C",
+            path,
+            "rev-list",
+            "--no-walk=unsorted",
+            *existing,
+            "--not",
+            ref,
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    if completed.returncode:
+        message = completed.stderr.decode(errors="replace").strip()
+        raise RuntimeError(message or "git rev-list failed")
+    not_ancestors = set(completed.stdout.decode().splitlines())
+    for candidate in existing:
+        if candidate not in not_ancestors:
             return candidate
     return None
+
+
+def remote_count_commits(path: str, branch: str, base: str | None) -> int:
+    import subprocess
+
+    revision_args = ["refs/heads/" + branch]
+    if base is not None:
+        revision_args.append("^" + base)
+    completed = subprocess.run(
+        ["git", "-C", path, "rev-list", "--count", *revision_args],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    if completed.returncode:
+        message = completed.stderr.decode(errors="replace").strip()
+        raise RuntimeError(message or "git rev-list --count failed")
+    return int(completed.stdout)
 
 
 def remote_update_branch(
@@ -295,7 +342,7 @@ def is_ancestor(repo: Path, ancestor: str, descendant: str) -> bool:
 def find_common(
     repo: Path, remote: str, remote_path: str, branch: str, verbose: bool
 ) -> str:
-    commits = run_git(repo, "rev-list", "--first-parent", branch).decode().splitlines()
+    commits = run_git(repo, "rev-list", "--topo-order", branch).decode().splitlines()
     batch_size = 512
     for offset in range(0, len(commits), batch_size):
         common = ssh_call(
@@ -309,6 +356,24 @@ def find_common(
         if common is not None:
             return common
     raise SyncError("the two branch histories have no common commit")
+
+
+def local_count_commits(repo: Path, branch: str, base: str | None) -> int:
+    revision_args = [branch]
+    if base is not None:
+        revision_args.append("^" + base)
+    return int(run_git(repo, "rev-list", "--count", *revision_args))
+
+
+def show_commit_counts(local_count: int, remote_count: int) -> None:
+    counts = []
+    if local_count:
+        noun = "commit" if local_count == 1 else "commits"
+        counts.append(f"{local_count} {noun} local -> remote")
+    if remote_count:
+        noun = "commit" if remote_count == 1 else "commits"
+        counts.append(f"{remote_count} {noun} remote -> local")
+    print("sync: " + ", ".join(counts))
 
 
 def receive_bundle(
@@ -455,10 +520,14 @@ def sync(
     if remote_tip == local_tip:
         return remote
     if remote_tip is None:
+        if verbose:
+            show_commit_counts(local_count_commits(repo, branch, None), 0)
         update_remote(repo, remote, remote_path, branch, None, local_tip, verbose)
         return remote
 
     if is_ancestor(repo, remote_tip, local_tip):
+        if verbose:
+            show_commit_counts(local_count_commits(repo, branch, remote_tip), 0)
         update_remote(repo, remote, remote_path, branch, remote_tip, local_tip, verbose)
         return remote
 
@@ -470,12 +539,32 @@ def sync(
         branch,
         verbose=verbose,
     ):
+        if verbose:
+            remote_count = ssh_call(
+                remote,
+                remote_count_commits,
+                remote_path,
+                branch,
+                local_tip,
+                verbose=verbose,
+            )
+            show_commit_counts(0, remote_count)
         receive_bundle(repo, remote, remote_path, branch, local_tip, verbose)
         run_git(repo, "merge", "--ff-only", "--quiet", remote_tip)
         print(f"local: fast-forwarded {branch} ({local_tip[:12]} -> {remote_tip[:12]})")
         return remote
 
     common = find_common(repo, remote, remote_path, branch, verbose)
+    if verbose:
+        remote_count = ssh_call(
+            remote,
+            remote_count_commits,
+            remote_path,
+            branch,
+            common,
+            verbose=verbose,
+        )
+        show_commit_counts(local_count_commits(repo, branch, common), remote_count)
     receive_bundle(repo, remote, remote_path, branch, common, verbose)
     completed = subprocess.run(
         [

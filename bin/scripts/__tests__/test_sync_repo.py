@@ -146,10 +146,10 @@ class SyncRepoTest(unittest.TestCase):
         self.git(repo, "add", name)
         self.git(repo, "commit", "-m", contents)
 
-    def sync(self) -> str:
+    def sync(self, verbose: bool = False) -> str:
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
-            sync_repo.sync(str(self.local), str(self.remote), "test")
+            sync_repo.sync(str(self.local), str(self.remote), "test", verbose=verbose)
         return output.getvalue()
 
     def assert_tips_equal(self) -> None:
@@ -173,16 +173,55 @@ class SyncRepoTest(unittest.TestCase):
         self.assertIn("local: fast-forwarded main", self.sync())
         self.assert_tips_equal()
 
+    def test_verbose_prints_commit_counts_in_both_directions(self) -> None:
+        self.commit(self.local, "local", "local")
+        self.assertIn("sync: 1 commit local -> remote", self.sync(verbose=True))
+
+        self.commit(self.remote, "remote-1", "remote-1")
+        self.commit(self.remote, "remote-2", "remote-2")
+        self.assertIn("sync: 2 commits remote -> local", self.sync(verbose=True))
+
     def test_rebases_local_branch_when_histories_diverge(self) -> None:
         self.commit(self.local, "local", "local")
         self.commit(self.remote, "remote", "remote")
-        output = self.sync()
+        output = self.sync(verbose=True)
+        self.assertIn(
+            "sync: 1 commit local -> remote, 1 commit remote -> local", output
+        )
         self.assertIn("local: rebased main onto remote", output)
         self.assert_tips_equal()
         self.assertEqual(
             self.git(self.local, "log", "--format=%s", "-2"),
             "local\nremote",
         )
+
+    def test_finds_common_commit_reachable_through_second_parent(self) -> None:
+        base = self.git(self.local, "rev-parse", "main")
+        self.git(self.remote, "checkout", "--quiet", "-b", "shared")
+        self.commit(self.remote, "shared", "shared")
+        shared = self.git(self.remote, "rev-parse", "HEAD")
+        self.git(self.remote, "checkout", "--quiet", "main")
+        self.git(self.remote, "merge", "--quiet", "--ff-only", "shared")
+        self.commit(self.remote, "remote", "remote")
+
+        self.git(self.local, "fetch", "--quiet", "origin", "shared")
+        self.git(self.local, "reset", "--quiet", "--hard", base)
+        self.commit(self.local, "local", "local")
+        self.git(
+            self.local,
+            "merge",
+            "--quiet",
+            "--no-ff",
+            "-m",
+            "merge shared",
+            shared,
+        )
+
+        common = sync_repo.find_common(
+            self.local, "test", str(self.remote), "main", verbose=False
+        )
+
+        self.assertEqual(common, shared)
 
     def test_keeps_checkout_when_files_would_be_overwritten(self) -> None:
         self.git(self.remote, "checkout", "--quiet", "-b", "other")
