@@ -22,6 +22,12 @@ EXEC_CMD_RE = re.compile(
     r'(?:\{|,)\s*(?:"cmd"|cmd)\s*:\s*"(?P<exec_cmd>(?:\\.|[^"\\])*)"'
 )
 GIT_COMMIT_RE = re.compile(r"(?:^|&&|\|\||;|\n|\\n)\s*git\s+commit\b")
+AMBIENT_CONTEXT_RE = re.compile(
+    r'\A\s*<(?P<tag>[A-Za-z0-9_-]+-context)\s+source=["\']ambient-ui-state["\']'
+    r"[^>]*>.*?</(?P=tag)>\s*?",
+    re.DOTALL,
+)
+MY_REQUEST_RE = re.compile(r"\A\s*##\s+My request:\s*", re.IGNORECASE)
 
 # Derived from https://github.com/casonadams/opencode-secret-redactor/blob/main/src/patterns.ts
 #
@@ -256,6 +262,21 @@ def match_obj(obj, template, matched_out) -> bool:
         return obj == template
 
 
+def clean_codex_user_prompt(value: str) -> str:
+    """Remove Codex-injected ambient context preceding the real user prompt."""
+    cleaned = value
+    removed_ambient_context = False
+    while True:
+        match = AMBIENT_CONTEXT_RE.match(cleaned)
+        if not match:
+            break
+        cleaned = cleaned[match.end() :]
+        removed_ambient_context = True
+    if removed_ambient_context:
+        cleaned = MY_REQUEST_RE.sub("", cleaned, count=1)
+    return cleaned.strip()
+
+
 def get_codex_env() -> Dict[str, str]:
     env = {}
     thread_id = os.getenv("CODEX_THREAD_ID")
@@ -299,7 +320,7 @@ def get_codex_env() -> Dict[str, str]:
                 },
                 out,
             ):
-                user_message = out.get("$user_message", "").strip()
+                user_message = clean_codex_user_prompt(out.get("$user_message", ""))
                 if user_message:
                     prompt.append(user_message)
             elif match_obj(
@@ -328,7 +349,7 @@ def get_codex_env() -> Dict[str, str]:
                             {"type": "input_text", "text": "$text"},
                             text_match,
                         ):
-                            text = text_match.get("$text", "").strip()
+                            text = clean_codex_user_prompt(text_match.get("$text", ""))
                             if text:
                                 user_text_parts.append(text)
                     if user_text_parts:

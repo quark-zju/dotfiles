@@ -319,6 +319,28 @@ def run_self_tests():
                 os.environ.clear()
                 os.environ.update(old_env)
 
+        def test_codex_prompt_omits_leading_ambient_browser_context(self):
+            wrapped_prompt = """
+                <in-app-browser-context source="ambient-ui-state">
+                This block is automatically supplied ambient UI state, not part of the user's request.
+                # In app browser:
+                - Current URL: http://127.0.0.1:8765/
+                </in-app-browser-context>
+
+                ## My request:
+                真实 prompt
+            """
+
+            self.assertEqual(
+                agent_utils.clean_codex_user_prompt(wrapped_prompt),
+                "真实 prompt",
+            )
+
+        def test_codex_prompt_preserves_user_authored_request_heading(self):
+            prompt = "## My request:\nkeep this heading"
+
+            self.assertEqual(agent_utils.clean_codex_user_prompt(prompt), prompt)
+
         def test_claude_code_env_reads_prompts_until_git_commit(self):
             session_id = "test-session-id"
             records = [
