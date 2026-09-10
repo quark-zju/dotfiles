@@ -170,26 +170,17 @@ bar {
     position bottom
 }
 
-# Native Wayland window rules.
+# Tile the main work applications and float everything else by default.
 assign [app_id="^google-chrome$"] workspace number 10
-for_window [app_id="wdisplays"] floating enable
-for_window [app_id="nm-connection-editor"] floating enable
+for_window [all] floating enable
+for_window [app_id="^(foot|google-chrome|thunar)$"] floating disable
 
-# XWayland window rules migrated from i3.
-for_window [class="MPlayer"] border pixel 1, floating enable
-for_window [class="Vlc"] floating enable
-for_window [class="Gcolor2"] floating enable
-for_window [class="Tilda"] floating enable, border pixel 1
-for_window [class="Xfce4-notifyd"] floating enable, border pixel 1
-for_window [class="rdesktop"] floating enable, border none
-for_window [class="xfreerdp"] floating enable
-for_window [class="Wine"] floating enable
-for_window [class="Lazarus"] floating enable
+# XWayland window appearance rules migrated from i3.
+for_window [class="MPlayer"] border pixel 1
+for_window [class="Tilda"] border pixel 1
+for_window [class="Xfce4-notifyd"] border pixel 1
+for_window [class="rdesktop"] border none
 for_window [class="FooNote"] sticky enable, border none, move right, move right, move right, move right
-for_window [class="Xfce4-appfinder"] floating enable
-for_window [class="zoom"] floating enable
-for_window [title="Live Caption"] floating enable
-for_window [class="Blueman-manager"] floating enable
 
 # Machine-specific settings, such as output layout. This file is untracked.
 include config.local
