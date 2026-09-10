@@ -31,7 +31,7 @@ start_master_target() {
 
 build_et_args() {
 	local client_init=" export SSH_CLIENT_PID=$PPID"
-	local interactive_init=" printf '\033[2A\033[J'; exec env SSH_CLIENT_PID=$PPID \"\${SHELL:-/bin/sh}\" -l"
+	local interactive_init=" printf '\033[2A\033[J'; exec env SSH_CLIENT_PID=$PPID \"${SHELL:-/bin/sh}\" -l"
 	local has_command=0
 	local -a args=()
 
