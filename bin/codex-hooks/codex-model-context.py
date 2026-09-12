@@ -13,8 +13,9 @@ from typing import Any
 LOG_PATH = Path("/tmp/codex-model-context.log")
 GPT6_CONTEXT = """
 ## Use sub-agents
-- Prefer `gpt-5.6-luna` for bounded exploration and execution; keep difficult reasoning and consequential review with the main agent.
-- Delegate when it saves overall usage or time. GPT-5.6 Luna uses roughly 1/50 as much quota.
+- Prefer `gpt-5.6-luna` for bounded exploration and execution.
+- Keep difficult reasoning and consequential review with the main agent.
+- Delegate when it saves overall usage or time. Luna uses roughly 1/50 as much quota.
 - Define scope, file ownership, and expected results. Return concise evidence; distinguish findings from hypotheses.
 - Give one agent ownership of testing and commits; avoid concurrent edits during finalization. Batch routine steps and stop on failure.
 - Continue independent necessary work while agents run; otherwise use `wait_agent`. Avoid short polling and invented busywork.
@@ -66,7 +67,6 @@ def main() -> int:
             "hookSpecificOutput": {
                 "hookEventName": "SessionStart",
                 "additionalContext": context,
-                "additionalContextLimit": 0,
             }
         }
         print(json.dumps(output, ensure_ascii=False))
