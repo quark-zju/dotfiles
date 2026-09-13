@@ -1,0 +1,189 @@
+#!/usr/bin/env python3
+"""Batch-rename entries in the current directory with a text editor."""
+
+from __future__ import annotations
+
+import os
+import shlex
+import subprocess
+import sys
+import tempfile
+import uuid
+from pathlib import Path
+
+
+def fail(message: str) -> int:
+    print(f"batch_rename: {message}", file=sys.stderr)
+    return 1
+
+
+def edited_names(original_names: list[str]) -> list[str] | None:
+    editor = os.environ.get("EDITOR", "vim")
+    try:
+        command = shlex.split(editor)
+    except ValueError as error:
+        fail(f"invalid EDITOR: {error}")
+        return None
+    if not command:
+        fail("EDITOR is empty")
+        return None
+
+    temporary_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            errors="surrogateescape",
+            newline="\n",
+            prefix="batch_rename-",
+            suffix=".txt",
+            delete=False,
+        ) as temporary:
+            temporary_path = Path(temporary.name)
+            for name in original_names:
+                temporary.write(f"{name}\n")
+
+        completed = subprocess.run([*command, str(temporary_path)], check=False)
+        if completed.returncode != 0:
+            fail(f"editor exited with status {completed.returncode}; nothing renamed")
+            return None
+
+        text = temporary_path.read_text(encoding="utf-8", errors="surrogateescape")
+    except (OSError, UnicodeError) as error:
+        fail(str(error))
+        return None
+    finally:
+        if temporary_path is not None:
+            try:
+                temporary_path.unlink()
+            except FileNotFoundError:
+                pass
+            except OSError as error:
+                print(
+                    f"batch_rename: cannot remove temporary file "
+                    f"{temporary_path}: {error}",
+                    file=sys.stderr,
+                )
+
+    if text.endswith("\n"):
+        text = text[:-1]
+    return text.split("\n") if text else []
+
+
+def validate_names(original_names: list[str], new_names: list[str]) -> str | None:
+    if len(new_names) != len(original_names):
+        return (
+            f"expected {len(original_names)} lines, got {len(new_names)}; "
+            "nothing renamed"
+        )
+
+    for line_number, name in enumerate(new_names, 1):
+        if not name:
+            return f"line {line_number} is empty; nothing renamed"
+        if name in (".", ".."):
+            return f"line {line_number} is not a valid file name: {name!r}"
+        if os.sep in name or (os.altsep is not None and os.altsep in name):
+            return f"line {line_number} contains a path separator: {name!r}"
+        if "\x00" in name:
+            return f"line {line_number} contains a null byte"
+
+    seen: set[str] = set()
+    duplicates: set[str] = set()
+    for name in new_names:
+        if name in seen:
+            duplicates.add(name)
+        seen.add(name)
+    if duplicates:
+        return f"duplicate destination name: {min(duplicates)!r}; nothing renamed"
+
+    original_set = set(original_names)
+    for old_name, new_name in zip(original_names, new_names):
+        if (
+            old_name != new_name
+            and new_name not in original_set
+            and os.path.lexists(new_name)
+        ):
+            return f"destination already exists: {new_name!r}; nothing renamed"
+    return None
+
+
+def staging_name(reserved_names: set[str]) -> str:
+    while True:
+        name = f".batch_rename-{os.getpid()}-{uuid.uuid4().hex}"
+        if name not in reserved_names and not os.path.lexists(name):
+            reserved_names.add(name)
+            return name
+
+
+def rename_all(original_names: list[str], new_names: list[str]) -> int:
+    changes = [
+        (old_name, new_name)
+        for old_name, new_name in zip(original_names, new_names)
+        if old_name != new_name
+    ]
+    if not changes:
+        return 0
+
+    reserved_names = set(original_names) | set(new_names)
+    staged: list[tuple[str, str, str]] = []
+    finished: list[tuple[str, str, str]] = []
+
+    try:
+        for old_name, new_name in changes:
+            temporary_name = staging_name(reserved_names)
+            os.rename(old_name, temporary_name)
+            staged.append((old_name, temporary_name, new_name))
+
+        for item in staged:
+            old_name, temporary_name, new_name = item
+            if os.path.lexists(new_name):
+                raise FileExistsError(
+                    f"destination appeared during rename: {new_name!r}"
+                )
+            os.rename(temporary_name, new_name)
+            finished.append(item)
+    except OSError as error:
+        rollback_errors: list[str] = []
+        for old_name, temporary_name, new_name in reversed(finished):
+            try:
+                os.rename(new_name, temporary_name)
+            except OSError as rollback_error:
+                rollback_errors.append(f"{new_name!r}: {rollback_error}")
+        for old_name, temporary_name, _new_name in reversed(staged):
+            if not os.path.lexists(temporary_name):
+                continue
+            try:
+                os.rename(temporary_name, old_name)
+            except OSError as rollback_error:
+                rollback_errors.append(f"{temporary_name!r}: {rollback_error}")
+        fail(f"rename failed: {error}")
+        if rollback_errors:
+            fail("rollback incomplete: " + "; ".join(rollback_errors))
+        return 1
+    for old_name, _temporary_name, new_name in finished:
+        print(f"{old_name!r} -> {new_name!r}")
+    return 0
+
+
+def main() -> int:
+    try:
+        original_names = sorted(entry.name for entry in os.scandir())
+    except OSError as error:
+        return fail(str(error))
+
+    if any("\n" in name or "\r" in name for name in original_names):
+        return fail("file names containing newlines are not supported")
+    if not original_names:
+        return fail("current directory is empty")
+
+    new_names = edited_names(original_names)
+    if new_names is None:
+        return 1
+    validation_error = validate_names(original_names, new_names)
+    if validation_error is not None:
+        return fail(validation_error)
+    return rename_all(original_names, new_names)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
