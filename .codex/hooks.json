@@ -8,7 +8,7 @@
             "type": "command",
             "command": "python3 ~/bin/codex-hooks/codex-model-context.py",
             "timeout": 3,
-            "additionalContextLimit": 100
+            "additionalContextLimit": 5000
           }
         ]
       }
