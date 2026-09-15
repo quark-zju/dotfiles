@@ -300,21 +300,43 @@ def clean_codex_user_prompt(value: str) -> str:
     return cleaned.strip()
 
 
-def get_codex_env() -> Dict[str, str]:
-    env = {}
-    thread_id = os.getenv("CODEX_THREAD_ID")
-    if not thread_id:
-        return env
-    # Read from codex sessions
-    session_files = list(
-        glob.glob(
-            os.path.expanduser(f"~/.codex/sessions/**/*{thread_id}*.jsonl"),
-            recursive=True,
-        )
+def find_codex_session_file(thread_id: str) -> str:
+    session_files = glob.glob(
+        os.path.expanduser(f"~/.codex/sessions/**/*{thread_id}*.jsonl"),
+        recursive=True,
     )
-    if not session_files:
-        return env
-    session_file = session_files[0]
+    return next(
+        (
+            path
+            for path in session_files
+            if os.path.basename(path).endswith(f"-{thread_id}.jsonl")
+        ),
+        "",
+    )
+
+
+def get_codex_parent_thread_id(session_file: str) -> str:
+    with open(session_file, "r") as f:
+        for line in f:
+            try:
+                data = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if data.get("type") != "session_meta":
+                continue
+            payload = data.get("payload", {})
+            source = payload.get("source", {})
+            if not isinstance(source, dict):
+                return ""
+            subagent = source.get("subagent", {})
+            if not isinstance(subagent, dict) or "thread_spawn" not in subagent:
+                return ""
+            return payload.get("parent_thread_id", "")
+    return ""
+
+
+def get_codex_session_env(session_file: str) -> Dict[str, str]:
+    env = {}
     with open(session_file, "r") as f:
         lines = f.readlines()
     model = None
@@ -427,6 +449,36 @@ def get_codex_env() -> Dict[str, str]:
     if prompt or model:
         env["Agent-Harness"] = "codex"
     return env
+
+
+def get_codex_env() -> Dict[str, str]:
+    thread_id = os.getenv("CODEX_THREAD_ID")
+    if not thread_id:
+        return {}
+    session_file = find_codex_session_file(thread_id)
+    if not session_file:
+        return {}
+
+    committer_env = get_codex_session_env(session_file)
+    root_file = session_file
+    seen_thread_ids = {thread_id}
+    while parent_id := get_codex_parent_thread_id(root_file):
+        if parent_id in seen_thread_ids:
+            break
+        parent_file = find_codex_session_file(parent_id)
+        if not parent_file:
+            break
+        seen_thread_ids.add(parent_id)
+        root_file = parent_file
+
+    if root_file == session_file:
+        return committer_env
+    root_env = get_codex_session_env(root_file)
+    if not root_env:
+        return committer_env
+    if committer_model := committer_env.get("Agent-Model"):
+        root_env["Committer-Agent-Model"] = committer_model
+    return root_env
 
 
 def get_claude_code_env() -> Dict[str, str]:

@@ -319,6 +319,60 @@ def run_self_tests():
                 os.environ.clear()
                 os.environ.update(old_env)
 
+        def test_codex_subagent_commit_uses_root_prompt_and_model(self):
+            old_env = os.environ.copy()
+            try:
+                with tempfile.TemporaryDirectory() as home:
+                    session_dir = pathlib.Path(home) / ".codex" / "sessions" / "test"
+                    session_dir.mkdir(parents=True)
+
+                    def write_session(thread_id, parent_id, model, prompt):
+                        source = (
+                            {"subagent": {"thread_spawn": {}}}
+                            if parent_id
+                            else "vscode"
+                        )
+                        metadata = {"source": source}
+                        if parent_id:
+                            metadata["parent_thread_id"] = parent_id
+                        records = [
+                            {"type": "session_meta", "payload": metadata},
+                            {"type": "turn_context", "payload": {"model": model}},
+                            {
+                                "type": "event_msg",
+                                "payload": {"type": "user_message", "message": prompt},
+                            },
+                        ]
+                        path = session_dir / f"rollout-{thread_id}.jsonl"
+                        path.write_text(
+                            "\n".join(json.dumps(record) for record in records) + "\n"
+                        )
+
+                    write_session("root", None, "gpt-main", "user request")
+                    write_session("child", "root", "gpt-worker", "commit task")
+                    write_session("grandchild", "child", "gpt-committer", "commit")
+                    os.environ["HOME"] = home
+                    os.environ["CODEX_THREAD_ID"] = "grandchild"
+
+                    expected_env = {
+                        "Agent-Prompt": "user request",
+                        "Agent-Model": "gpt-main",
+                        "Agent-Harness": "codex",
+                        "Committer-Agent-Model": "gpt-committer",
+                    }
+                    self.assertEqual(agent_utils.get_codex_env(), expected_env)
+                    self.assertEqual(
+                        self.rewrite("subject\n", expected_env),
+                        "subject\n\n"
+                        "Agent-Prompt: user request\n"
+                        "Agent-Model: gpt-main\n"
+                        "Agent-Harness: codex\n"
+                        "Committer-Agent-Model: gpt-committer\n",
+                    )
+            finally:
+                os.environ.clear()
+                os.environ.update(old_env)
+
         def test_codex_prompt_omits_leading_ambient_browser_context(self):
             wrapped_prompt = """
                 <in-app-browser-context source="ambient-ui-state">
