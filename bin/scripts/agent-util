@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""List local agent sessions and wait for one to stop working."""
+"""List local Codex and Claude Code sessions and wait for one to stop working."""
 
 from __future__ import annotations
 
@@ -23,6 +23,8 @@ def state(agent: Agent) -> str:
         return "suspended"
     if agent.get("working"):
         return "working"
+    if agent.get("status") == "waiting":
+        return "waiting"
     return "idle"
 
 
@@ -39,10 +41,11 @@ def last_message(agent: Agent) -> str:
 
 
 def print_agents(agents: list[Agent]) -> None:
-    headings = ("SESSION", "STATE", "PID", "REPO", "CWD", "MESSAGE")
+    headings = ("SESSION", "HARNESS", "STATE", "PID", "REPO", "CWD", "MESSAGE")
     rows = [
         (
             str(agent.get("session_id", "")),
+            str(agent.get("harness", "codex")),
             state(agent),
             str(agent.get("pid", "")),
             compact(agent.get("repo_name") or ""),
@@ -109,7 +112,7 @@ def wait_for_session(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="inspect local Codex agent sessions",
+        description="inspect local Codex and Claude Code agent sessions",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
     subparsers.add_parser("list", help="list current sessions")

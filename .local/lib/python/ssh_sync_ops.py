@@ -54,6 +54,16 @@ def _process_start_time(pid):
         return None
 
 
+def _process_start_ticks(pid):
+    """Return the raw `starttime` field of /proc/<pid>/stat, if available."""
+    try:
+        with open("/proc/%d/stat" % pid, encoding="utf-8") as stream:
+            stat = stream.read()
+        return stat[stat.rfind(")") + 2 :].split()[19]
+    except (OSError, IndexError):
+        return None
+
+
 def _ssh_client_pid(pid):
     """Return SSH_CLIENT_PID from a process environment, if valid."""
     try:
@@ -72,7 +82,7 @@ def _ssh_client_pid(pid):
     return None
 
 
-def list_running_agents():
+def _list_codex_agents():
     """Return Codex sessions whose rollout files are open by local processes."""
     import datetime
     import functools
@@ -288,8 +298,148 @@ def list_running_agents():
                 agent = inspect_rollout(fd_path, pid, cwd)
                 if agent is not None and agent["session_id"] not in agents:
                     agents[agent["session_id"]] = agent
+    return list(agents.values())
+
+
+def _claude_last_user_message(transcript_path):
+    """Return the newest human-typed message in a Claude transcript, if any.
+
+    Only the newest is materialised. Both callers read `user_messages[-1]`, and
+    `agent-util wait` re-lists once a second, so parsing whole multi-megabyte
+    transcripts on every poll would be wasted work.
+    """
+    import datetime
+    import json
+    import mmap
+    import os
+
+    synthetic_prefixes = (
+        "<command-name>",
+        "<local-command-caveat>",
+        "<local-command-stdout>",
+        "<system-reminder>",
+        "<task-notification>",
+    )
+    try:
+        stream = open(transcript_path, "rb")
+    except OSError:
+        return None
+    with stream:
+        try:
+            if not os.fstat(stream.fileno()).st_size:
+                return None
+            data = mmap.mmap(stream.fileno(), 0, access=mmap.ACCESS_READ)
+        except (OSError, ValueError):
+            return None
+        with data:
+            end = len(data)
+            while end:
+                if data[end - 1] == 10:
+                    end -= 1
+                    continue
+                start = data.rfind(b"\n", 0, end) + 1
+                try:
+                    obj = json.loads(data[start:end])
+                except (UnicodeDecodeError, json.JSONDecodeError):
+                    end = start
+                    continue
+                end = start
+                if not isinstance(obj, dict):
+                    continue
+                if obj.get("type") != "user" or obj.get("isSidechain"):
+                    continue
+                # Tool results are replayed as user turns. They carry a content
+                # list plus `toolUseResult`; a typed prompt carries a string.
+                message = obj.get("message")
+                content = message.get("content") if isinstance(message, dict) else None
+                if not isinstance(content, str) or "toolUseResult" in obj:
+                    continue
+                text = content.strip()
+                if not text or text.startswith(synthetic_prefixes):
+                    continue
+                try:
+                    timestamp = datetime.datetime.fromisoformat(
+                        obj["timestamp"].replace("Z", "+00:00")
+                    ).timestamp()
+                except (KeyError, AttributeError, ValueError):
+                    timestamp = None
+                return {"message": text[:1000], "timestamp": timestamp}
+    return None
+
+
+def _list_claude_agents(home=None):
+    """Return Claude Code sessions registered under ~/.claude/sessions.
+
+    Claude Code does not keep its transcript open, so the fd scan that finds
+    Codex sessions cannot see it. It instead writes one registry file per live
+    session, which also carries the status this module reports.
+    """
+    import glob
+    import json
+    import os
+
+    if home is None:
+        home = os.path.expanduser("~")
+    claude_dir = os.path.join(home, ".claude")
+
+    agents = []
+    for path in glob.glob(os.path.join(claude_dir, "sessions", "*.json")):
+        try:
+            with open(path, encoding="utf-8") as stream:
+                record = json.load(stream)
+        except (OSError, ValueError):
+            continue
+        if not isinstance(record, dict):
+            continue
+        pid = record.get("pid")
+        session_id = record.get("sessionId")
+        if (
+            not isinstance(pid, int)
+            or not isinstance(session_id, str)
+            or not session_id
+        ):
+            continue
+        # The registry file is removed on exit, but a crash leaves it behind and
+        # the PID can be reused, so match the recorded process start as well.
+        start_ticks = _process_start_ticks(pid)
+        if start_ticks is None:
+            continue
+        proc_start = record.get("procStart")
+        if proc_start is not None and str(proc_start) != start_ticks:
+            continue
+        # Located by session ID rather than by deriving the project directory
+        # name, which is the cwd with separators replaced and is not reversible.
+        transcripts = glob.glob(
+            os.path.join(claude_dir, "projects", "*", session_id + ".jsonl")
+        )
+        message = _claude_last_user_message(transcripts[0]) if transcripts else None
+        cwd = record.get("cwd")
+        status = record.get("status")
+        agent = {
+            "session_id": session_id,
+            "harness": "claude",
+            # "busy" while the model runs, "waiting" while blocked on the user.
+            "status": status,
+            "user_messages": [message] if message is not None else [],
+            "working": status == "busy",
+            "pid": pid,
+            "start_time": _process_start_time(pid),
+            "suspended": _process_suspended(pid),
+            "cwd": cwd,
+            "repo_name": _repo_name(cwd),
+        }
+        ssh_client_pid = _ssh_client_pid(pid)
+        if ssh_client_pid is not None:
+            agent["ssh_client_pid"] = ssh_client_pid
+        agents.append(agent)
+    return agents
+
+
+def list_running_agents():
+    """Return Codex and Claude Code sessions running on this host."""
     return sorted(
-        agents.values(), key=lambda agent: (agent["pid"], agent["session_id"])
+        _list_codex_agents() + _list_claude_agents(),
+        key=lambda agent: (agent["pid"], agent["session_id"]),
     )
 
 
