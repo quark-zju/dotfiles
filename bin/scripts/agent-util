@@ -55,7 +55,7 @@ def print_agents(agents: list[Agent]) -> None:
         for agent in agents
     ]
     widths = [
-        max(len(headings[index]), *(len(row[index]) for row in rows))
+        max(len(row[index]) for row in (headings, *rows))
         for index in range(len(headings) - 1)
     ]
 
