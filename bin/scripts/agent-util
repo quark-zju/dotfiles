@@ -1,0 +1,155 @@
+#!/usr/bin/env python3
+"""List local agent sessions and wait for one to stop working."""
+
+from __future__ import annotations
+
+import argparse
+import sys
+import time
+from collections.abc import Callable
+from pathlib import Path
+from typing import Any
+
+LIB_DIR = Path(__file__).resolve().parents[2] / ".local/lib/python"
+sys.path.insert(0, str(LIB_DIR))
+
+import ssh_sync_ops  # noqa: E402
+
+Agent = dict[str, Any]
+
+
+def state(agent: Agent) -> str:
+    if agent.get("suspended"):
+        return "suspended"
+    if agent.get("working"):
+        return "working"
+    return "idle"
+
+
+def compact(value: object) -> str:
+    return " ".join(str(value).split())
+
+
+def last_message(agent: Agent) -> str:
+    messages = agent.get("user_messages")
+    if not isinstance(messages, list) or not messages:
+        return ""
+    message = messages[-1]
+    return compact(message.get("message", "")) if isinstance(message, dict) else ""
+
+
+def print_agents(agents: list[Agent]) -> None:
+    headings = ("SESSION", "STATE", "PID", "REPO", "CWD", "MESSAGE")
+    rows = [
+        (
+            str(agent.get("session_id", "")),
+            state(agent),
+            str(agent.get("pid", "")),
+            compact(agent.get("repo_name") or ""),
+            compact(agent.get("cwd") or ""),
+            last_message(agent),
+        )
+        for agent in agents
+    ]
+    widths = [
+        max(len(headings[index]), *(len(row[index]) for row in rows))
+        for index in range(len(headings) - 1)
+    ]
+
+    def format_row(row: tuple[str, ...]) -> str:
+        fields = [row[index].ljust(widths[index]) for index in range(len(widths))]
+        fields.append(row[-1])
+        return "  ".join(fields).rstrip()
+
+    print(format_row(headings))
+    for row in rows:
+        print(format_row(row))
+
+
+def resolve_session(agents: list[Agent], query: str) -> Agent:
+    exact = [agent for agent in agents if agent.get("session_id") == query]
+    if exact:
+        return exact[0]
+    matches = [
+        agent
+        for agent in agents
+        if isinstance(agent.get("session_id"), str)
+        and agent["session_id"].startswith(query)
+    ]
+    if not matches:
+        raise ValueError(f"no current session matches {query!r}")
+    if len(matches) > 1:
+        ids = ", ".join(str(agent["session_id"]) for agent in matches)
+        raise ValueError(f"session prefix {query!r} is ambiguous: {ids}")
+    return matches[0]
+
+
+def wait_for_session(
+    query: str,
+    interval: float,
+    list_agents: Callable[[], list[Agent]] = ssh_sync_ops.list_running_agents,
+    sleep: Callable[[float], None] = time.sleep,
+) -> tuple[str, Agent | None]:
+    agent = resolve_session(list_agents(), query)
+    session_id = agent["session_id"]
+    while state(agent) == "working":
+        sleep(interval)
+        agent = next(
+            (
+                candidate
+                for candidate in list_agents()
+                if candidate.get("session_id") == session_id
+            ),
+            None,
+        )
+        if agent is None:
+            break
+    return session_id, agent
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="inspect local Codex agent sessions",
+    )
+    subparsers = parser.add_subparsers(dest="command", required=True)
+    subparsers.add_parser("list", help="list current sessions")
+    wait_parser = subparsers.add_parser(
+        "wait", help="wait for a session to stop working"
+    )
+    wait_parser.add_argument("session", help="session ID or unique ID prefix")
+    wait_parser.add_argument(
+        "--interval",
+        type=float,
+        default=1.0,
+        metavar="SECONDS",
+        help="poll interval (default: 1 second)",
+    )
+    args = parser.parse_args()
+    if args.command == "wait" and args.interval <= 0:
+        parser.error("--interval must be positive")
+    return args
+
+
+def main() -> int:
+    args = parse_args()
+    if args.command == "list":
+        print_agents(ssh_sync_ops.list_running_agents())
+        return 0
+
+    try:
+        session_id, agent = wait_for_session(args.session, args.interval)
+    except ValueError as error:
+        print(f"agent-util: {error}", file=sys.stderr)
+        return 1
+    except KeyboardInterrupt:
+        return 130
+
+    if agent is None:
+        print(f"{session_id}  exited")
+    else:
+        print(f"{session_id}  {state(agent)}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
