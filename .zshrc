@@ -191,6 +191,16 @@ if command -v fzf >/dev/null 2>&1; then
 fi
 # }}}
 
+# pwd {{{
+pwd() {
+  if (( $# == 0 )); then
+    print -P '%~'
+  else
+    builtin pwd "$@"
+  fi
+}
+# }}}
+
 # bun completions
 [ -s "/home/quark/.bun/_bun" ] && source "/home/quark/.bun/_bun"
 
