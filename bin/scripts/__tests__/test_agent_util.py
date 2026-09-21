@@ -23,6 +23,7 @@ def agent(session_id, *, working=False, suspended=False):
 
 class FakeAppServerClient:
     threads_by_socket = {}
+    notifications_by_socket = {}
     requests = []
 
     def __init__(self, socket_path):
@@ -34,6 +35,9 @@ class FakeAppServerClient:
     def __exit__(self, *_args):
         pass
 
+    def set_timeout(self, _timeout):
+        pass
+
     def request(self, method, params):
         self.requests.append((self.socket_path, method, params))
         if method == "thread/list":
@@ -41,9 +45,14 @@ class FakeAppServerClient:
                 "data": self.threads_by_socket[self.socket_path],
                 "nextCursor": None,
             }
+        if method == "thread/resume":
+            return {"thread": {"id": params["threadId"]}}
         if method == "turn/start":
             return {"turn": {"id": "turn-id"}}
         raise AssertionError(method)
+
+    def next_notification(self):
+        return self.notifications_by_socket[self.socket_path].pop(0)
 
 
 class StateTest(unittest.TestCase):
@@ -163,6 +172,7 @@ class SendMessageTest(unittest.TestCase):
         self.first_socket.touch()
         self.second_socket.touch()
         FakeAppServerClient.requests = []
+        FakeAppServerClient.notifications_by_socket = {}
         FakeAppServerClient.threads_by_socket = {
             self.first_socket: [
                 {"id": "old-session", "status": {"type": "notLoaded"}},
@@ -174,14 +184,15 @@ class SendMessageTest(unittest.TestCase):
         }
 
     def test_sends_turn_to_matching_loaded_session(self):
-        session_id = agent_util.send_message(
+        session_id, summary = agent_util.send_message(
             "abcdef",
             "hello there",
-            self.socket_dir,
-            FakeAppServerClient,
+            socket_dir=self.socket_dir,
+            client_factory=FakeAppServerClient,
         )
 
         self.assertEqual(session_id, "abcdef-123")
+        self.assertIsNone(summary)
         self.assertIn(
             (
                 self.first_socket,
@@ -199,9 +210,79 @@ class SendMessageTest(unittest.TestCase):
             agent_util.send_message(
                 "old-session",
                 "hello",
-                self.socket_dir,
-                FakeAppServerClient,
+                socket_dir=self.socket_dir,
+                client_factory=FakeAppServerClient,
             )
+
+    def test_waits_for_matching_turn_and_returns_final_message(self):
+        FakeAppServerClient.notifications_by_socket[self.first_socket] = [
+            {
+                "method": "turn/completed",
+                "params": {
+                    "threadId": "another-session",
+                    "turn": {"id": "turn-id", "status": "completed", "items": []},
+                },
+            },
+            {
+                "method": "turn/completed",
+                "params": {
+                    "threadId": "abcdef-123",
+                    "turn": {
+                        "id": "turn-id",
+                        "status": "completed",
+                        "items": [
+                            {
+                                "type": "agentMessage",
+                                "text": "still working",
+                                "phase": "commentary",
+                            },
+                            {
+                                "type": "agentMessage",
+                                "text": "final answer",
+                                "phase": "final_answer",
+                            },
+                        ],
+                    },
+                },
+            },
+        ]
+
+        session_id, summary = agent_util.send_message(
+            "abcdef",
+            "hello",
+            wait=True,
+            socket_dir=self.socket_dir,
+            client_factory=FakeAppServerClient,
+        )
+
+        self.assertEqual(session_id, "abcdef-123")
+        self.assertEqual(summary, "final answer")
+
+    def test_wait_returns_when_turn_is_interrupted_without_a_summary(self):
+        FakeAppServerClient.notifications_by_socket[self.first_socket] = [
+            {
+                "method": "turn/completed",
+                "params": {
+                    "threadId": "abcdef-123",
+                    "turn": {
+                        "id": "turn-id",
+                        "status": "interrupted",
+                        "items": [],
+                    },
+                },
+            }
+        ]
+
+        session_id, summary = agent_util.send_message(
+            "abcdef",
+            "hello",
+            wait=True,
+            socket_dir=self.socket_dir,
+            client_factory=FakeAppServerClient,
+        )
+
+        self.assertEqual(session_id, "abcdef-123")
+        self.assertEqual(summary, "")
 
 
 if __name__ == "__main__":

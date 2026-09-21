@@ -32,6 +32,7 @@ class AppServerClient:
             self.socket.settimeout(APP_SERVER_TIMEOUT)
             self.socket.connect(str(socket_path))
             self.buffer = b""
+            self.notifications = []
             self._upgrade_websocket()
             self.next_id = 1
             self.request(
@@ -45,6 +46,9 @@ class AppServerClient:
 
     def close(self) -> None:
         self.socket.close()
+
+    def set_timeout(self, timeout: float | None) -> None:
+        self.socket.settimeout(timeout)
 
     def __enter__(self) -> AppServerClient:
         return self
@@ -60,8 +64,10 @@ class AppServerClient:
         self.next_id += 1
         self._write({"id": request_id, "method": method, "params": params})
         while True:
-            response = json.loads(self._read_text())
+            response = self._read_message()
             if response.get("id") != request_id:
+                if "method" in response and "id" not in response:
+                    self.notifications.append(response)
                 continue
             if "error" in response:
                 error = response["error"]
@@ -70,6 +76,20 @@ class AppServerClient:
                 )
                 raise RuntimeError(f"app-server {method} failed: {detail}")
             return response.get("result")
+
+    def next_notification(self) -> dict[str, Any]:
+        if self.notifications:
+            return self.notifications.pop(0)
+        while True:
+            message = self._read_message()
+            if "method" in message and "id" not in message:
+                return message
+
+    def _read_message(self) -> dict[str, Any]:
+        message = json.loads(self._read_text())
+        if not isinstance(message, dict):
+            raise RuntimeError("app-server returned a non-object message")
+        return message
 
     def _write(self, message: dict[str, Any]) -> None:
         payload = json.dumps(message, separators=(",", ":")).encode()
@@ -300,23 +320,53 @@ def app_server_sessions(
 def send_message(
     query: str,
     message: str,
+    wait: bool = False,
     socket_dir: Path | None = None,
     client_factory: Callable[[Path], AppServerClient] = AppServerClient,
-) -> str:
+) -> tuple[str, str | None]:
     agent = resolve_session(
         app_server_sessions(socket_dir, client_factory),
         query,
     )
     session_id = agent["session_id"]
     with client_factory(agent["app_server_socket"]) as client:
-        client.request(
+        if wait:
+            client.request(
+                "thread/resume",
+                {"threadId": session_id, "excludeTurns": True},
+            )
+        result = client.request(
             "turn/start",
             {
                 "threadId": session_id,
                 "input": [{"type": "text", "text": message}],
             },
         )
-    return session_id
+        if not wait:
+            return session_id, None
+        client.set_timeout(None)
+        turn_id = result["turn"]["id"]
+        while True:
+            notification = client.next_notification()
+            if notification.get("method") != "turn/completed":
+                continue
+            params = notification.get("params", {})
+            turn = params.get("turn", {})
+            if params.get("threadId") != session_id or turn.get("id") != turn_id:
+                continue
+            summary = next(
+                (
+                    item.get("text", "")
+                    for item in reversed(turn.get("items", []))
+                    if item.get("type") == "agentMessage"
+                    and item.get("phase") in (None, "final_answer")
+                ),
+                "",
+            )
+            if turn.get("status") == "failed" and not summary:
+                error = turn.get("error") or {}
+                raise RuntimeError(error.get("message", "Codex turn failed"))
+            return session_id, summary
 
 
 def parse_args() -> argparse.Namespace:
@@ -341,6 +391,11 @@ def parse_args() -> argparse.Namespace:
     )
     send_parser.add_argument("session", help="session ID or unique ID prefix")
     send_parser.add_argument("message", nargs="+", help="message text")
+    send_parser.add_argument(
+        "--wait",
+        action="store_true",
+        help="wait for completion or interruption and print the final message",
+    )
     args = parser.parse_args()
     if args.command == "wait" and args.interval <= 0:
         parser.error("--interval must be positive")
@@ -355,11 +410,21 @@ def main() -> int:
 
     if args.command == "send":
         try:
-            session_id = send_message(args.session, " ".join(args.message))
+            session_id, summary = send_message(
+                args.session,
+                " ".join(args.message),
+                args.wait,
+            )
+        except KeyboardInterrupt:
+            return 130
         except (OSError, RuntimeError, ValueError, json.JSONDecodeError) as error:
             print(f"agent-util: {error}", file=sys.stderr)
             return 1
-        print(f"{session_id}  sent")
+        if args.wait:
+            if summary:
+                print(summary)
+        else:
+            print(f"{session_id}  sent")
         return 0
 
     try:
