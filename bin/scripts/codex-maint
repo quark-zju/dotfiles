@@ -8,6 +8,7 @@ Actions:
                   "--consume <id>" 10 minutes before the next banked reset
                   expires, so the reset is not wasted.
   --consume ID    Spend one banked reset (RATE_LIMIT_RESET_CREDIT_ID).
+  --start-window  Start a fresh 5-hour usage window while it is still unused.
 
 Side effects and checks are appended to /tmp/codex-maint.log.
 """
@@ -24,6 +25,7 @@ import time
 from pathlib import Path
 
 CODEX = "codex"
+PING_DIR = Path("/tmp/codex-ping")
 LOG = Path("/tmp/codex-maint.log")
 
 # systemd user units created by --schedule.
@@ -166,6 +168,85 @@ def find_credit(credits, credit_id):
         if credit.get("id") == credit_id:
             return credit
     return None
+
+
+def find_five_hour_window(rate_limits):
+    """Find the 5-hour usage window in a rate-limit response.
+
+    rateLimits / rateLimitsByLimitId['codex'] looks like:
+        {'limitId': 'codex',
+         'planType': 'plus',
+         'primary': {'resetsAt': 1789977628,
+                     'usedPercent': 0,
+                     'windowDurationMins': 300},
+         'secondary': {'resetsAt': 1790476607,
+                       'usedPercent': 46,
+                       'windowDurationMins': 10080}}
+    """
+    # Prefer the modern multi-bucket form.
+    by_id = rate_limits.get("rateLimitsByLimitId") or {}
+    snapshot = by_id.get("codex")
+
+    # Backward-compatible fallback.
+    if snapshot is None:
+        snapshot = rate_limits.get("rateLimits")
+
+    if not snapshot:
+        return None
+
+    for name in ("primary", "secondary"):
+        window = snapshot.get(name)
+
+        if window is not None and window.get("windowDurationMins") == 300:
+            return window
+
+    return None
+
+
+def start_window():
+    PING_DIR.mkdir(parents=True, exist_ok=True)
+
+    subprocess.run(
+        [
+            CODEX,
+            "exec",
+            "--ephemeral",
+            "--ignore-user-config",
+            "--ignore-rules",
+            "--skip-git-repo-check",
+            "--disable",
+            "plugins",
+            "--disable",
+            "apps",
+            "--disable",
+            "tool_suggest",
+            "-m",
+            "gpt-5.6-luna",
+            "-c",
+            'model_reasoning_effort="low"',
+            "-c",
+            'instructions="Reply only with the single word pong. '
+            'Do not run commands or take any other action."',
+            "-c",
+            "include_permissions_instructions=false",
+            "-c",
+            "include_apps_instructions=false",
+            "-c",
+            "include_collaboration_mode_instructions=false",
+            "-c",
+            "include_environment_context=false",
+            "-c",
+            "skills.include_instructions=false",
+            "-C",
+            str(PING_DIR),
+            "Reply with exactly: pong",
+        ],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        timeout=30,
+        check=True,
+    )
 
 
 def systemctl(*args, check=True):
@@ -337,6 +418,28 @@ def command_consume(credit_id, force):
     return 0
 
 
+def command_start_window():
+    with codex_app_server() as server:
+        rate_limits = server.rate_limits()
+
+    window = find_five_hour_window(rate_limits)
+
+    if window is None:
+        log("start-window: 5-hour rate-limit window not found; doing nothing")
+        return 2
+
+    used = window["usedPercent"]
+
+    if used != 0:
+        log(f"start-window: 5-hour window already active: {used}% used")
+        return 0
+
+    log("start-window: 5-hour usage is 0%; starting a new window")
+    start_window()
+    log("start-window: done")
+    return 0
+
+
 def command_show():
     with codex_app_server() as server:
         pprint.pprint(server.rate_limits())
@@ -358,6 +461,11 @@ def parse_args(argv):
         "--consume",
         metavar="RATE_LIMIT_CREDIT_ID",
         help="spend one banked reset (no-op if it no longer exists)",
+    )
+    actions.add_argument(
+        "--start-window",
+        action="store_true",
+        help="start a 5-hour usage window if it is still unused",
     )
     parser.add_argument(
         "--force",
@@ -381,6 +489,8 @@ def main(argv=None):
             return command_consume(args.consume, args.force)
         if args.schedule:
             return command_schedule()
+        if args.start_window:
+            return command_start_window()
         return command_show()
     except Exception as error:
         log(f"error: {error}")
