@@ -44,6 +44,13 @@ def find_real_codex() -> str:
     return executable
 
 
+def sandboxed_codex_command(executable: str, *args: str) -> list[str]:
+    leash = Path.home() / ".cargo/bin/leash"
+    if leash.exists():
+        return [str(leash), "run", executable, *args]
+    return [executable, *args]
+
+
 def process_start_ticks() -> str:
     stat = Path("/proc/self/stat").read_text()
     return stat[stat.rfind(")") + 2 :].split()[19]
@@ -110,7 +117,7 @@ def run_remote_tui(executable: str, args: list[str]) -> int:
     try:
         with log_path.open("wb") as log:
             server = subprocess.Popen(
-                [executable, "app-server", "--listen", endpoint],
+                sandboxed_codex_command(executable, "app-server", "--listen", endpoint),
                 stdin=subprocess.DEVNULL,
                 stdout=log,
                 stderr=subprocess.STDOUT,
@@ -152,7 +159,8 @@ def main() -> int:
         executable = find_real_codex()
         args = sys.argv[1:]
         if args and args[0] != "resume":
-            os.execv(executable, [executable, *args])
+            command = sandboxed_codex_command(executable, *args)
+            os.execv(command[0], command)
         return run_remote_tui(executable, args)
     except (OSError, RuntimeError) as error:
         print(f"codex wrapper: {error}", file=sys.stderr)
