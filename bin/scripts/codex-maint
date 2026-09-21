@@ -330,7 +330,6 @@ def write_schedule_units(credit_id, fire_at):
         "\n"
         "[Timer]\n"
         f"OnCalendar={format_time(fire_at)}\n"
-        "Persistent=true\n"
         "RemainAfterElapse=false\n"
         "\n"
         "[Install]\n"

@@ -251,7 +251,7 @@ class WriteScheduleUnitsTest(CodexMaintTestCase):
         )
         self.assertIn("Type=oneshot", text)
 
-    def test_timer_is_a_persistent_one_shot(self):
+    def test_timer_fires_once_without_catch_up(self):
         _service, timer = codex_maint.write_schedule_units(
             "RateLimitResetCredit_f7", 1791090272
         )
@@ -259,7 +259,7 @@ class WriteScheduleUnitsTest(CodexMaintTestCase):
         text = timer.read_text()
 
         self.assertIn("OnCalendar=2026-10-04 05:04:32 UTC", text)
-        self.assertIn("Persistent=true", text)
+        self.assertNotIn("Persistent", text)
         self.assertIn("RemainAfterElapse=false", text)
         self.assertIn("WantedBy=timers.target", text)
 
