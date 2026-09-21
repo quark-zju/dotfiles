@@ -1,9 +1,15 @@
 #!/usr/bin/env python3
-"""List local Codex and Claude Code sessions and wait for one to stop working."""
+"""Inspect local coding-agent sessions, wait for them, or send Codex input."""
 
 from __future__ import annotations
 
 import argparse
+import base64
+import hashlib
+import json
+import os
+import socket
+import struct
 import sys
 import time
 from collections.abc import Callable
@@ -16,6 +22,147 @@ sys.path.insert(0, str(LIB_DIR))
 import ssh_sync_ops  # noqa: E402
 
 Agent = dict[str, Any]
+APP_SERVER_TIMEOUT = 5
+
+
+class AppServerClient:
+    def __init__(self, socket_path: Path) -> None:
+        self.socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        try:
+            self.socket.settimeout(APP_SERVER_TIMEOUT)
+            self.socket.connect(str(socket_path))
+            self.buffer = b""
+            self._upgrade_websocket()
+            self.next_id = 1
+            self.request(
+                "initialize",
+                {"clientInfo": {"name": "agent-util", "version": "1"}},
+            )
+            self.notify("initialized", {})
+        except Exception:
+            self.socket.close()
+            raise
+
+    def close(self) -> None:
+        self.socket.close()
+
+    def __enter__(self) -> AppServerClient:
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        self.close()
+
+    def notify(self, method: str, params: dict[str, Any]) -> None:
+        self._write({"method": method, "params": params})
+
+    def request(self, method: str, params: dict[str, Any]) -> Any:
+        request_id = self.next_id
+        self.next_id += 1
+        self._write({"id": request_id, "method": method, "params": params})
+        while True:
+            response = json.loads(self._read_text())
+            if response.get("id") != request_id:
+                continue
+            if "error" in response:
+                error = response["error"]
+                detail = (
+                    error.get("message", error) if isinstance(error, dict) else error
+                )
+                raise RuntimeError(f"app-server {method} failed: {detail}")
+            return response.get("result")
+
+    def _write(self, message: dict[str, Any]) -> None:
+        payload = json.dumps(message, separators=(",", ":")).encode()
+        self._write_frame(0x1, payload)
+
+    def _upgrade_websocket(self) -> None:
+        key = base64.b64encode(os.urandom(16)).decode()
+        request = (
+            "GET /rpc HTTP/1.1\r\n"
+            "Host: localhost\r\n"
+            "Upgrade: websocket\r\n"
+            "Connection: Upgrade\r\n"
+            f"Sec-WebSocket-Key: {key}\r\n"
+            "Sec-WebSocket-Version: 13\r\n"
+            "\r\n"
+        )
+        self.socket.sendall(request.encode())
+        headers = self._read_until(b"\r\n\r\n").decode("ascii")
+        lines = headers.split("\r\n")
+        if not lines[0].startswith("HTTP/1.1 101 "):
+            raise RuntimeError(f"app-server WebSocket upgrade failed: {lines[0]}")
+        fields = {
+            name.lower(): value.strip()
+            for line in lines[1:]
+            if ":" in line
+            for name, value in [line.split(":", 1)]
+        }
+        expected = base64.b64encode(
+            hashlib.sha1(
+                (key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").encode(),
+                usedforsecurity=False,
+            ).digest()
+        ).decode()
+        if fields.get("sec-websocket-accept") != expected:
+            raise RuntimeError("app-server returned an invalid WebSocket accept key")
+
+    def _read_until(self, marker: bytes) -> bytes:
+        while marker not in self.buffer:
+            chunk = self.socket.recv(65536)
+            if not chunk:
+                raise RuntimeError("app-server closed the connection")
+            self.buffer += chunk
+        end = self.buffer.index(marker) + len(marker)
+        result, self.buffer = self.buffer[:end], self.buffer[end:]
+        return result
+
+    def _read_exact(self, length: int) -> bytes:
+        while len(self.buffer) < length:
+            chunk = self.socket.recv(max(65536, length - len(self.buffer)))
+            if not chunk:
+                raise RuntimeError("app-server closed the connection")
+            self.buffer += chunk
+        result, self.buffer = self.buffer[:length], self.buffer[length:]
+        return result
+
+    def _read_text(self) -> str:
+        while True:
+            first, second = self._read_exact(2)
+            final = bool(first & 0x80)
+            opcode = first & 0x0F
+            length = second & 0x7F
+            if length == 126:
+                length = struct.unpack("!H", self._read_exact(2))[0]
+            elif length == 127:
+                length = struct.unpack("!Q", self._read_exact(8))[0]
+            if second & 0x80:
+                mask = self._read_exact(4)
+                payload = bytes(
+                    value ^ mask[index % 4]
+                    for index, value in enumerate(self._read_exact(length))
+                )
+            else:
+                payload = self._read_exact(length)
+            if opcode == 0x9:
+                self._write_frame(0xA, payload)
+                continue
+            if opcode == 0x8:
+                raise RuntimeError("app-server closed the WebSocket")
+            if opcode != 0x1 or not final:
+                raise RuntimeError("app-server returned an unsupported WebSocket frame")
+            return payload.decode()
+
+    def _write_frame(self, opcode: int, payload: bytes) -> None:
+        mask = os.urandom(4)
+        length = len(payload)
+        if length < 126:
+            header = bytes((0x80 | opcode, 0x80 | length))
+        elif length < 2**16:
+            header = bytes((0x80 | opcode, 0xFE)) + struct.pack("!H", length)
+        else:
+            header = bytes((0x80 | opcode, 0xFF)) + struct.pack("!Q", length)
+        masked = bytes(value ^ mask[index % 4] for index, value in enumerate(payload))
+        self.socket.sendall(header + mask + masked)
 
 
 def state(agent: Agent) -> str:
@@ -110,6 +257,68 @@ def wait_for_session(
     return session_id, agent
 
 
+def app_server_sessions(
+    socket_dir: Path | None = None,
+    client_factory: Callable[[Path], AppServerClient] = AppServerClient,
+) -> list[Agent]:
+    if socket_dir is None:
+        runtime_dir = os.environ.get("XDG_RUNTIME_DIR")
+        if not runtime_dir or not os.path.isabs(runtime_dir):
+            raise RuntimeError("XDG_RUNTIME_DIR must be set to an absolute path")
+        socket_dir = Path(runtime_dir, "codex-app-server")
+
+    agents = {}
+    for socket_path in sorted(socket_dir.glob("*.sock")):
+        try:
+            with client_factory(socket_path) as client:
+                cursor = None
+                while True:
+                    params = {"limit": 100, "useStateDbOnly": True}
+                    if cursor is not None:
+                        params["cursor"] = cursor
+                    result = client.request("thread/list", params)
+                    for thread in result.get("data", []):
+                        session_id = thread.get("id")
+                        status = thread.get("status")
+                        if (
+                            isinstance(session_id, str)
+                            and isinstance(status, dict)
+                            and status.get("type") != "notLoaded"
+                        ):
+                            agents[session_id] = {
+                                "session_id": session_id,
+                                "app_server_socket": socket_path,
+                            }
+                    cursor = result.get("nextCursor")
+                    if not cursor:
+                        break
+        except (OSError, RuntimeError, json.JSONDecodeError):
+            continue
+    return list(agents.values())
+
+
+def send_message(
+    query: str,
+    message: str,
+    socket_dir: Path | None = None,
+    client_factory: Callable[[Path], AppServerClient] = AppServerClient,
+) -> str:
+    agent = resolve_session(
+        app_server_sessions(socket_dir, client_factory),
+        query,
+    )
+    session_id = agent["session_id"]
+    with client_factory(agent["app_server_socket"]) as client:
+        client.request(
+            "turn/start",
+            {
+                "threadId": session_id,
+                "input": [{"type": "text", "text": message}],
+            },
+        )
+    return session_id
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="inspect local Codex and Claude Code agent sessions",
@@ -127,6 +336,11 @@ def parse_args() -> argparse.Namespace:
         metavar="SECONDS",
         help="poll interval (default: 1 second)",
     )
+    send_parser = subparsers.add_parser(
+        "send", help="send a message to a Codex app-server session"
+    )
+    send_parser.add_argument("session", help="session ID or unique ID prefix")
+    send_parser.add_argument("message", nargs="+", help="message text")
     args = parser.parse_args()
     if args.command == "wait" and args.interval <= 0:
         parser.error("--interval must be positive")
@@ -137,6 +351,15 @@ def main() -> int:
     args = parse_args()
     if args.command == "list":
         print_agents(ssh_sync_ops.list_running_agents())
+        return 0
+
+    if args.command == "send":
+        try:
+            session_id = send_message(args.session, " ".join(args.message))
+        except (OSError, RuntimeError, ValueError, json.JSONDecodeError) as error:
+            print(f"agent-util: {error}", file=sys.stderr)
+            return 1
+        print(f"{session_id}  sent")
         return 0
 
     try:

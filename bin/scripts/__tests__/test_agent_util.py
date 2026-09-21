@@ -1,5 +1,7 @@
 import importlib.machinery
 import importlib.util
+import socket
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -19,6 +21,31 @@ def agent(session_id, *, working=False, suspended=False):
     }
 
 
+class FakeAppServerClient:
+    threads_by_socket = {}
+    requests = []
+
+    def __init__(self, socket_path):
+        self.socket_path = socket_path
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        pass
+
+    def request(self, method, params):
+        self.requests.append((self.socket_path, method, params))
+        if method == "thread/list":
+            return {
+                "data": self.threads_by_socket[self.socket_path],
+                "nextCursor": None,
+            }
+        if method == "turn/start":
+            return {"turn": {"id": "turn-id"}}
+        raise AssertionError(method)
+
+
 class StateTest(unittest.TestCase):
     def test_suspended_takes_precedence_over_working(self):
         self.assertEqual(
@@ -28,6 +55,36 @@ class StateTest(unittest.TestCase):
 
     def test_non_working_session_is_idle(self):
         self.assertEqual(agent_util.state(agent("one")), "idle")
+
+
+class WebSocketFrameTest(unittest.TestCase):
+    def setUp(self):
+        self.client_socket, self.server_socket = socket.socketpair()
+        self.addCleanup(self.client_socket.close)
+        self.addCleanup(self.server_socket.close)
+        self.client = agent_util.AppServerClient.__new__(agent_util.AppServerClient)
+        self.client.socket = self.client_socket
+        self.client.buffer = b""
+
+    def test_writes_masked_text_frame(self):
+        self.client._write_frame(0x1, b"hello")
+
+        frame = self.server_socket.recv(1024)
+        self.assertEqual(frame[0], 0x81)
+        self.assertEqual(frame[1], 0x80 | 5)
+        mask = frame[2:6]
+        payload = bytes(
+            value ^ mask[index % 4] for index, value in enumerate(frame[6:])
+        )
+        self.assertEqual(payload, b"hello")
+
+    def test_reads_unmasked_text_frame(self):
+        payload = b"x" * 130
+        self.server_socket.sendall(
+            b"\x81\x7e" + len(payload).to_bytes(2, "big") + payload
+        )
+
+        self.assertEqual(self.client._read_text(), payload.decode())
 
 
 class ResolveSessionTest(unittest.TestCase):
@@ -94,6 +151,57 @@ class WaitForSessionTest(unittest.TestCase):
 
         self.assertEqual(agent_util.state(result), "idle")
         self.assertEqual(calls, 1)
+
+
+class SendMessageTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.socket_dir = Path(self.tmp.name)
+        self.first_socket = self.socket_dir / "1.sock"
+        self.second_socket = self.socket_dir / "2.sock"
+        self.first_socket.touch()
+        self.second_socket.touch()
+        FakeAppServerClient.requests = []
+        FakeAppServerClient.threads_by_socket = {
+            self.first_socket: [
+                {"id": "old-session", "status": {"type": "notLoaded"}},
+                {"id": "abcdef-123", "status": {"type": "idle"}},
+            ],
+            self.second_socket: [
+                {"id": "second-session", "status": {"type": "active"}},
+            ],
+        }
+
+    def test_sends_turn_to_matching_loaded_session(self):
+        session_id = agent_util.send_message(
+            "abcdef",
+            "hello there",
+            self.socket_dir,
+            FakeAppServerClient,
+        )
+
+        self.assertEqual(session_id, "abcdef-123")
+        self.assertIn(
+            (
+                self.first_socket,
+                "turn/start",
+                {
+                    "threadId": "abcdef-123",
+                    "input": [{"type": "text", "text": "hello there"}],
+                },
+            ),
+            FakeAppServerClient.requests,
+        )
+
+    def test_does_not_match_session_not_loaded_by_app_server(self):
+        with self.assertRaisesRegex(ValueError, "no current session"):
+            agent_util.send_message(
+                "old-session",
+                "hello",
+                self.socket_dir,
+                FakeAppServerClient,
+            )
 
 
 if __name__ == "__main__":
