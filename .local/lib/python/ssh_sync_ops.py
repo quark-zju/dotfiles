@@ -64,22 +64,32 @@ def _process_start_ticks(pid):
         return None
 
 
-def _ssh_client_pid(pid):
-    """Return SSH_CLIENT_PID from a process environment, if valid."""
+def _process_environment(pid, name):
+    """Return one value from a process environment."""
     try:
         with open("/proc/%d/environ" % pid, "rb") as stream:
             environment = stream.read().split(b"\0")
     except OSError:
         return None
-    prefix = b"SSH_CLIENT_PID="
+    prefix = (name + "=").encode()
     for entry in environment:
         if entry.startswith(prefix):
-            try:
-                value = int(entry[len(prefix) :])
-            except ValueError:
-                return None
-            return value if value > 0 else None
+            return entry[len(prefix) :].decode(errors="replace")
     return None
+
+
+def _process_environment_pid(pid, name):
+    """Return a positive PID from a process environment, if valid."""
+    try:
+        value = int(_process_environment(pid, name))
+    except (TypeError, ValueError):
+        return None
+    return value if value > 0 else None
+
+
+def _ssh_client_pid(pid):
+    """Return SSH_CLIENT_PID from a process environment, if valid."""
+    return _process_environment_pid(pid, "SSH_CLIENT_PID")
 
 
 def _list_codex_agents():
@@ -243,14 +253,24 @@ def _list_codex_agents():
 
                 if not user_messages:
                     return None
+                # A remote TUI's app-server is in a separate process group so
+                # it can be cleaned up as a unit. Report the foreground wrapper
+                # instead, preserving job-control state and terminal identity.
+                display_pid = _process_environment_pid(pid, "CODEX_TUI_PID")
+                expected_start = _process_environment(pid, "CODEX_TUI_START_TICKS")
+                if (
+                    display_pid is None
+                    or _process_start_ticks(display_pid) != expected_start
+                ):
+                    display_pid = pid
                 agent = {
                     "session_id": session_id,
                     "harness": "codex",
                     "user_messages": list(reversed(user_messages)),
                     "working": bool(working),
-                    "pid": pid,
-                    "start_time": _process_start_time(pid),
-                    "suspended": _process_suspended(pid),
+                    "pid": display_pid,
+                    "start_time": _process_start_time(display_pid),
+                    "suspended": _process_suspended(display_pid),
                     "cwd": cwd,
                     "repo_name": repo_name(cwd),
                 }

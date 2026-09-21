@@ -1,1 +1,163 @@
-../../.cargo/bin/leash
+#!/usr/bin/env python3
+"""Run interactive Codex sessions through a per-TUI app server."""
+
+from __future__ import annotations
+
+import os
+import shutil
+import signal
+import stat
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+SERVER_START_TIMEOUT = 10
+SERVER_STOP_TIMEOUT = 2
+
+
+class SignalExit(Exception):
+    def __init__(self, signum: int) -> None:
+        self.signum = signum
+
+
+def raise_signal(signum: int, _frame: object) -> None:
+    raise SignalExit(signum)
+
+
+def find_real_codex() -> str:
+    """Find the next codex executable on PATH, excluding this wrapper."""
+    self_path = Path(__file__).resolve()
+    search_path = []
+    for entry in os.get_exec_path():
+        candidate = Path(entry or os.curdir) / "codex"
+        try:
+            if candidate.samefile(self_path):
+                continue
+        except OSError:
+            pass
+        search_path.append(entry)
+
+    executable = shutil.which("codex", path=os.pathsep.join(search_path))
+    if executable is None:
+        raise RuntimeError("cannot find the real codex executable on PATH")
+    return executable
+
+
+def process_start_ticks() -> str:
+    stat = Path("/proc/self/stat").read_text()
+    return stat[stat.rfind(")") + 2 :].split()[19]
+
+
+def wait_for_socket(server: subprocess.Popen[bytes], path: Path) -> None:
+    deadline = time.monotonic() + SERVER_START_TIMEOUT
+    while time.monotonic() < deadline:
+        if path.exists() and stat.S_ISSOCK(path.stat().st_mode):
+            return
+        status = server.poll()
+        if status is not None:
+            raise RuntimeError(f"app-server exited during startup with status {status}")
+        time.sleep(0.02)
+    raise RuntimeError(f"app-server did not create {path} within 10 seconds")
+
+
+def stop_server(server: subprocess.Popen[bytes]) -> None:
+    deadline = time.monotonic() + SERVER_STOP_TIMEOUT
+    try:
+        os.killpg(server.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        server.wait()
+        return
+
+    try:
+        server.wait(timeout=max(0, deadline - time.monotonic()))
+    except subprocess.TimeoutExpired:
+        pass
+    while time.monotonic() < deadline:
+        try:
+            os.killpg(server.pid, 0)
+        except ProcessLookupError:
+            server.wait()
+            return
+        time.sleep(0.02)
+    try:
+        os.killpg(server.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    server.wait()
+
+
+def run_remote_tui(executable: str, args: list[str]) -> int:
+    runtime_dir = os.environ.get("XDG_RUNTIME_DIR")
+    if not runtime_dir or not os.path.isabs(runtime_dir):
+        raise RuntimeError("XDG_RUNTIME_DIR must be set to an absolute path")
+
+    server_dir = Path(runtime_dir, "codex-app-server")
+    server_dir.mkdir(mode=0o700, exist_ok=True)
+    socket_path = server_dir / f"{os.getpid()}.sock"
+    log_path = server_dir / f"{os.getpid()}.log"
+    endpoint = f"unix://{socket_path}"
+
+    environment = os.environ.copy()
+    environment["CODEX_APP_SERVER_SOCKET"] = str(socket_path)
+    environment["CODEX_TUI_PID"] = str(os.getpid())
+    environment["CODEX_TUI_START_TICKS"] = process_start_ticks()
+
+    server = None
+    tui = None
+    for signum in (signal.SIGHUP, signal.SIGTERM, signal.SIGQUIT):
+        signal.signal(signum, raise_signal)
+    try:
+        with log_path.open("wb") as log:
+            server = subprocess.Popen(
+                [executable, "app-server", "--listen", endpoint],
+                stdin=subprocess.DEVNULL,
+                stdout=log,
+                stderr=subprocess.STDOUT,
+                env=environment,
+                # Include the launcher and the real server in cleanup.
+                start_new_session=True,
+            )
+        wait_for_socket(server, socket_path)
+
+        if args:
+            command = [executable, "resume", "--remote", endpoint, *args[1:]]
+        else:
+            command = [executable, "--remote", endpoint]
+        tui = subprocess.Popen(command, env=environment)
+        return tui.wait()
+    except KeyboardInterrupt:
+        return 130
+    except SignalExit as error:
+        return 128 + error.signum
+    except Exception:
+        try:
+            details = log_path.read_text().strip()
+        except OSError:
+            details = ""
+        if details:
+            print(details, file=sys.stderr)
+        raise
+    finally:
+        if tui is not None and tui.poll() is None:
+            tui.terminate()
+        if server is not None:
+            stop_server(server)
+        socket_path.unlink(missing_ok=True)
+        log_path.unlink(missing_ok=True)
+
+
+def main() -> int:
+    try:
+        executable = find_real_codex()
+        args = sys.argv[1:]
+        if args and args[0] != "resume":
+            os.execv(executable, [executable, *args])
+        return run_remote_tui(executable, args)
+    except (OSError, RuntimeError) as error:
+        print(f"codex wrapper: {error}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
