@@ -4,6 +4,9 @@
 
 Actions:
   (default)       Print the raw account rate-limit response.
+  --schedule      Create a one-off systemd user timer that runs
+                  "--consume <id>" 10 minutes before the next banked reset
+                  expires, so the reset is not wasted.
   --consume ID    Spend one banked reset (RATE_LIMIT_RESET_CREDIT_ID).
 
 Side effects and checks are appended to /tmp/codex-maint.log.
@@ -14,6 +17,7 @@ import contextlib
 import hashlib
 import json
 import pprint
+import shutil
 import subprocess
 import sys
 import time
@@ -21,6 +25,14 @@ from pathlib import Path
 
 CODEX = "codex"
 LOG = Path("/tmp/codex-maint.log")
+
+# systemd user units created by --schedule.
+UNIT_NAME = "codex-maint-consume"
+UNIT_PATTERN = f"{UNIT_NAME}*"
+UNIT_DIR = Path("~/.config/systemd/user").expanduser()
+
+# Consume a banked reset this long before it expires.
+SCHEDULE_LEAD_SECONDS = 10 * 60
 
 # Refuse to burn a banked reset that still has more than this much life left,
 # unless --force is given.
@@ -35,6 +47,10 @@ def log(message):
             log_file.write(line + "\n")
     except OSError as error:
         print(f"warning: cannot append to {LOG}: {error}", file=sys.stderr)
+
+
+def format_time(timestamp):
+    return time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime(timestamp))
 
 
 def send(proc, obj):
@@ -152,6 +168,147 @@ def find_credit(credits, credit_id):
     return None
 
 
+def systemctl(*args, check=True):
+    if shutil.which("systemctl") is None:
+        raise RuntimeError(
+            "systemctl not found; --schedule needs a systemd user manager "
+            "(run this on the machine whose timer should consume the reset)"
+        )
+
+    return subprocess.run(
+        ["systemctl", "--user", *args],
+        capture_output=True,
+        text=True,
+        check=check,
+    )
+
+
+def pending_schedule():
+    """Return the pending --schedule timer, or None if there is none.
+
+    This is checked before talking to codex, so that repeated --schedule runs
+    are cheap.
+    """
+    result = systemctl(
+        "list-timers", "--all", "--output=json", UNIT_PATTERN, check=False
+    )
+
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"systemctl --user list-timers failed: {result.stderr.strip()}"
+        )
+
+    try:
+        timers = json.loads(result.stdout)
+    except json.JSONDecodeError as error:
+        raise RuntimeError(
+            f"unexpected list-timers output: {result.stdout!r}"
+        ) from error
+
+    for timer in timers:
+        # A one-shot timer that already elapsed reports next=null; only a real
+        # upcoming elapse counts as pending.
+        if timer.get("next"):
+            return timer
+
+    return None
+
+
+def service_path():
+    """PATH for the one-shot service, which otherwise lacks the login PATH."""
+    codex_path = shutil.which(CODEX)
+
+    if codex_path is None:
+        return "%h/.local/bin:/usr/local/bin:/usr/bin:/bin"
+
+    codex_dir = str(Path(codex_path).parent)
+    return f"{codex_dir}:%h/.local/bin:/usr/local/bin:/usr/bin:/bin"
+
+
+def write_schedule_units(credit_id, fire_at):
+    UNIT_DIR.mkdir(parents=True, exist_ok=True)
+
+    script = Path(__file__).resolve()
+    service = UNIT_DIR / f"{UNIT_NAME}.service"
+    timer = UNIT_DIR / f"{UNIT_NAME}.timer"
+
+    service.write_text(
+        "[Unit]\n"
+        f"Description=Consume Codex banked reset {credit_id}\n"
+        "\n"
+        "[Service]\n"
+        "Type=oneshot\n"
+        f"ExecStart={script} --consume {credit_id}\n"
+        f"Environment=PATH={service_path()}\n"
+    )
+    timer.write_text(
+        "[Unit]\n"
+        f"Description=Consume Codex banked reset {credit_id} before it expires\n"
+        "\n"
+        "[Timer]\n"
+        f"OnCalendar={format_time(fire_at)}\n"
+        "Persistent=true\n"
+        "RemainAfterElapse=false\n"
+        "\n"
+        "[Install]\n"
+        "WantedBy=timers.target\n"
+    )
+
+    return service, timer
+
+
+def schedule_consume(credit_id, fire_at):
+    service, timer = write_schedule_units(credit_id, fire_at)
+
+    # daemon-reload is needed for newly written unit files; enable makes the
+    # timer survive a reboot (with Persistent=true it also fires late instead
+    # of never).
+    systemctl("daemon-reload")
+    systemctl("enable", timer.name)
+    systemctl("restart", timer.name)
+
+    return service, timer
+
+
+def command_schedule():
+    timer = pending_schedule()
+
+    if timer is not None:
+        fire_at = (timer["next"] or 0) / 1_000_000
+        log(
+            f"schedule: {timer['unit']} already pending for "
+            f"{format_time(fire_at)}; skipping codex check"
+        )
+        return 0
+
+    with codex_app_server() as server:
+        rate_limits = server.rate_limits()
+
+    now = time.time()
+    credits = [
+        credit
+        for credit in available_credits(rate_limits)
+        if (credit.get("expiresAt") or 0) > now
+    ]
+
+    if not credits:
+        log("schedule: no available banked reset; nothing to do")
+        return 0
+
+    credit = credits[0]
+    credit_id = credit["id"]
+    expires_at = credit["expiresAt"]
+    # Run 10 minutes before expiry, but never in the past.
+    fire_at = max(expires_at - SCHEDULE_LEAD_SECONDS, now + 30)
+
+    _service, timer = schedule_consume(credit_id, fire_at)
+    log(
+        f"schedule: {credit_id} expires {format_time(expires_at)}; "
+        f"{timer.name} will consume it at {format_time(fire_at)}"
+    )
+    return 0
+
+
 def command_consume(credit_id, force):
     with codex_app_server() as server:
         credits = available_credits(server.rate_limits())
@@ -193,6 +350,11 @@ def parse_args(argv):
     )
     actions = parser.add_mutually_exclusive_group()
     actions.add_argument(
+        "--schedule",
+        action="store_true",
+        help="systemd timer to consume the next expiring banked reset",
+    )
+    actions.add_argument(
         "--consume",
         metavar="RATE_LIMIT_CREDIT_ID",
         help="spend one banked reset (no-op if it no longer exists)",
@@ -217,6 +379,8 @@ def main(argv=None):
     try:
         if args.consume is not None:
             return command_consume(args.consume, args.force)
+        if args.schedule:
+            return command_schedule()
         return command_show()
     except Exception as error:
         log(f"error: {error}")
