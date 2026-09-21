@@ -1,8 +1,13 @@
 #!/usr/bin/env python3
 
+"""Codex account maintenance utilities."""
+
+import contextlib
 import json
+import pprint
 import subprocess
 import sys
+from pathlib import Path
 
 CODEX = "codex"
 
@@ -26,7 +31,38 @@ def recv_id(proc, wanted_id):
             return msg["result"]
 
 
-def process_banked_resets():
+class CodexAppServer:
+    """Line-delimited JSON-RPC client for "codex app-server --stdio"."""
+
+    def __init__(self, proc):
+        self._proc = proc
+        self._next_id = 1
+
+    def call(self, method, params=None):
+        request = {"id": self._next_id, "method": method}
+        if params is not None:
+            request["params"] = params
+        self._next_id += 1
+
+        send(self._proc, request)
+        return recv_id(self._proc, request["id"])
+
+    def initialize(self, client_name):
+        self.call(
+            "initialize",
+            {
+                "clientInfo": {"name": client_name, "version": "1"},
+                "capabilities": {},
+            },
+        )
+        send(self._proc, {"method": "initialized", "params": {}})
+
+    def rate_limits(self):
+        return self.call("account/rateLimits/read")
+
+
+@contextlib.contextmanager
+def codex_app_server(client_name="codex-maint"):
     proc = subprocess.Popen(
         [CODEX, "app-server", "--stdio"],
         stdin=subprocess.PIPE,
@@ -37,105 +73,9 @@ def process_banked_resets():
     )
 
     try:
-        # 1. JSON-RPC initialization.
-        send(
-            proc,
-            {
-                "id": 1,
-                "method": "initialize",
-                "params": {
-                    "clientInfo": {
-                        "name": "codex-reset-check",
-                        "version": "1",
-                    },
-                    "capabilities": {},
-                },
-            },
-        )
-        recv_id(proc, 1)
-
-        # 2. Initialization notification.
-        send(
-            proc,
-            {
-                "method": "initialized",
-                "params": {},
-            },
-        )
-
-        # 3. Read account limits.
-        send(
-            proc,
-            {
-                "id": 2,
-                "method": "account/rateLimits/read",
-            },
-        )
-
-        rate_limits = recv_id(proc, 2)
-
-        # {'accountId': '...',
-        #  'ordinaryUsageAllowed': True,
-        #  'rateLimitResetCredits': {'availableCount': 2,
-        #                            'credits': [{'description': 'Thanks for using '
-        #                                                        "Codex! You've been "
-        #                                                        'granted one free rate '
-        #                                                        'limit reset.',
-        #                                         'expiresAt': 1791090872,
-        #                                         'grantedAt': 1788498872,
-        #                                         'id': 'RateLimitResetCredit_f7...',
-        #                                         'resetType': 'codexRateLimits',
-        #                                         'status': 'available',
-        #                                         'title': 'Full reset (Weekly + 5 hr)'},
-        #                                        {'description': 'Thanks for using '
-        #                                                        "Codex! You've been "
-        #                                                        'granted one free rate '
-        #                                                        'limit reset.',
-        #                                         'expiresAt': 1791157198,
-        #                                         'grantedAt': 1788565198,
-        #                                         'id': 'RateLimitResetCredit_9d...',
-        #                                         'resetType': 'codexRateLimits',
-        #                                         'status': 'available',
-        #                                         'title': 'Full reset (Weekly + 5 '
-        #                                                  'hr)'}]},
-        #  'rateLimitUpsell': None,
-        #  'rateLimits': {'credits': {'balance': '0',
-        #                             'hasCredits': False,
-        #                             'unlimited': False},
-        #                 'individualLimit': None,
-        #                 'limitId': 'codex',
-        #                 'limitName': None,
-        #                 'normalModelSlug': None,
-        #                 'planType': 'plus',
-        #                 'primary': {'resetsAt': 1789977628,
-        #                             'usedPercent': 0,
-        #                             'windowDurationMins': 300},
-        #                 'rateLimitReachedType': None,
-        #                 'secondary': {'resetsAt': 1790476607,
-        #                               'usedPercent': 46,
-        #                               'windowDurationMins': 10080},
-        #                 'spendControlReached': False},
-        #  'rateLimitsByLimitId': {'codex': {'credits': {'balance': '0',
-        #                                                'hasCredits': False,
-        #                                                'unlimited': False},
-        #                                    'individualLimit': None,
-        #                                    'limitId': 'codex',
-        #                                    'limitName': None,
-        #                                    'normalModelSlug': None,
-        #                                    'planType': 'plus',
-        #                                    'primary': {'resetsAt': 1789977628,
-        #                                                'usedPercent': 0,
-        #                                                'windowDurationMins': 300},
-        #                                    'rateLimitReachedType': None,
-        #                                    'secondary': {'resetsAt': 1790476607,
-        #                                                  'usedPercent': 46,
-        #                                                  'windowDurationMins': 10080},
-        #                                    'spendControlReached': False}}}
-
-        import pprint
-
-        pprint.pprint(rate_limits)
-
+        server = CodexAppServer(proc)
+        server.initialize(client_name)
+        yield server
     finally:
         proc.terminate()
         try:
@@ -144,8 +84,14 @@ def process_banked_resets():
             proc.kill()
 
 
+def command_show():
+    with codex_app_server() as server:
+        pprint.pprint(server.rate_limits())
+    return 0
+
+
 def main():
-    process_banked_resets()
+    return command_show()
 
 
 if __name__ == "__main__":
