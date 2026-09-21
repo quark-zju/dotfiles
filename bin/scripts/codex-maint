@@ -225,8 +225,10 @@ def start_window():
             "-c",
             'model_reasoning_effort="low"',
             "-c",
-            'instructions="Reply only with the single word pong. '
-            'Do not run commands or take any other action."',
+            (
+                'instructions="Reply only with the single word pong. '
+                'Do not run commands or take any other action."'
+            ),
             "-c",
             "include_permissions_instructions=false",
             "-c",
