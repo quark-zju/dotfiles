@@ -175,6 +175,11 @@ bar {
 assign [app_id="^google-chrome$"] workspace number 10
 for_window [all] floating enable
 for_window [app_id="^(foot|google-chrome|thunar)$"] floating disable
+# Native Wayland Chrome exposes these as ordinary toplevels, so title matching
+# is currently the best available heuristic:
+# https://github.com/swaywm/sway/issues/7223
+# https://gitlab.freedesktop.org/wayland/wayland-protocols/-/work_items/140
+for_window [app_id="^google-chrome$" title="(?i) meeting$"] floating enable
 
 # XWayland window appearance rules migrated from i3.
 for_window [class="MPlayer"] border pixel 1
