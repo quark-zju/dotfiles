@@ -1,15 +1,40 @@
 #!/usr/bin/env python3
 
-"""Codex account maintenance utilities."""
+"""Codex account maintenance.
 
+Actions:
+  (default)       Print the raw account rate-limit response.
+  --consume ID    Spend one banked reset (RATE_LIMIT_RESET_CREDIT_ID).
+
+Side effects and checks are appended to /tmp/codex-maint.log.
+"""
+
+import argparse
 import contextlib
+import hashlib
 import json
 import pprint
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 CODEX = "codex"
+LOG = Path("/tmp/codex-maint.log")
+
+# Refuse to burn a banked reset that still has more than this much life left,
+# unless --force is given.
+FORCE_THRESHOLD_SECONDS = 60 * 60
+
+
+def log(message):
+    line = f"{time.strftime('%Y-%m-%d %H:%M:%S%z')} {message}"
+    print(line, file=sys.stderr)
+    try:
+        with LOG.open("a") as log_file:
+            log_file.write(line + "\n")
+    except OSError as error:
+        print(f"warning: cannot append to {LOG}: {error}", file=sys.stderr)
 
 
 def send(proc, obj):
@@ -60,6 +85,15 @@ class CodexAppServer:
     def rate_limits(self):
         return self.call("account/rateLimits/read")
 
+    def consume_reset_credit(self, credit_id):
+        return self.call(
+            "account/rateLimitResetCredit/consume",
+            {
+                "idempotencyKey": reset_idempotency_key(credit_id),
+                "creditId": credit_id,
+            },
+        )
+
 
 @contextlib.contextmanager
 def codex_app_server(client_name="codex-maint"):
@@ -84,14 +118,109 @@ def codex_app_server(client_name="codex-maint"):
             proc.kill()
 
 
+def reset_idempotency_key(credit_id):
+    return "auto-reset-" + hashlib.sha256(credit_id.encode()).hexdigest()[:32]
+
+
+def available_credits(rate_limits):
+    """Return available banked resets, the soonest expiring one first.
+
+    rateLimitResetCredits looks like:
+        {'availableCount': 2,
+         'credits': [{'description': '...',
+                      'expiresAt': 1791090872,
+                      'grantedAt': 1788498872,
+                      'id': 'RateLimitResetCredit_f7...',
+                      'resetType': 'codexRateLimits',
+                      'status': 'available',
+                      'title': 'Full reset (Weekly + 5 hr)'}]}
+    """
+    credits = rate_limits.get("rateLimitResetCredits") or {}
+    credits = credits.get("credits") or []
+
+    available = [
+        credit for credit in credits if credit.get("status", "available") == "available"
+    ]
+    available.sort(key=lambda credit: credit.get("expiresAt") or 0)
+    return available
+
+
+def find_credit(credits, credit_id):
+    for credit in credits:
+        if credit.get("id") == credit_id:
+            return credit
+    return None
+
+
+def command_consume(credit_id, force):
+    with codex_app_server() as server:
+        credits = available_credits(server.rate_limits())
+        credit = find_credit(credits, credit_id)
+
+        if credit is None:
+            log(f"consume: {credit_id} is no longer available; nothing to do")
+            return 0
+
+        seconds_left = (credit.get("expiresAt") or 0) - time.time()
+
+        if seconds_left > FORCE_THRESHOLD_SECONDS and not force:
+            log(
+                f"consume: {credit_id} is valid for another "
+                f"{seconds_left / 3600:.1f}h; pass --force to spend it now"
+            )
+            return 3
+
+        log(
+            f"consume: spending {credit_id} "
+            f"({max(seconds_left, 0) / 3600:.2f}h left, force={force})"
+        )
+        result = server.consume_reset_credit(credit_id)
+        log(f"consume: {credit_id} done: {json.dumps(result, sort_keys=True)}")
+
+    return 0
+
+
 def command_show():
     with codex_app_server() as server:
         pprint.pprint(server.rate_limits())
     return 0
 
 
-def main():
-    return command_show()
+def parse_args(argv):
+    parser = argparse.ArgumentParser(
+        description="Codex account maintenance.",
+        epilog="With no action given, print the raw rate-limit response.",
+    )
+    actions = parser.add_mutually_exclusive_group()
+    actions.add_argument(
+        "--consume",
+        metavar="RATE_LIMIT_CREDIT_ID",
+        help="spend one banked reset (no-op if it no longer exists)",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="with --consume: spend a reset that has more than 1h left",
+    )
+
+    args = parser.parse_args(argv)
+
+    if args.force and args.consume is None:
+        parser.error("--force requires --consume")
+
+    return args
+
+
+def main(argv=None):
+    args = parse_args(sys.argv[1:] if argv is None else argv)
+
+    try:
+        if args.consume is not None:
+            return command_consume(args.consume, args.force)
+        return command_show()
+    except Exception as error:
+        log(f"error: {error}")
+        return 1
 
 
 if __name__ == "__main__":
