@@ -342,12 +342,13 @@ def write_schedule_units(credit_id, fire_at):
 def schedule_consume(credit_id, fire_at):
     service, timer = write_schedule_units(credit_id, fire_at)
 
-    # daemon-reload is needed for newly written unit files; enable makes the
-    # timer survive a reboot (with Persistent=true it also fires late instead
-    # of never).
+    # daemon-reload picks up the rewritten unit files, and enable --now makes
+    # the timer both boot persistent and start waiting now. Deliberately not
+    # restart: restarting a timer that has already triggered runs its service
+    # once immediately, which would fire --consume hours before the reset is
+    # due, refuse it as too healthy, and waste the elapse.
     systemctl("daemon-reload")
-    systemctl("enable", timer.name)
-    systemctl("restart", timer.name)
+    systemctl("enable", "--now", timer.name)
 
     return service, timer
 

@@ -314,11 +314,13 @@ class CommandScheduleTest(CodexMaintTestCase):
             elapsed, expires_at - codex_maint.SCHEDULE_LEAD_SECONDS, delta=2
         )
 
-        units = [call.args[0] for call in systemctl.call_args_list]
-        self.assertEqual(units, ["daemon-reload", "enable", "restart"])
+        units = [call.args for call in systemctl.call_args_list]
         self.assertEqual(
-            systemctl.call_args_list[-1].args[1],
-            "codex-maint-consume.timer",
+            units,
+            [
+                ("daemon-reload",),
+                ("enable", "--now", "codex-maint-consume.timer"),
+            ],
         )
 
     def test_does_nothing_without_available_credits(self):
