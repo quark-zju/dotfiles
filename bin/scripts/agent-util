@@ -389,6 +389,17 @@ def send_message(
             return session_id, summary
 
 
+def message_text(parts: list[str], input_stream: Any = None) -> str:
+    if parts:
+        return " ".join(parts)
+    if input_stream is None:
+        input_stream = sys.stdin
+    message = input_stream.read()
+    if not message.strip():
+        raise ValueError("message must be provided as arguments or stdin")
+    return message
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="inspect local Codex and Claude Code agent sessions",
@@ -410,7 +421,11 @@ def parse_args() -> argparse.Namespace:
         "send", help="send a message to a Codex app-server session"
     )
     send_parser.add_argument("session", help="session ID or unique ID prefix")
-    send_parser.add_argument("message", nargs="+", help="message text")
+    send_parser.add_argument(
+        "message",
+        nargs="*",
+        help="message text (default: read from stdin)",
+    )
     send_parser.add_argument(
         "--wait",
         action="store_true",
@@ -432,7 +447,7 @@ def main() -> int:
         try:
             session_id, summary = send_message(
                 args.session,
-                " ".join(args.message),
+                message_text(args.message),
                 args.wait,
                 on_intermediate=lambda text: print(text, end="\n\n", flush=True),
             )

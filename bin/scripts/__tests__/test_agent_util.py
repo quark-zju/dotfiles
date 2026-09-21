@@ -1,5 +1,6 @@
 import importlib.machinery
 import importlib.util
+import io
 import socket
 import tempfile
 import unittest
@@ -309,6 +310,21 @@ class SendMessageTest(unittest.TestCase):
 
         self.assertEqual(session_id, "abcdef-123")
         self.assertEqual(summary, "")
+
+
+class MessageTextTest(unittest.TestCase):
+    def test_joins_command_line_words(self):
+        self.assertEqual(agent_util.message_text(["hello", "there"]), "hello there")
+
+    def test_reads_entire_message_from_stdin(self):
+        self.assertEqual(
+            agent_util.message_text([], io.StringIO("first line\nsecond line\n")),
+            "first line\nsecond line\n",
+        )
+
+    def test_rejects_empty_stdin(self):
+        with self.assertRaisesRegex(ValueError, "arguments or stdin"):
+            agent_util.message_text([], io.StringIO("\n"))
 
 
 if __name__ == "__main__":
