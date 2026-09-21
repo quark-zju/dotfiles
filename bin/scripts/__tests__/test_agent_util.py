@@ -217,6 +217,29 @@ class SendMessageTest(unittest.TestCase):
     def test_waits_for_matching_turn_and_returns_final_message(self):
         FakeAppServerClient.notifications_by_socket[self.first_socket] = [
             {
+                "method": "item/completed",
+                "params": {
+                    "threadId": "abcdef-123",
+                    "turnId": "turn-id",
+                    "item": {
+                        "type": "agentMessage",
+                        "text": "still working",
+                        "phase": "commentary",
+                    },
+                },
+            },
+            {
+                "method": "item/completed",
+                "params": {
+                    "threadId": "abcdef-123",
+                    "turnId": "turn-id",
+                    "item": {
+                        "type": "mcpToolCall",
+                        "server": "large MCP output",
+                    },
+                },
+            },
+            {
                 "method": "turn/completed",
                 "params": {
                     "threadId": "another-session",
@@ -246,16 +269,19 @@ class SendMessageTest(unittest.TestCase):
                 },
             },
         ]
+        intermediate = []
 
         session_id, summary = agent_util.send_message(
             "abcdef",
             "hello",
             wait=True,
+            on_intermediate=intermediate.append,
             socket_dir=self.socket_dir,
             client_factory=FakeAppServerClient,
         )
 
         self.assertEqual(session_id, "abcdef-123")
+        self.assertEqual(intermediate, ["still working"])
         self.assertEqual(summary, "final answer")
 
     def test_wait_returns_when_turn_is_interrupted_without_a_summary(self):

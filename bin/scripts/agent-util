@@ -323,6 +323,7 @@ def send_message(
     wait: bool = False,
     socket_dir: Path | None = None,
     client_factory: Callable[[Path], AppServerClient] = AppServerClient,
+    on_intermediate: Callable[[str], None] | None = None,
 ) -> tuple[str, str | None]:
     agent = resolve_session(
         app_server_sessions(socket_dir, client_factory),
@@ -346,13 +347,32 @@ def send_message(
             return session_id, None
         client.set_timeout(None)
         turn_id = result["turn"]["id"]
+        final_message = ""
         while True:
             notification = client.next_notification()
+            params = notification.get("params", {})
+            if params.get("threadId") != session_id:
+                continue
+
+            if (
+                notification.get("method") == "item/completed"
+                and params.get("turnId") == turn_id
+            ):
+                item = params.get("item", {})
+                if item.get("type") != "agentMessage":
+                    continue
+                text = item.get("text", "")
+                phase = item.get("phase")
+                if phase == "commentary" and text and on_intermediate is not None:
+                    on_intermediate(text)
+                elif phase in (None, "final_answer") and isinstance(text, str):
+                    final_message = text
+                continue
+
             if notification.get("method") != "turn/completed":
                 continue
-            params = notification.get("params", {})
             turn = params.get("turn", {})
-            if params.get("threadId") != session_id or turn.get("id") != turn_id:
+            if turn.get("id") != turn_id:
                 continue
             summary = next(
                 (
@@ -361,7 +381,7 @@ def send_message(
                     if item.get("type") == "agentMessage"
                     and item.get("phase") in (None, "final_answer")
                 ),
-                "",
+                final_message,
             )
             if turn.get("status") == "failed" and not summary:
                 error = turn.get("error") or {}
@@ -394,7 +414,7 @@ def parse_args() -> argparse.Namespace:
     send_parser.add_argument(
         "--wait",
         action="store_true",
-        help="wait for completion or interruption and print the final message",
+        help="print agent commentary and wait for the final message",
     )
     args = parser.parse_args()
     if args.command == "wait" and args.interval <= 0:
@@ -414,6 +434,7 @@ def main() -> int:
                 args.session,
                 " ".join(args.message),
                 args.wait,
+                on_intermediate=lambda text: print(text, end="\n\n", flush=True),
             )
         except KeyboardInterrupt:
             return 130
@@ -422,6 +443,7 @@ def main() -> int:
             return 1
         if args.wait:
             if summary:
+                print("--- final ---")
                 print(summary)
         else:
             print(f"{session_id}  sent")
