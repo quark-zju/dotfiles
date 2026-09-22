@@ -448,9 +448,14 @@ def tail_messages(
             if not cursor:
                 break
 
-        # Persisted items do not have timestamps, so use their turn boundaries.
+        # Persisted items do not have timestamps. Use turn boundaries for user
+        # and final messages, but do not imply an inaccurate commentary time.
         turn_times = {}
-        remaining_turns = {turn_id for _, _, turn_id in messages if turn_id}
+        remaining_turns = {
+            turn_id
+            for message_type, _, turn_id in messages
+            if turn_id and message_type != "commentary"
+        }
         cursor = None
         while remaining_turns:
             params = {
@@ -477,7 +482,12 @@ def tail_messages(
     timestamped_messages = []
     for message_type, text, turn_id in messages:
         started_at, completed_at = turn_times.get(turn_id, (None, None))
-        timestamp = started_at if message_type == "user" else completed_at or started_at
+        if message_type == "user":
+            timestamp = started_at
+        elif message_type == "final":
+            timestamp = completed_at or started_at
+        else:
+            timestamp = None
         timestamped_messages.append((message_type, text, timestamp))
     return session_id, timestamped_messages
 

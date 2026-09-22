@@ -420,7 +420,7 @@ class TailMessagesTest(unittest.TestCase):
             [
                 ("final", "old final", 110),
                 ("user", "new request", 200),
-                ("commentary", "working", 210),
+                ("commentary", "working", None),
                 ("final", "new final", 210),
             ],
         )
