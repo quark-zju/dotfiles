@@ -56,7 +56,7 @@ class FakeAppServerClient:
         if method == "thread/turns/list":
             return self.turns_by_socket[self.socket_path].pop(0)
         if method == "turn/start":
-            return {"turn": {"id": "turn-id"}}
+            return {"turn": {"id": "turn-id", "status": "inProgress"}}
         raise AssertionError(method)
 
     def next_notification(self):
@@ -458,6 +458,85 @@ class TailMessagesTest(unittest.TestCase):
         )
 
 
+class WaitForAppServerSessionTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.socket_path = Path(self.tmp.name) / "1.sock"
+        self.socket_path.touch()
+        FakeAppServerClient.requests = []
+        FakeAppServerClient.turns_by_socket = {
+            self.socket_path: [
+                {
+                    "data": [{"id": "turn-id", "status": "inProgress", "items": []}],
+                    "nextCursor": None,
+                }
+            ]
+        }
+        FakeAppServerClient.notifications_by_socket = {
+            self.socket_path: [
+                {
+                    "method": "item/completed",
+                    "params": {
+                        "threadId": "abcdef-123",
+                        "turnId": "turn-id",
+                        "item": {
+                            "type": "agentMessage",
+                            "text": "working",
+                            "phase": "commentary",
+                        },
+                    },
+                },
+                {
+                    "method": "turn/completed",
+                    "params": {
+                        "threadId": "abcdef-123",
+                        "turn": {
+                            "id": "turn-id",
+                            "status": "completed",
+                            "items": [
+                                {
+                                    "type": "agentMessage",
+                                    "text": "done",
+                                    "phase": "final_answer",
+                                }
+                            ],
+                        },
+                    },
+                },
+            ]
+        }
+
+    def test_streams_active_turn_and_returns_final_message(self):
+        intermediate = []
+
+        session_id, summary = agent_util.wait_for_app_server_session(
+            {
+                "session_id": "abcdef-123",
+                "app_server_socket": self.socket_path,
+            },
+            intermediate.append,
+            FakeAppServerClient,
+        )
+
+        self.assertEqual(session_id, "abcdef-123")
+        self.assertEqual(intermediate, ["working"])
+        self.assertEqual(summary, "done")
+        self.assertIn(
+            (
+                self.socket_path,
+                "thread/turns/list",
+                {
+                    "threadId": "abcdef-123",
+                    "limit": 1,
+                    "sortDirection": "desc",
+                    "itemsView": "summary",
+                },
+            ),
+            FakeAppServerClient.requests,
+        )
+
+
 class MessageTextTest(unittest.TestCase):
     def test_joins_command_line_words(self):
         self.assertEqual(agent_util.message_text(["hello", "there"]), "hello there")
@@ -478,6 +557,7 @@ class ParseArgsTest(unittest.TestCase):
         for argv in (
             ["agent-util", "tail", "abc"],
             ["agent-util", "send", "abc", "hello"],
+            ["agent-util", "wait", "abc"],
         ):
             with self.subTest(argv=argv), mock.patch.object(
                 agent_util.sys, "argv", argv
@@ -488,6 +568,7 @@ class ParseArgsTest(unittest.TestCase):
         for argv in (
             ["agent-util", "tail", "abc", "--no-timestamp"],
             ["agent-util", "send", "abc", "hello", "--no-timestamp"],
+            ["agent-util", "wait", "abc", "--no-timestamp"],
         ):
             with self.subTest(argv=argv), mock.patch.object(
                 agent_util.sys, "argv", argv

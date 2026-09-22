@@ -310,6 +310,7 @@ def app_server_sessions(
                             agents[session_id] = {
                                 "session_id": session_id,
                                 "app_server_socket": socket_path,
+                                "app_server_status": status.get("type"),
                             }
                     cursor = result.get("nextCursor")
                     if not cursor:
@@ -317,6 +318,92 @@ def app_server_sessions(
         except (OSError, RuntimeError, json.JSONDecodeError):
             continue
     return list(agents.values())
+
+
+def turn_result(turn: dict[str, Any], fallback: str = "") -> str:
+    summary = next(
+        (
+            item.get("text", "")
+            for item in reversed(turn.get("items", []))
+            if item.get("type") == "agentMessage"
+            and item.get("phase") in (None, "final_answer")
+        ),
+        fallback,
+    )
+    if turn.get("status") == "failed" and not summary:
+        error = turn.get("error") or {}
+        raise RuntimeError(error.get("message", "Codex turn failed"))
+    return summary
+
+
+def wait_for_app_server_turn(
+    client: AppServerClient,
+    session_id: str,
+    turn: dict[str, Any],
+    on_intermediate: Callable[[str], None] | None = None,
+) -> str:
+    if turn.get("status") != "inProgress":
+        return turn_result(turn)
+
+    client.set_timeout(None)
+    turn_id = turn["id"]
+    final_message = ""
+    while True:
+        notification = client.next_notification()
+        params = notification.get("params", {})
+        if params.get("threadId") != session_id:
+            continue
+
+        if (
+            notification.get("method") == "item/completed"
+            and params.get("turnId") == turn_id
+        ):
+            item = params.get("item", {})
+            if item.get("type") != "agentMessage":
+                continue
+            text = item.get("text", "")
+            phase = item.get("phase")
+            if phase == "commentary" and text and on_intermediate is not None:
+                on_intermediate(text)
+            elif phase in (None, "final_answer") and isinstance(text, str):
+                final_message = text
+            continue
+
+        if notification.get("method") != "turn/completed":
+            continue
+        completed_turn = params.get("turn", {})
+        if completed_turn.get("id") != turn_id:
+            continue
+        return turn_result(completed_turn, final_message)
+
+
+def wait_for_app_server_session(
+    agent: Agent,
+    on_intermediate: Callable[[str], None] | None = None,
+    client_factory: Callable[[Path], AppServerClient] = AppServerClient,
+) -> tuple[str, str]:
+    session_id = agent["session_id"]
+    with client_factory(agent["app_server_socket"]) as client:
+        client.request(
+            "thread/resume",
+            {"threadId": session_id, "excludeTurns": True},
+        )
+        result = client.request(
+            "thread/turns/list",
+            {
+                "threadId": session_id,
+                "limit": 1,
+                "sortDirection": "desc",
+                "itemsView": "summary",
+            },
+        )
+        turns = result.get("data", [])
+        summary = (
+            wait_for_app_server_turn(client, session_id, turns[0], on_intermediate)
+            if turns
+            else ""
+        )
+    return session_id, summary
 
 
 def send_message(
@@ -347,48 +434,12 @@ def send_message(
         )
         if not wait:
             return session_id, None
-        client.set_timeout(None)
-        turn_id = result["turn"]["id"]
-        final_message = ""
-        while True:
-            notification = client.next_notification()
-            params = notification.get("params", {})
-            if params.get("threadId") != session_id:
-                continue
-
-            if (
-                notification.get("method") == "item/completed"
-                and params.get("turnId") == turn_id
-            ):
-                item = params.get("item", {})
-                if item.get("type") != "agentMessage":
-                    continue
-                text = item.get("text", "")
-                phase = item.get("phase")
-                if phase == "commentary" and text and on_intermediate is not None:
-                    on_intermediate(text)
-                elif phase in (None, "final_answer") and isinstance(text, str):
-                    final_message = text
-                continue
-
-            if notification.get("method") != "turn/completed":
-                continue
-            turn = params.get("turn", {})
-            if turn.get("id") != turn_id:
-                continue
-            summary = next(
-                (
-                    item.get("text", "")
-                    for item in reversed(turn.get("items", []))
-                    if item.get("type") == "agentMessage"
-                    and item.get("phase") in (None, "final_answer")
-                ),
-                final_message,
-            )
-            if turn.get("status") == "failed" and not summary:
-                error = turn.get("error") or {}
-                raise RuntimeError(error.get("message", "Codex turn failed"))
-            return session_id, summary
+        return session_id, wait_for_app_server_turn(
+            client,
+            session_id,
+            result["turn"],
+            on_intermediate,
+        )
 
 
 def tail_messages(
@@ -584,6 +635,12 @@ def parse_args() -> argparse.Namespace:
         metavar="SECONDS",
         help="poll interval (default: 1 second)",
     )
+    wait_parser.add_argument(
+        "--no-timestamp",
+        dest="timestamp",
+        action="store_false",
+        help="omit local timestamps from Codex messages",
+    )
     send_parser = subparsers.add_parser(
         "send", help="send a message to a Codex app-server session"
     )
@@ -670,6 +727,44 @@ def main() -> int:
                 print(summary)
         else:
             print(f"{session_id}  sent")
+        return 0
+
+    try:
+        app_server_agents = app_server_sessions()
+    except RuntimeError:
+        app_server_agents = []
+    if any(
+        agent["session_id"] == args.session
+        or agent["session_id"].startswith(args.session)
+        for agent in app_server_agents
+    ):
+        try:
+            agent = resolve_session(app_server_agents, args.session)
+            if agent.get("app_server_status") != "active":
+                print(f"{agent['session_id']}  idle")
+                return 0
+
+            def print_intermediate(text: str) -> None:
+                timestamp_hint = (
+                    f"[{local_timestamp(time.time())}] " if args.timestamp else ""
+                )
+                print(f"{timestamp_hint}{text}", end="\n\n", flush=True)
+
+            session_id, summary = wait_for_app_server_session(
+                agent,
+                print_intermediate,
+            )
+        except KeyboardInterrupt:
+            return 130
+        except (OSError, RuntimeError, ValueError, json.JSONDecodeError) as error:
+            print(f"agent-util: {error}", file=sys.stderr)
+            return 1
+        if summary:
+            timestamp_hint = (
+                f" [{local_timestamp(time.time())}]" if args.timestamp else ""
+            )
+            print(f"--- final{timestamp_hint} ---")
+            print(summary)
         return 0
 
     try:
