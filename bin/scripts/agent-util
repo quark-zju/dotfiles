@@ -13,6 +13,7 @@ import struct
 import sys
 import time
 from collections.abc import Callable
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -396,7 +397,7 @@ def tail_messages(
     message_types: frozenset[str] = TAIL_MESSAGE_TYPES,
     socket_dir: Path | None = None,
     client_factory: Callable[[Path], AppServerClient] = AppServerClient,
-) -> tuple[str, list[tuple[str, str]]]:
+) -> tuple[str, list[tuple[str, str, int | None]]]:
     if count <= 0:
         raise ValueError("message count must be positive")
     agent = resolve_session(
@@ -440,14 +441,49 @@ def tail_messages(
                 else:
                     continue
                 if text:
-                    messages.append((message_type, text))
+                    messages.append((message_type, text, entry.get("turnId")))
                     if len(messages) == count:
                         break
             cursor = result.get("nextCursor")
             if not cursor:
                 break
+
+        # Persisted items do not have timestamps, so use their turn boundaries.
+        turn_times = {}
+        remaining_turns = {turn_id for _, _, turn_id in messages if turn_id}
+        cursor = None
+        while remaining_turns:
+            params = {
+                "threadId": session_id,
+                "limit": min(max(len(remaining_turns), 20), 100),
+                "sortDirection": "desc",
+                "itemsView": "notLoaded",
+            }
+            if cursor is not None:
+                params["cursor"] = cursor
+            result = client.request("thread/turns/list", params)
+            for turn in result.get("data", []):
+                turn_id = turn.get("id")
+                if turn_id in remaining_turns:
+                    turn_times[turn_id] = (
+                        turn.get("startedAt"),
+                        turn.get("completedAt"),
+                    )
+                    remaining_turns.remove(turn_id)
+            cursor = result.get("nextCursor")
+            if not cursor:
+                break
     messages.reverse()
-    return session_id, messages
+    timestamped_messages = []
+    for message_type, text, turn_id in messages:
+        started_at, completed_at = turn_times.get(turn_id, (None, None))
+        timestamp = started_at if message_type == "user" else completed_at or started_at
+        timestamped_messages.append((message_type, text, timestamp))
+    return session_id, timestamped_messages
+
+
+def local_timestamp(timestamp: float) -> str:
+    return datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M:%S")
 
 
 def message_text(parts: list[str], input_stream: Any = None) -> str:
@@ -501,6 +537,12 @@ def parse_args() -> argparse.Namespace:
         const="final",
         help="show final summary messages",
     )
+    tail_parser.add_argument(
+        "--no-timestamp",
+        dest="timestamp",
+        action="store_false",
+        help="omit local timestamps",
+    )
     tail_parser.epilog = "If no message type is selected, all types are shown."
     wait_parser = subparsers.add_parser(
         "wait", help="wait for a session to stop working"
@@ -527,6 +569,12 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="print agent commentary and wait for the final message",
     )
+    send_parser.add_argument(
+        "--no-timestamp",
+        dest="timestamp",
+        action="store_false",
+        help="omit local timestamps from waited messages",
+    )
     args = parser.parse_args()
     if args.command == "wait" and args.interval <= 0:
         parser.error("--interval must be positive")
@@ -551,20 +599,32 @@ def main() -> int:
         except (OSError, RuntimeError, ValueError, json.JSONDecodeError) as error:
             print(f"agent-util: {error}", file=sys.stderr)
             return 1
-        for index, (message_type, text) in enumerate(messages):
+        for index, (message_type, text, timestamp) in enumerate(messages):
             if index:
                 print()
-            print(f"--- {message_type} ---")
+            timestamp_hint = (
+                f" [{local_timestamp(timestamp)}]"
+                if args.timestamp and timestamp is not None
+                else ""
+            )
+            print(f"--- {message_type}{timestamp_hint} ---")
             print(text)
         return 0
 
     if args.command == "send":
+
+        def print_intermediate(text: str) -> None:
+            timestamp_hint = (
+                f"[{local_timestamp(time.time())}] " if args.timestamp else ""
+            )
+            print(f"{timestamp_hint}{text}", end="\n\n", flush=True)
+
         try:
             session_id, summary = send_message(
                 args.session,
                 message_text(args.message),
                 args.wait,
-                on_intermediate=lambda text: print(text, end="\n\n", flush=True),
+                on_intermediate=print_intermediate,
             )
         except KeyboardInterrupt:
             return 130
@@ -573,7 +633,10 @@ def main() -> int:
             return 1
         if args.wait:
             if summary:
-                print("--- final ---")
+                timestamp_hint = (
+                    f" [{local_timestamp(time.time())}]" if args.timestamp else ""
+                )
+                print(f"--- final{timestamp_hint} ---")
                 print(summary)
         else:
             print(f"{session_id}  sent")

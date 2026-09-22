@@ -5,6 +5,7 @@ import socket
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 SCRIPT = Path(__file__).parents[1] / "agent-util"
 LOADER = importlib.machinery.SourceFileLoader("agent_util", str(SCRIPT))
@@ -25,6 +26,7 @@ def agent(session_id, *, working=False, suspended=False):
 class FakeAppServerClient:
     threads_by_socket = {}
     items_by_socket = {}
+    turns_by_socket = {}
     notifications_by_socket = {}
     requests = []
 
@@ -51,6 +53,8 @@ class FakeAppServerClient:
             return {"thread": {"id": params["threadId"]}}
         if method == "thread/items/list":
             return self.items_by_socket[self.socket_path].pop(0)
+        if method == "thread/turns/list":
+            return self.turns_by_socket[self.socket_path].pop(0)
         if method == "turn/start":
             return {"turn": {"id": "turn-id"}}
         raise AssertionError(method)
@@ -177,6 +181,7 @@ class SendMessageTest(unittest.TestCase):
         self.second_socket.touch()
         FakeAppServerClient.requests = []
         FakeAppServerClient.items_by_socket = {}
+        FakeAppServerClient.turns_by_socket = {}
         FakeAppServerClient.notifications_by_socket = {}
         FakeAppServerClient.threads_by_socket = {
             self.first_socket: [
@@ -334,19 +339,24 @@ class TailMessagesTest(unittest.TestCase):
                 {
                     "data": [
                         {
+                            "turnId": "new-turn",
                             "item": {
                                 "type": "agentMessage",
                                 "text": "new final",
                                 "phase": "final_answer",
-                            }
+                            },
                         },
-                        {"item": {"type": "mcpToolCall", "result": "large"}},
                         {
+                            "turnId": "new-turn",
+                            "item": {"type": "mcpToolCall", "result": "large"},
+                        },
+                        {
+                            "turnId": "new-turn",
                             "item": {
                                 "type": "agentMessage",
                                 "text": "working",
                                 "phase": "commentary",
-                            }
+                            },
                         },
                     ],
                     "nextCursor": "older",
@@ -354,24 +364,45 @@ class TailMessagesTest(unittest.TestCase):
                 {
                     "data": [
                         {
+                            "turnId": "new-turn",
                             "item": {
                                 "type": "userMessage",
                                 "content": [
                                     {"type": "text", "text": "new request"},
                                     {"type": "image", "url": "large"},
                                 ],
-                            }
+                            },
                         },
                         {
+                            "turnId": "old-turn",
                             "item": {
                                 "type": "agentMessage",
                                 "text": "old final",
                                 "phase": None,
-                            }
+                            },
                         },
                     ],
                     "nextCursor": None,
                 },
+            ]
+        }
+        FakeAppServerClient.turns_by_socket = {
+            self.socket_path: [
+                {
+                    "data": [
+                        {
+                            "id": "new-turn",
+                            "startedAt": 200,
+                            "completedAt": 210,
+                        },
+                        {
+                            "id": "old-turn",
+                            "startedAt": 100,
+                            "completedAt": 110,
+                        },
+                    ],
+                    "nextCursor": None,
+                }
             ]
         }
 
@@ -387,10 +418,10 @@ class TailMessagesTest(unittest.TestCase):
         self.assertEqual(
             messages,
             [
-                ("final", "old final"),
-                ("user", "new request"),
-                ("commentary", "working"),
-                ("final", "new final"),
+                ("final", "old final", 110),
+                ("user", "new request", 200),
+                ("commentary", "working", 210),
+                ("final", "new final", 210),
             ],
         )
 
@@ -403,7 +434,10 @@ class TailMessagesTest(unittest.TestCase):
             client_factory=FakeAppServerClient,
         )
 
-        self.assertEqual(messages, [("final", "old final"), ("final", "new final")])
+        self.assertEqual(
+            messages,
+            [("final", "old final", 110), ("final", "new final", 210)],
+        )
 
 
 class MessageTextTest(unittest.TestCase):
@@ -419,6 +453,28 @@ class MessageTextTest(unittest.TestCase):
     def test_rejects_empty_stdin(self):
         with self.assertRaisesRegex(ValueError, "arguments or stdin"):
             agent_util.message_text([], io.StringIO("\n"))
+
+
+class ParseArgsTest(unittest.TestCase):
+    def test_timestamps_are_enabled_by_default(self):
+        for argv in (
+            ["agent-util", "tail", "abc"],
+            ["agent-util", "send", "abc", "hello"],
+        ):
+            with self.subTest(argv=argv), mock.patch.object(
+                agent_util.sys, "argv", argv
+            ):
+                self.assertTrue(agent_util.parse_args().timestamp)
+
+    def test_no_timestamp_disables_timestamps(self):
+        for argv in (
+            ["agent-util", "tail", "abc", "--no-timestamp"],
+            ["agent-util", "send", "abc", "hello", "--no-timestamp"],
+        ):
+            with self.subTest(argv=argv), mock.patch.object(
+                agent_util.sys, "argv", argv
+            ):
+                self.assertFalse(agent_util.parse_args().timestamp)
 
 
 if __name__ == "__main__":
