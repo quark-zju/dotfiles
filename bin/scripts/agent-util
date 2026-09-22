@@ -397,6 +397,7 @@ def tail_messages(
     message_types: frozenset[str] = TAIL_MESSAGE_TYPES,
     socket_dir: Path | None = None,
     client_factory: Callable[[Path], AppServerClient] = AppServerClient,
+    since: float | None = None,
 ) -> tuple[str, list[tuple[str, str, int | None]]]:
     if count <= 0:
         raise ValueError("message count must be positive")
@@ -454,7 +455,7 @@ def tail_messages(
         remaining_turns = {
             turn_id
             for message_type, _, turn_id in messages
-            if turn_id and message_type != "commentary"
+            if turn_id and (message_type != "commentary" or since is not None)
         }
         cursor = None
         while remaining_turns:
@@ -483,17 +484,29 @@ def tail_messages(
     for message_type, text, turn_id in messages:
         started_at, completed_at = turn_times.get(turn_id, (None, None))
         if message_type == "user":
-            timestamp = started_at
-        elif message_type == "final":
-            timestamp = completed_at or started_at
+            event_timestamp = started_at
         else:
-            timestamp = None
+            event_timestamp = completed_at or started_at
+        if since is not None and (event_timestamp is None or event_timestamp < since):
+            continue
+        timestamp = None if message_type == "commentary" else event_timestamp
         timestamped_messages.append((message_type, text, timestamp))
     return session_id, timestamped_messages
 
 
 def local_timestamp(timestamp: float) -> str:
     return datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def parse_local_timestamp(value: str) -> float:
+    if value.startswith("[") and value.endswith("]"):
+        value = value[1:-1]
+    try:
+        return datetime.strptime(value, "%Y-%m-%d %H:%M:%S").timestamp()
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(
+            "expected local timestamp in YYYY-MM-DD HH:MM:SS format"
+        ) from error
 
 
 def message_text(parts: list[str], input_stream: Any = None) -> str:
@@ -553,6 +566,12 @@ def parse_args() -> argparse.Namespace:
         action="store_false",
         help="omit local timestamps",
     )
+    tail_parser.add_argument(
+        "--since",
+        type=parse_local_timestamp,
+        metavar="TIMESTAMP",
+        help="only show messages at or after this local timestamp",
+    )
     tail_parser.epilog = "If no message type is selected, all types are shown."
     wait_parser = subparsers.add_parser(
         "wait", help="wait for a session to stop working"
@@ -605,6 +624,7 @@ def main() -> int:
                 args.session,
                 args.count,
                 frozenset(args.message_types or TAIL_MESSAGE_TYPES),
+                since=args.since,
             )
         except (OSError, RuntimeError, ValueError, json.JSONDecodeError) as error:
             print(f"agent-util: {error}", file=sys.stderr)

@@ -439,6 +439,24 @@ class TailMessagesTest(unittest.TestCase):
             [("final", "old final", 110), ("final", "new final", 210)],
         )
 
+    def test_filters_since_including_commentary_by_turn_time(self):
+        _session_id, messages = agent_util.tail_messages(
+            "abcdef",
+            4,
+            socket_dir=self.socket_dir,
+            client_factory=FakeAppServerClient,
+            since=200,
+        )
+
+        self.assertEqual(
+            messages,
+            [
+                ("user", "new request", 200),
+                ("commentary", "working", None),
+                ("final", "new final", 210),
+            ],
+        )
+
 
 class MessageTextTest(unittest.TestCase):
     def test_joins_command_line_words(self):
@@ -475,6 +493,16 @@ class ParseArgsTest(unittest.TestCase):
                 agent_util.sys, "argv", argv
             ):
                 self.assertFalse(agent_util.parse_args().timestamp)
+
+    def test_since_accepts_displayed_local_timestamp(self):
+        argv = ["agent-util", "tail", "abc", "--since", "[2026-09-21 17:44:30]"]
+        with mock.patch.object(agent_util.sys, "argv", argv):
+            args = agent_util.parse_args()
+
+        self.assertEqual(
+            agent_util.local_timestamp(args.since),
+            "2026-09-21 17:44:30",
+        )
 
 
 if __name__ == "__main__":
