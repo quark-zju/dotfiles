@@ -23,6 +23,7 @@ import ssh_sync_ops  # noqa: E402
 
 Agent = dict[str, Any]
 APP_SERVER_TIMEOUT = 5
+TAIL_MESSAGE_TYPES = frozenset(("user", "commentary", "final"))
 
 
 class AppServerClient:
@@ -389,6 +390,66 @@ def send_message(
             return session_id, summary
 
 
+def tail_messages(
+    query: str,
+    count: int = 10,
+    message_types: frozenset[str] = TAIL_MESSAGE_TYPES,
+    socket_dir: Path | None = None,
+    client_factory: Callable[[Path], AppServerClient] = AppServerClient,
+) -> tuple[str, list[tuple[str, str]]]:
+    if count <= 0:
+        raise ValueError("message count must be positive")
+    agent = resolve_session(
+        app_server_sessions(socket_dir, client_factory),
+        query,
+    )
+    session_id = agent["session_id"]
+    messages = []
+    with client_factory(agent["app_server_socket"]) as client:
+        cursor = None
+        while len(messages) < count:
+            params = {
+                "threadId": session_id,
+                "limit": min(max(count, 20), 100),
+                "sortDirection": "desc",
+            }
+            if cursor is not None:
+                params["cursor"] = cursor
+            result = client.request("thread/items/list", params)
+            for entry in result.get("data", []):
+                item = entry.get("item", {})
+                item_type = item.get("type")
+                if item_type == "userMessage" and "user" in message_types:
+                    text = "\n".join(
+                        part.get("text", "")
+                        for part in item.get("content", [])
+                        if part.get("type") == "text"
+                    )
+                    message_type = "user"
+                elif item_type == "agentMessage":
+                    phase = item.get("phase")
+                    if phase == "commentary":
+                        message_type = "commentary"
+                    elif phase in (None, "final_answer"):
+                        message_type = "final"
+                    else:
+                        continue
+                    if message_type not in message_types:
+                        continue
+                    text = item.get("text", "")
+                else:
+                    continue
+                if text:
+                    messages.append((message_type, text))
+                    if len(messages) == count:
+                        break
+            cursor = result.get("nextCursor")
+            if not cursor:
+                break
+    messages.reverse()
+    return session_id, messages
+
+
 def message_text(parts: list[str], input_stream: Any = None) -> str:
     if parts:
         return " ".join(parts)
@@ -406,6 +467,41 @@ def parse_args() -> argparse.Namespace:
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
     subparsers.add_parser("list", help="list current sessions")
+    tail_parser = subparsers.add_parser(
+        "tail", help="show recent messages from a Codex app-server session"
+    )
+    tail_parser.add_argument("session", help="session ID or unique ID prefix")
+    tail_parser.add_argument(
+        "-n",
+        "--count",
+        type=int,
+        default=10,
+        metavar="COUNT",
+        help="number of messages to show (default: 10)",
+    )
+    tail_parser.add_argument(
+        "--user",
+        dest="message_types",
+        action="append_const",
+        const="user",
+        help="show user messages",
+    )
+    tail_parser.add_argument(
+        "--commentary",
+        dest="message_types",
+        action="append_const",
+        const="commentary",
+        help="show agent commentary messages",
+    )
+    tail_parser.add_argument(
+        "--final",
+        "--summary",
+        dest="message_types",
+        action="append_const",
+        const="final",
+        help="show final summary messages",
+    )
+    tail_parser.epilog = "If no message type is selected, all types are shown."
     wait_parser = subparsers.add_parser(
         "wait", help="wait for a session to stop working"
     )
@@ -434,6 +530,8 @@ def parse_args() -> argparse.Namespace:
     args = parser.parse_args()
     if args.command == "wait" and args.interval <= 0:
         parser.error("--interval must be positive")
+    if args.command == "tail" and args.count <= 0:
+        parser.error("--count must be positive")
     return args
 
 
@@ -441,6 +539,23 @@ def main() -> int:
     args = parse_args()
     if args.command == "list":
         print_agents(ssh_sync_ops.list_running_agents())
+        return 0
+
+    if args.command == "tail":
+        try:
+            _session_id, messages = tail_messages(
+                args.session,
+                args.count,
+                frozenset(args.message_types or TAIL_MESSAGE_TYPES),
+            )
+        except (OSError, RuntimeError, ValueError, json.JSONDecodeError) as error:
+            print(f"agent-util: {error}", file=sys.stderr)
+            return 1
+        for index, (message_type, text) in enumerate(messages):
+            if index:
+                print()
+            print(f"--- {message_type} ---")
+            print(text)
         return 0
 
     if args.command == "send":

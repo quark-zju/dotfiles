@@ -24,6 +24,7 @@ def agent(session_id, *, working=False, suspended=False):
 
 class FakeAppServerClient:
     threads_by_socket = {}
+    items_by_socket = {}
     notifications_by_socket = {}
     requests = []
 
@@ -48,6 +49,8 @@ class FakeAppServerClient:
             }
         if method == "thread/resume":
             return {"thread": {"id": params["threadId"]}}
+        if method == "thread/items/list":
+            return self.items_by_socket[self.socket_path].pop(0)
         if method == "turn/start":
             return {"turn": {"id": "turn-id"}}
         raise AssertionError(method)
@@ -173,6 +176,7 @@ class SendMessageTest(unittest.TestCase):
         self.first_socket.touch()
         self.second_socket.touch()
         FakeAppServerClient.requests = []
+        FakeAppServerClient.items_by_socket = {}
         FakeAppServerClient.notifications_by_socket = {}
         FakeAppServerClient.threads_by_socket = {
             self.first_socket: [
@@ -310,6 +314,96 @@ class SendMessageTest(unittest.TestCase):
 
         self.assertEqual(session_id, "abcdef-123")
         self.assertEqual(summary, "")
+
+
+class TailMessagesTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.socket_dir = Path(self.tmp.name)
+        self.socket_path = self.socket_dir / "1.sock"
+        self.socket_path.touch()
+        FakeAppServerClient.requests = []
+        FakeAppServerClient.threads_by_socket = {
+            self.socket_path: [
+                {"id": "abcdef-123", "status": {"type": "idle"}},
+            ]
+        }
+        FakeAppServerClient.items_by_socket = {
+            self.socket_path: [
+                {
+                    "data": [
+                        {
+                            "item": {
+                                "type": "agentMessage",
+                                "text": "new final",
+                                "phase": "final_answer",
+                            }
+                        },
+                        {"item": {"type": "mcpToolCall", "result": "large"}},
+                        {
+                            "item": {
+                                "type": "agentMessage",
+                                "text": "working",
+                                "phase": "commentary",
+                            }
+                        },
+                    ],
+                    "nextCursor": "older",
+                },
+                {
+                    "data": [
+                        {
+                            "item": {
+                                "type": "userMessage",
+                                "content": [
+                                    {"type": "text", "text": "new request"},
+                                    {"type": "image", "url": "large"},
+                                ],
+                            }
+                        },
+                        {
+                            "item": {
+                                "type": "agentMessage",
+                                "text": "old final",
+                                "phase": None,
+                            }
+                        },
+                    ],
+                    "nextCursor": None,
+                },
+            ]
+        }
+
+    def test_returns_recent_messages_in_chronological_order(self):
+        session_id, messages = agent_util.tail_messages(
+            "abcdef",
+            4,
+            socket_dir=self.socket_dir,
+            client_factory=FakeAppServerClient,
+        )
+
+        self.assertEqual(session_id, "abcdef-123")
+        self.assertEqual(
+            messages,
+            [
+                ("final", "old final"),
+                ("user", "new request"),
+                ("commentary", "working"),
+                ("final", "new final"),
+            ],
+        )
+
+    def test_filters_message_types(self):
+        _session_id, messages = agent_util.tail_messages(
+            "abcdef",
+            2,
+            frozenset(("final",)),
+            socket_dir=self.socket_dir,
+            client_factory=FakeAppServerClient,
+        )
+
+        self.assertEqual(messages, [("final", "old final"), ("final", "new final")])
 
 
 class MessageTextTest(unittest.TestCase):
