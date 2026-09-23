@@ -13,7 +13,7 @@ from typing import Any
 LOG_PATH = Path("/tmp/codex-model-context.log")
 GPT6_CONTEXT = """
 ## Use sub-agents
-- Prefer `gpt-5.6-luna` for bounded exploration and execution.
+- Prefer `gpt-6-luna` for bounded exploration and execution.
 - Keep difficult reasoning and consequential review with the main agent.
 - Delegate when it saves overall usage or time. Luna uses roughly 1/50 as much quota.
 - Define scope, file ownership, and expected results. Return concise evidence; distinguish findings from hypotheses.
@@ -62,7 +62,7 @@ def main() -> int:
     model_name = model if isinstance(model, str) else ""
 
     if _agents_md_is_in_dotfiles():
-        context = GPT6_CONTEXT if "gpt-6" in model_name.lower() else OTHER_CONTEXT
+        context = GPT6_CONTEXT if "gpt-6-astra" in model_name.lower() else OTHER_CONTEXT
         output = {
             "hookSpecificOutput": {
                 "hookEventName": "SessionStart",
