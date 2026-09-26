@@ -352,6 +352,8 @@ def write_workspace_highlights(
     pid: int | None = None,
     process_start_time: int | None = None,
     clear_session: bool = False,
+    remote: bool = False,
+    cleanup_stale: bool = False,
 ) -> None:
     """Add or remove one session's running workspace and regenerate its CSS."""
     import fcntl
@@ -376,25 +378,37 @@ def write_workspace_highlights(
                 entry_start_time = entry.get("process_start_time")
                 stat = process_stat(entry_pid) if isinstance(entry_pid, int) else None
                 if (
+                    cleanup_stale
+                    and (
+                        entry.get("remote") is True
+                        or (
+                            "remote" not in entry
+                            and isinstance(entry_pid, int)
+                            and process_name(entry_pid) not in ("codex", "claude")
+                        )
+                    )
+                ) or (
                     stat is None
                     or not isinstance(entry_start_time, int)
                     or stat[1] != entry_start_time
                 ):
                     del sessions[key]
 
-            if clear_session:
-                prefix = f"{run_id}:"
-                for key in list(sessions):
-                    if key == run_id or key.startswith(prefix):
-                        del sessions[key]
-            elif workspace_name is None:
-                sessions.pop(run_id, None)
-            elif isinstance(pid, int) and isinstance(process_start_time, int):
-                sessions[run_id] = {
-                    "workspace": workspace_name,
-                    "pid": pid,
-                    "process_start_time": process_start_time,
-                }
+            if not cleanup_stale:
+                if clear_session:
+                    prefix = f"{run_id}:"
+                    for key in list(sessions):
+                        if key == run_id or key.startswith(prefix):
+                            del sessions[key]
+                elif workspace_name is None:
+                    sessions.pop(run_id, None)
+                elif isinstance(pid, int) and isinstance(process_start_time, int):
+                    sessions[run_id] = {
+                        "workspace": workspace_name,
+                        "pid": pid,
+                        "process_start_time": process_start_time,
+                        "remote": remote,
+                    }
 
             state_path.write_text(
                 json.dumps(sessions, ensure_ascii=False, sort_keys=True)
@@ -445,10 +459,16 @@ def clear_session_workspace_highlights(session_id: str) -> None:
     write_workspace_highlights(session_id, None, clear_session=True)
 
 
+def cleanup_workspace_highlights() -> None:
+    """Remove stale local sessions and all remote sessions from the CSS."""
+    write_workspace_highlights("", None, cleanup_stale=True)
+
+
 def mark_process_workspace_running(
     run_id: str,
     pid: object,
     expected_start_time: object | None = None,
+    remote: bool = False,
 ) -> None:
     if expected_start_time is None:
         stat = process_stat(pid) if isinstance(pid, int) else None
@@ -460,7 +480,9 @@ def mark_process_workspace_running(
         return
     workspace_name = state[1]
     if workspace_name is not None and isinstance(pid, int):
-        write_workspace_highlights(run_id, workspace_name, pid, expected_start_time)
+        write_workspace_highlights(
+            run_id, workspace_name, pid, expected_start_time, remote=remote
+        )
 
 
 def focus_process(pid: object, expected_start_time: object) -> None:
@@ -530,6 +552,8 @@ def update_running_workspace(
                     mark_process_workspace_running,
                     run_id,
                     pid,
+                    None,
+                    True,
                     call_timeout=20,
                 )
         except Exception as error:
@@ -703,6 +727,19 @@ def notify(payload: dict[str, Any]) -> None:
 
 
 def main() -> None:
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--cleanup",
+        action="store_true",
+        help="remove stale session workspace highlights",
+    )
+    args = parser.parse_args()
+    if args.cleanup:
+        cleanup_workspace_highlights()
+        return
+
     try:
         payload = json.load(sys.stdin)
         if not isinstance(payload, dict):
