@@ -11,8 +11,8 @@ checked against the number of established TCP connections. Ambiguous or
 changing observations are never cleaned.
 
 Preview with ``./et-cleanup --dry-run`` and run with ``./et-cleanup``. The
-server port is read from /etc/et.cfg by default; --port, --log, and
---server-pid override discovery.
+server port and log directory are read from /etc/et.cfg by default; --port,
+--log, and --server-pid override discovery.
 
 Selected process trees receive SIGTERM, children first. Processes still alive
 after the grace period receive SIGKILL. The process start time is checked
@@ -158,7 +158,15 @@ def find_server_log(server_pid: int, requested_log: Path | None) -> Path:
     if requested_log is not None:
         candidates = [requested_log]
     else:
-        candidates = [Path(p) for p in glob.glob(f"/tmp/etserver-*_{server_pid}.log")]
+        config = configparser.ConfigParser()
+        try:
+            config.read("/etc/et.cfg")
+            log_directory = config.get("Debug", "logdirectory", fallback="/tmp")
+        except configparser.Error:
+            log_directory = "/tmp"
+        log_directory = log_directory or "/tmp"
+        pattern = str(Path(log_directory) / f"etserver-*_{server_pid}.log")
+        candidates = [Path(p) for p in glob.glob(pattern)]
     candidates = [p for p in candidates if p.is_file()]
     if not candidates:
         raise UnsafeState(f"cannot find readable log for etserver PID {server_pid}")
