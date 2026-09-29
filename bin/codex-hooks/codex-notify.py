@@ -57,6 +57,8 @@ def process_stat(pid: int) -> tuple[int, int] | None:
 
 
 def process_name(pid: int) -> str | None:
+    from pathlib import Path
+
     try:
         return Path(f"/proc/{pid}/comm").read_text().strip()
     except OSError:
