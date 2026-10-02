@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 TITLE_PROMPT_PREFIX = "Generate a concise, single-line task title "
-RECAP_PROMPT_PREFIX = "Write a brief catch-up for a user returning to this Codex task. "
+RECAP_PROMPT_PREFIX = "Write a brief catch-up for a user returning to this "
 NOTIFICATION_EXPIRE_MS = 30_000
 WORKSPACE_HIGHLIGHT_PATH = "/tmp/workspace-highlight.css"
 WORKSPACE_HIGHLIGHT_STATE_PATH = "/tmp/workspace-highlight.json"
