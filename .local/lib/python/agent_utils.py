@@ -305,14 +305,23 @@ def find_codex_session_file(thread_id: str) -> str:
         os.path.expanduser(f"~/.codex/sessions/**/*{thread_id}*.jsonl"),
         recursive=True,
     )
-    return next(
-        (
-            path
-            for path in session_files
-            if os.path.basename(path).endswith(f"-{thread_id}.jsonl")
-        ),
-        "",
-    )
+    # Desktop rollbacks can start a new rollout whose filename contains both
+    # the original thread ID and a new suffix. Prefer the newest rollout, and
+    # check its metadata so unrelated threads mentioning this ID do not win.
+    for path in sorted(session_files, reverse=True):
+        if os.path.basename(path).endswith(f"-{thread_id}.jsonl"):
+            return path
+        with open(path, "r") as f:
+            for line in f:
+                try:
+                    data = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if data.get("type") == "session_meta":
+                    if data.get("payload", {}).get("id") == thread_id:
+                        return path
+                    break
+    return ""
 
 
 def get_codex_parent_thread_id(session_file: str) -> str:

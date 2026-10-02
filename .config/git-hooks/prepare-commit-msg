@@ -319,6 +319,47 @@ def run_self_tests():
                 os.environ.clear()
                 os.environ.update(old_env)
 
+        def test_codex_session_lookup_prefers_rollback_rollout(self):
+            from unittest.mock import patch
+
+            with tempfile.TemporaryDirectory() as home:
+                session_dir = pathlib.Path(home) / ".codex" / "sessions" / "test"
+                session_dir.mkdir(parents=True)
+                old = session_dir / "rollout-2026-09-30T09-33-36-thread.jsonl"
+                resumed = session_dir / "rollout-2026-09-30T13-46-49-thread_new.jsonl"
+                unrelated = (
+                    session_dir / "rollout-2026-10-01T00-00-00-thread_other.jsonl"
+                )
+                for path, thread_id, prompt in [
+                    (old, "thread", "old prompt"),
+                    (resumed, "thread", "new prompt"),
+                    (unrelated, "other", "unrelated prompt"),
+                ]:
+                    records = [
+                        {"type": "session_meta", "payload": {"id": thread_id}},
+                        {
+                            "type": "event_msg",
+                            "payload": {
+                                "type": "user_message",
+                                "message": prompt,
+                            },
+                        },
+                    ]
+                    path.write_text("\n".join(json.dumps(r) for r in records) + "\n")
+                with patch.dict(
+                    os.environ, {"HOME": home, "CODEX_THREAD_ID": "thread"}
+                ):
+                    self.assertEqual(
+                        agent_utils.find_codex_session_file("thread"), str(resumed)
+                    )
+                    self.assertEqual(
+                        agent_utils.get_codex_env()["Agent-Prompt"], "new prompt"
+                    )
+                    resumed.unlink()
+                    self.assertEqual(
+                        agent_utils.find_codex_session_file("thread"), str(old)
+                    )
+
         def test_codex_subagent_commit_uses_root_prompt_and_model(self):
             old_env = os.environ.copy()
             try:
