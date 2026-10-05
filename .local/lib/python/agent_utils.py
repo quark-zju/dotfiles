@@ -744,21 +744,72 @@ def get_kimi_code_env(cwd: str = None) -> Dict[str, str]:
     return env
 
 
+def dsh_home() -> str:
+    return os.getenv("DSH_HOME", "").strip() or os.path.expanduser("~/.dsh")
+
+
+def find_dsh_session_file(session_id: str) -> str:
+    """Locate the on-disk transcript artifact of a DeepSeek Harness session.
+
+    DSH <= 0.1 exported the transcript path to shell tools as DSH_SESSION_JSONL;
+    0.2 dropped that shell-env contributor, leaving DSH_HOME and DSH_SESSION_ID
+    as the only session facts. The project directory key is a lossy encoding of
+    the session cwd, so it is globbed instead of rebuilt, and 0.2 versioned the
+    artifact basename (v0 keeps session.jsonl.zstd, v4 writes
+    session.v4.jsonl.zstd). Temporary names end in .tmp and are not matched.
+    """
+    if not session_id:
+        return ""
+    base = os.path.join(dsh_home(), "sessions", "*", session_id)
+    candidates = []
+    for name in (
+        "session.jsonl.zstd",
+        "session.v*.jsonl.zstd",
+        "session.jsonl",
+        "session.v*.jsonl",
+    ):
+        candidates.extend(glob.glob(os.path.join(base, name)))
+    if not candidates:
+        return ""
+    return max(candidates, key=os.path.getmtime)
+
+
+def read_dsh_session_lines(path: str):
+    try:
+        with open(path, "rb") as f:
+            data = f.read()
+    except OSError:
+        return None
+    if not path.endswith(".zstd"):
+        return data.decode("utf-8", errors="replace").splitlines()
+    decoded = zstd_decompress(data)
+    if decoded is None:
+        # A writer killed mid-flush leaves a torn final frame; the zstd CLI
+        # still emits every frame that completed before it.
+        try:
+            result = subprocess.run(
+                ["zstd", "-dc"], input=data, capture_output=True, check=False
+            )
+        except FileNotFoundError:
+            return None
+        decoded = result.stdout
+        if not decoded:
+            return None
+    return decoded.decode("utf-8", errors="replace").splitlines()
+
+
 def get_dsh_env() -> Dict[str, str]:
-    # DeepSeek Harness exports the current session transcript path to every
-    # shell-tool subprocess as DSH_SESSION_JSONL (dsh-shell-env's
-    # session-persistence contributor); only agent-driven commits carry it.
+    # DSH_SESSION_JSONL was DSH <= 0.1's shell-env persistence contributor;
+    # 0.2 removed it, so fall back to locating the log from the session id.
     session_jsonl = os.getenv("DSH_SESSION_JSONL", "").strip()
     if not session_jsonl:
+        session_jsonl = find_dsh_session_file(os.getenv("DSH_SESSION_ID", "").strip())
+    if not session_jsonl:
         return {}
-    try:
-        with open(session_jsonl, "rb") as f:
-            decoded = zstd_decompress(f.read())
-    except OSError:
+    lines = read_dsh_session_lines(session_jsonl)
+    if lines is None:
         return {}
-    if decoded is None:
-        return {}
-    return dsh_env_from_lines(decoded.decode("utf-8", errors="replace").splitlines())
+    return dsh_env_from_lines(lines)
 
 
 def dsh_env_from_lines(lines) -> Dict[str, str]:
