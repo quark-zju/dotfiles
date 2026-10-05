@@ -629,11 +629,18 @@ def run_self_tests():
                 },
             )
 
-        def write_dsh_session(self, home, session_id, work_dir, records):
+        def write_dsh_session(
+            self,
+            home,
+            session_id,
+            work_dir,
+            records,
+            filename="session.v4.jsonl.zstd",
+        ):
             munged = "--" + str(work_dir).lstrip("/").replace("/", "-") + "--"
             session_dir = pathlib.Path(home) / ".dsh" / "sessions" / munged / session_id
             session_dir.mkdir(parents=True)
-            session_file = session_dir / "session.jsonl.zstd"
+            session_file = session_dir / filename
             payload = "\n".join(json.dumps(record) for record in records) + "\n"
             session_file.write_bytes(agent_utils.zstd_compress(payload.encode("utf-8")))
             return session_file
@@ -884,7 +891,10 @@ def run_self_tests():
                         ],
                     )
                     os.environ["HOME"] = home
+                    # DSH <= 0.1's shell-env contributor; 0.2 no longer sets it.
                     os.environ["DSH_SESSION_JSONL"] = str(session_file)
+                    os.environ.pop("DSH_SESSION_ID", None)
+                    os.environ.pop("DSH_HOME", None)
 
                     self.assertEqual(
                         agent_utils.get_dsh_env(),
@@ -899,11 +909,170 @@ def run_self_tests():
                 os.environ.update(old_env)
 
         @unittest.skipUnless(agent_utils.HAS_ZSTD, "zstd not available")
-        def test_dsh_env_ignores_missing_session_jsonl_env_var(self):
+        def test_dsh_env_finds_versioned_session_file_from_session_id(self):
+            # DSH 0.2 stopped exporting DSH_SESSION_JSONL to shell tools; the
+            # transcript is discovered from DSH_HOME plus DSH_SESSION_ID, and
+            # its basename now carries the format generation.
+            old_env = os.environ.copy()
+            try:
+                with tempfile.TemporaryDirectory() as home:
+                    work_dir = pathlib.Path(home) / "repo"
+                    work_dir.mkdir()
+                    self.write_dsh_session(
+                        home,
+                        "session-01234567-89ab-cdef-0123-456789abcdef",
+                        work_dir,
+                        [
+                            self.dsh_session_record(work_dir),
+                            self.dsh_model_header(),
+                            self.dsh_user_message("current prompt"),
+                        ],
+                    )
+                    os.environ["DSH_HOME"] = str(pathlib.Path(home) / ".dsh")
+                    os.environ["DSH_SESSION_ID"] = (
+                        "session-01234567-89ab-cdef-0123-456789abcdef"
+                    )
+                    os.environ.pop("DSH_SESSION_JSONL", None)
+
+                    self.assertEqual(
+                        agent_utils.get_dsh_env(),
+                        {
+                            "Agent-Prompt": "current prompt",
+                            "Agent-Model": "deepseek-v4-flash",
+                            "Agent-Harness": "dsh",
+                        },
+                    )
+            finally:
+                os.environ.clear()
+                os.environ.update(old_env)
+
+        @unittest.skipUnless(agent_utils.HAS_ZSTD, "zstd not available")
+        def test_dsh_env_reads_legacy_unversioned_session_file(self):
+            old_env = os.environ.copy()
+            try:
+                with tempfile.TemporaryDirectory() as home:
+                    work_dir = pathlib.Path(home) / "repo"
+                    work_dir.mkdir()
+                    self.write_dsh_session(
+                        home,
+                        "session-01234567-89ab-cdef-0123-456789abcdef",
+                        work_dir,
+                        [
+                            self.dsh_session_record(work_dir),
+                            self.dsh_model_header(),
+                            self.dsh_user_message("current prompt"),
+                        ],
+                        filename="session.jsonl.zstd",
+                    )
+                    os.environ["DSH_HOME"] = str(pathlib.Path(home) / ".dsh")
+                    os.environ["DSH_SESSION_ID"] = (
+                        "session-01234567-89ab-cdef-0123-456789abcdef"
+                    )
+                    os.environ.pop("DSH_SESSION_JSONL", None)
+
+                    self.assertEqual(
+                        agent_utils.get_dsh_env()["Agent-Prompt"], "current prompt"
+                    )
+            finally:
+                os.environ.clear()
+                os.environ.update(old_env)
+
+        @unittest.skipUnless(agent_utils.HAS_ZSTD, "zstd not available")
+        def test_dsh_env_recovers_from_torn_final_frame(self):
+            # DSH appends one complete zstd frame per flush; a writer killed
+            # mid-flush must not hide the frames that already landed.
+            old_env = os.environ.copy()
+            try:
+                with tempfile.TemporaryDirectory() as home:
+                    work_dir = pathlib.Path(home) / "repo"
+                    work_dir.mkdir()
+                    session_id = "session-01234567-89ab-cdef-0123-456789abcdef"
+                    session_file = self.write_dsh_session(
+                        home,
+                        session_id,
+                        work_dir,
+                        [
+                            self.dsh_session_record(work_dir),
+                            self.dsh_model_header(),
+                            self.dsh_user_message("current prompt"),
+                        ],
+                    )
+                    good = session_file.read_bytes()
+                    torn = agent_utils.zstd_compress(b'{"type":"torn"}\n')
+                    session_file.write_bytes(good + torn[: len(torn) // 2])
+                    os.environ["DSH_HOME"] = str(pathlib.Path(home) / ".dsh")
+                    os.environ["DSH_SESSION_ID"] = session_id
+                    os.environ.pop("DSH_SESSION_JSONL", None)
+
+                    self.assertEqual(
+                        agent_utils.get_dsh_env()["Agent-Prompt"], "current prompt"
+                    )
+            finally:
+                os.environ.clear()
+                os.environ.update(old_env)
+
+        @unittest.skipUnless(agent_utils.HAS_ZSTD, "zstd not available")
+        def test_dsh_env_finds_session_file_in_another_project_dir(self):
+            # The project directory key is a lossy encoding of the cwd, so the
+            # lookup globs it rather than rebuilding it.
+            old_env = os.environ.copy()
+            try:
+                with tempfile.TemporaryDirectory() as home:
+                    work_dir = pathlib.Path(home) / "some" / "other" / "repo"
+                    work_dir.mkdir(parents=True)
+                    self.write_dsh_session(
+                        home,
+                        "session-01234567-89ab-cdef-0123-456789abcdef",
+                        work_dir,
+                        [
+                            self.dsh_session_record(work_dir),
+                            self.dsh_model_header(),
+                            self.dsh_user_message("current prompt"),
+                        ],
+                    )
+                    os.environ["DSH_HOME"] = str(pathlib.Path(home) / ".dsh")
+                    os.environ["DSH_SESSION_ID"] = (
+                        "session-01234567-89ab-cdef-0123-456789abcdef"
+                    )
+                    os.environ.pop("DSH_SESSION_JSONL", None)
+
+                    self.assertEqual(
+                        agent_utils.get_dsh_env()["Agent-Prompt"], "current prompt"
+                    )
+            finally:
+                os.environ.clear()
+                os.environ.update(old_env)
+
+        @unittest.skipUnless(agent_utils.HAS_ZSTD, "zstd not available")
+        def test_dsh_env_ignores_missing_session_identity(self):
             old_env = os.environ.copy()
             try:
                 os.environ.pop("DSH_SESSION_JSONL", None)
+                os.environ.pop("DSH_SESSION_ID", None)
+                os.environ.pop("DSH_HOME", None)
                 self.assertEqual(agent_utils.get_dsh_env(), {})
+            finally:
+                os.environ.clear()
+                os.environ.update(old_env)
+
+        @unittest.skipUnless(agent_utils.HAS_ZSTD, "zstd not available")
+        def test_dsh_env_ignores_unknown_session_id(self):
+            old_env = os.environ.copy()
+            try:
+                with tempfile.TemporaryDirectory() as home:
+                    work_dir = pathlib.Path(home) / "repo"
+                    work_dir.mkdir()
+                    self.write_dsh_session(
+                        home,
+                        "session-01234567-89ab-cdef-0123-456789abcdef",
+                        work_dir,
+                        [self.dsh_user_message("current prompt")],
+                    )
+                    os.environ["DSH_HOME"] = str(pathlib.Path(home) / ".dsh")
+                    os.environ["DSH_SESSION_ID"] = "session-ffffffff"
+                    os.environ.pop("DSH_SESSION_JSONL", None)
+
+                    self.assertEqual(agent_utils.get_dsh_env(), {})
             finally:
                 os.environ.clear()
                 os.environ.update(old_env)
