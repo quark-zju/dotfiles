@@ -586,6 +586,7 @@ def show_notify(
 ) -> None:
     """Mark a completed turn urgent and notify when it is off-workspace."""
     import html
+    import os
     import subprocess
 
     if expected_start_time is None:
@@ -616,6 +617,24 @@ def show_notify(
         )
         return
     try:
+        child_pid = os.fork()
+    except OSError as error:
+        log_event("notification_failed", container=container_id, error=repr(error))
+        return
+    if child_pid:
+        log_event("notification_detached", container=container_id, pid=child_pid)
+        return
+    try:
+        os.setsid()
+        # Do not keep the ssh_sync worker's transport pipes open while waiting
+        # for the notification action.
+        os.closerange(3, os.sysconf("SC_OPEN_MAX"))
+        devnull = os.open(os.devnull, os.O_RDWR)
+        os.dup2(devnull, 0)
+        os.dup2(devnull, 1)
+        os.dup2(devnull, 2)
+        if devnull > 2:
+            os.close(devnull)
         completed = subprocess.run(
             [
                 "notify-send",
@@ -632,19 +651,22 @@ def show_notify(
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
             text=True,
+            timeout=NOTIFICATION_EXPIRE_MS / 1000 + 5,
         )
-    except OSError as error:
+    except (OSError, subprocess.TimeoutExpired) as error:
         log_event("notification_failed", container=container_id, error=repr(error))
-        return
-    action = completed.stdout.strip()
-    log_event(
-        "notification_finished",
-        container=container_id,
-        returncode=completed.returncode,
-        action=action,
-    )
-    if action == "default":
-        focus_process(pid, expected_start_time)
+    else:
+        action = completed.stdout.strip()
+        log_event(
+            "notification_finished",
+            container=container_id,
+            returncode=completed.returncode,
+            action=action,
+        )
+        if action == "default":
+            focus_process(pid, expected_start_time)
+    finally:
+        os._exit(0)
 
 
 def notify(payload: dict[str, Any]) -> None:
