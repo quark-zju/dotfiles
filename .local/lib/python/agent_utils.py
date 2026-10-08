@@ -21,7 +21,9 @@ SAME_AS_BEFORE_VALUES = {SAME_AS_BEFORE_EN, SAME_AS_BEFORE_ZH}
 EXEC_CMD_RE = re.compile(
     r'(?:\{|,)\s*(?:"cmd"|cmd)\s*:\s*"(?P<exec_cmd>(?:\\.|[^"\\])*)"'
 )
-GIT_COMMIT_RE = re.compile(r"(?:^|&&|\|\||;|\n|\\n)\s*git\s+commit\b")
+GIT_COMMIT_RE = re.compile(
+    r"(?:^|&&|\|\||;|\n|\\n)\s*git(?:\s+-C\s+\S+)*\s+commit\b"
+)
 AMBIENT_CONTEXT_RE = re.compile(
     r'\A\s*<(?P<tag>[A-Za-z0-9_-]+-context)\s+source=["\']ambient-ui-state["\']'
     r"[^>]*>.*?</(?P=tag)>\s*?",

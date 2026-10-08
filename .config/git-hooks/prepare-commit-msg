@@ -290,7 +290,7 @@ def run_self_tests():
                         "name": "exec",
                         "input": (
                             'tools.exec_command({"cmd":"git add file\\n'
-                            'git commit -m current"})'
+                            'git -C ~/repo commit -m current"})'
                         ),
                     },
                 },
