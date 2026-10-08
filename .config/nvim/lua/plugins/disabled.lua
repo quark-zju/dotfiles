@@ -1,5 +1,5 @@
 return {
-  { "markdown-preview.nvim", enabled = false },
+  -- { "markdown-preview.nvim", enabled = false },
   -- plugins that are too fancy thus annoying...
   { "nvim-mini/mini.ai", enabled = false },
   { "nvim-mini/mini.animate", enabled = false },
