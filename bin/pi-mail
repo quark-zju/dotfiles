@@ -2,11 +2,13 @@
 """Browse a public-inbox v2 mirror directly via git, without an index.
 
   pi-mail [ls] [--days N] [-a AUTHOR] [-g SUBJECT]   list recent mails
-  pi-mail show  ID                                    print the raw mail
-  pi-mail reply ID [-o FILE]                          reply template for git send-email
-  pi-mail tree  ID [--days N]                         ASCII thread tree
+  pi-mail show  SEL [--days N]                        print the raw mail(s)
+  pi-mail reply SEL [-o FILE]                         reply template for git send-email
+  pi-mail tree  SEL [--days N]                        ASCII thread tree(s)
 
-ID is a commit hash shown by `ls`/`tree`, a Message-ID, or a lore URL.
+SEL is a commit hash shown by `ls`/`tree`, a Message-ID, a lore URL, or
+otherwise a regex matched against subjects within --days. `show` and `tree`
+handle every match; `reply` needs exactly one.
 `reply` drops your own addresses from Cc; add extra ones with
 `git config --global --add pimail.self ADDRESS`.
 The inbox defaults to ~/public-inbox/git/git (override with $PI_INBOX).
@@ -85,22 +87,30 @@ def headers(data):
     return email.parser.BytesHeaderParser(policy=POLICY).parsebytes(data.split(b"\n\n", 1)[0])
 
 
-def resolve(ident, days):
-    """Return (gitdir, commit) for a commit hash, Message-ID or lore URL."""
-    m = re.search(r"lore\.kernel\.org/[^/]+/([^/]+)", ident)
-    msgid = (m.group(1) if m else ident).strip().strip("<>")
-    if re.fullmatch(r"[0-9a-f]{7,40}", msgid):
+def resolve(sel, days):
+    """Return [(gitdir, commit)] for a commit hash, Message-ID, lore URL or subject regex."""
+    m = re.search(r"lore\.kernel\.org/[^/]+/([^/]+)", sel)
+    key = (m.group(1) if m else sel).strip().strip("<>")
+    if re.fullmatch(r"[0-9a-f]{7,40}", key):
         for gitdir in epochs():
-            ok = subprocess.run(["git", f"--git-dir={gitdir}", "cat-file", "-e", f"{msgid}^{{commit}}"],
+            ok = subprocess.run(["git", f"--git-dir={gitdir}", "cat-file", "-e", f"{key}^{{commit}}"],
                                 capture_output=True)
             if ok.returncode == 0:
-                return gitdir, msgid
-    blobs = Blobs()
-    for gitdir, commit, *_ in recent(days):
-        data = blobs.read(gitdir, commit)
-        if data and msgid in ids(headers(data)["Message-ID"]):
-            return gitdir, commit
-    sys.exit(f"{ident} not found within {days} days; try --days")
+                return [(gitdir, key)]
+    if "@" in key:
+        blobs = Blobs()
+        found = [(g, c) for g, c, *_ in recent(days)
+                 if key in ids(headers(blobs.read(g, c) or b"")["Message-ID"])]
+    else:
+        found = [(g, c) for g, c, _, _, subject in recent(days) if re.search(key, subject, re.I)]
+    if not found:
+        sys.exit(f"{sel} not found within {days} days; try --days")
+    return found
+
+
+def describe(gitdir, commit):
+    author, ts, subject = git(gitdir, "log", "-1", "--format=%an%x00%at%x00%s", commit).rstrip("\n").split("\0", 2)
+    return f"{commit[:10]} {local_time(int(ts))} {author[:20]:20} {subject}"
 
 
 def load(gitdir, commit):
@@ -121,7 +131,9 @@ def cmd_ls(args):
 
 
 def cmd_show(args):
-    sys.stdout.write(load(*resolve(args.id, args.days)).as_string())
+    for gitdir, commit in resolve(args.sel, args.days):
+        sys.stdout.write(f"From {commit} Mon Sep 17 00:00:00 2001\n")
+        sys.stdout.write(load(gitdir, commit).as_string(unixfrom=False).rstrip("\n") + "\n\n")
 
 
 def self_addresses():
@@ -134,7 +146,11 @@ def self_addresses():
 
 
 def cmd_reply(args):
-    m = load(*resolve(args.id, args.days))
+    found = resolve(args.sel, args.days)
+    if len(found) > 1:
+        print("\n".join(describe(*f) for f in found), file=sys.stderr)
+        sys.exit(f"{len(found)} mails match; pick one by commit hash")
+    m = load(*found[0])
     msgid = first_id(m["Message-ID"])
     sender = email.utils.getaddresses([str(m["Reply-To"] or m["From"])])
     seen = {a.lower() for _, a in sender} | self_addresses()
@@ -168,19 +184,31 @@ def cmd_reply(args):
 
 
 def cmd_tree(args):
-    gitdir, commit = resolve(args.id, args.days)
-    m = load(gitdir, commit)
-    target = first_id(m["Message-ID"])
-    root = first_id(m["References"]) or target
+    targets, roots = set(), []
+    for gitdir, commit in resolve(args.sel, args.days):
+        m = load(gitdir, commit)
+        targets.add(first_id(m["Message-ID"]))
+        root = first_id(m["References"]) or first_id(m["Message-ID"])
+        if root not in roots:
+            roots.append(root)
     blobs = Blobs()
-    nodes = {}  # Message-ID -> (commit, author, ts, subject, parent)
+    window = []  # (Message-ID, related ids, commit, author, ts, subject, parent)
     for g, c, author, ts, subject in recent(args.days):
         h = headers(blobs.read(g, c) or b"")
         mid = first_id(h["Message-ID"])
-        related = ids(h["References"]) + ids(h["In-Reply-To"])
-        if mid and (mid == root or root in related):
+        if mid:
             parent = first_id(h["In-Reply-To"]) or (ids(h["References"]) or [None])[-1]
-            nodes[mid] = (c, author, ts, subject, parent)
+            related = ids(h["References"]) + ids(h["In-Reply-To"])
+            window.append((mid, related, c, author, ts, subject, parent))
+    for i, root in enumerate(roots):
+        if i:
+            print()
+        nodes = {mid: rest for mid, related, *rest in window if mid == root or root in related}
+        print_tree(nodes, targets)
+
+
+def print_tree(nodes, targets):
+    """nodes: Message-ID -> (commit, author, ts, subject, parent)"""
     children = {}
     for mid, (*_, parent) in nodes.items():
         children.setdefault(parent if parent in nodes else None, []).append(mid)
@@ -189,7 +217,7 @@ def cmd_tree(args):
 
     def walk(mid, prefix, last):
         c, author, ts, subject, _ = nodes[mid]
-        mark = " *" if mid == target else ""
+        mark = " *" if mid in targets else ""
         print(f"{c[:10]} {local_time(ts)} {prefix}{'└─' if last else '├─'} {author}: {subject}{mark}")
         kids = children.get(mid, [])
         for i, k in enumerate(kids):
@@ -209,7 +237,7 @@ def main():
     ls.add_argument("-g", "--grep", help="regex on subject")
     for name in ("show", "reply", "tree"):
         p = sub.add_parser(name)
-        p.add_argument("id")
+        p.add_argument("sel")
         p.add_argument("--days", type=int, default=30)
         if name == "reply":
             p.add_argument("-o", "--output")
