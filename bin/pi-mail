@@ -1,0 +1,224 @@
+#!/usr/bin/env python3
+"""Browse a public-inbox v2 mirror directly via git, without an index.
+
+  pi-mail [ls] [--days N] [-a AUTHOR] [-g SUBJECT]   list recent mails
+  pi-mail show  ID                                    print the raw mail
+  pi-mail reply ID [-o FILE]                          reply template for git send-email
+  pi-mail tree  ID [--days N]                         ASCII thread tree
+
+ID is a commit hash shown by `ls`/`tree`, a Message-ID, or a lore URL.
+`reply` drops your own addresses from Cc; add extra ones with
+`git config --global --add pimail.self ADDRESS`.
+The inbox defaults to ~/public-inbox/git/git (override with $PI_INBOX).
+Update it with `public-inbox-fetch` in the inbox's parent directory.
+"""
+
+import argparse
+import email
+import email.parser
+import email.policy
+import email.utils
+import glob
+import os
+import re
+import subprocess
+import sys
+from datetime import datetime
+
+INBOX = os.path.expanduser(os.environ.get("PI_INBOX", "~/public-inbox/git/git"))
+POLICY = email.policy.default
+
+
+def epochs():
+    dirs = glob.glob(os.path.join(INBOX, "*.git"))
+    if not dirs:
+        sys.exit(f"no epochs under {INBOX}")
+    return sorted(dirs, key=lambda d: int(os.path.basename(d).split(".")[0]), reverse=True)
+
+
+def git(gitdir, *args):
+    return subprocess.run(["git", f"--git-dir={gitdir}", *args],
+                          capture_output=True, text=True, check=True).stdout
+
+
+def ids(header):
+    return re.findall(r"<([^>]+)>", str(header or ""))
+
+
+def first_id(header):
+    found = ids(header)
+    return found[0] if found else None
+
+
+class Blobs:
+    """Read `<commit>:m` blobs through one `git cat-file --batch` per epoch."""
+
+    def __init__(self):
+        self.procs = {}
+
+    def read(self, gitdir, commit):
+        p = self.procs.get(gitdir)
+        if p is None:
+            p = self.procs[gitdir] = subprocess.Popen(
+                ["git", f"--git-dir={gitdir}", "cat-file", "--batch"],
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+        p.stdin.write(f"{commit}:m\n".encode())
+        p.stdin.flush()
+        hdr = p.stdout.readline().split()
+        if len(hdr) < 3:
+            return None
+        data = p.stdout.read(int(hdr[2]))
+        p.stdout.read(1)
+        return data
+
+
+def recent(days):
+    """Yield (gitdir, commit, author, timestamp, subject), newest first."""
+    for gitdir in epochs():
+        out = git(gitdir, "log", f"--since={days}.days", "--format=%H%x00%an%x00%at%x00%s")
+        for line in out.splitlines():
+            commit, author, ts, subject = line.split("\0", 3)
+            yield gitdir, commit, author, int(ts), subject
+
+
+def headers(data):
+    return email.parser.BytesHeaderParser(policy=POLICY).parsebytes(data.split(b"\n\n", 1)[0])
+
+
+def resolve(ident, days):
+    """Return (gitdir, commit) for a commit hash, Message-ID or lore URL."""
+    m = re.search(r"lore\.kernel\.org/[^/]+/([^/]+)", ident)
+    msgid = (m.group(1) if m else ident).strip().strip("<>")
+    if re.fullmatch(r"[0-9a-f]{7,40}", msgid):
+        for gitdir in epochs():
+            ok = subprocess.run(["git", f"--git-dir={gitdir}", "cat-file", "-e", f"{msgid}^{{commit}}"],
+                                capture_output=True)
+            if ok.returncode == 0:
+                return gitdir, msgid
+    blobs = Blobs()
+    for gitdir, commit, *_ in recent(days):
+        data = blobs.read(gitdir, commit)
+        if data and msgid in ids(headers(data)["Message-ID"]):
+            return gitdir, commit
+    sys.exit(f"{ident} not found within {days} days; try --days")
+
+
+def load(gitdir, commit):
+    return email.message_from_bytes(Blobs().read(gitdir, commit), policy=POLICY)
+
+
+def local_time(ts):
+    return datetime.fromtimestamp(ts).strftime("%m-%d %H:%M")
+
+
+def cmd_ls(args):
+    for gitdir, commit, author, ts, subject in recent(args.days):
+        if args.author and args.author.lower() not in author.lower():
+            continue
+        if args.grep and not re.search(args.grep, subject, re.I):
+            continue
+        print(f"{commit[:10]} {local_time(ts)} {author[:20]:20} {subject}")
+
+
+def cmd_show(args):
+    sys.stdout.write(load(*resolve(args.id, args.days)).as_string())
+
+
+def self_addresses():
+    """Addresses to drop from Cc: sendemail.from, user.email, and any pimail.self."""
+    found = set()
+    for key in ("sendemail.from", "user.email", "pimail.self"):
+        r = subprocess.run(["git", "config", "--get-all", key], capture_output=True, text=True)
+        found |= {a.lower() for _, a in email.utils.getaddresses(r.stdout.splitlines()) if a}
+    return found
+
+
+def cmd_reply(args):
+    m = load(*resolve(args.id, args.days))
+    msgid = first_id(m["Message-ID"])
+    sender = email.utils.getaddresses([str(m["Reply-To"] or m["From"])])
+    seen = {a.lower() for _, a in sender} | self_addresses()
+    cc = []
+    for name, addr in email.utils.getaddresses([str(m["To"] or ""), str(m["Cc"] or "")]):
+        if addr and addr.lower() not in seen:
+            seen.add(addr.lower())
+            cc.append(email.utils.formataddr((name, addr)))
+    subject = re.sub(r"^(re:\s*)+", "", str(m["Subject"]), flags=re.I)
+    refs = " ".join(f"<{r}>" for r in ids(m["References"]) + [msgid])
+    name = email.utils.parseaddr(str(m["From"]))[0] or str(m["From"])
+    part = m.get_body(preferencelist=("plain",))
+    body = part.get_content() if part else ""
+    lines = [
+        "From git Mon Sep 17 00:00:00 2001",
+        "To: " + ", ".join(email.utils.formataddr(a) for a in sender),
+        *(["Cc: " + ", ".join(cc)] if cc else []),
+        f"Subject: Re: {subject}",
+        f"In-Reply-To: <{msgid}>",
+        f"References: {refs}",
+        "MIME-Version: 1.0",
+        "Content-Type: text/plain; charset=UTF-8",
+        "Content-Transfer-Encoding: 8bit",
+        "",
+        f"On {m['Date']}, {name} wrote:",
+        *(("> " + l).rstrip() for l in body.rstrip().splitlines()),
+        "",
+    ]
+    out = open(args.output, "w") if args.output else sys.stdout
+    out.write("\n".join(lines))
+
+
+def cmd_tree(args):
+    gitdir, commit = resolve(args.id, args.days)
+    m = load(gitdir, commit)
+    target = first_id(m["Message-ID"])
+    root = first_id(m["References"]) or target
+    blobs = Blobs()
+    nodes = {}  # Message-ID -> (commit, author, ts, subject, parent)
+    for g, c, author, ts, subject in recent(args.days):
+        h = headers(blobs.read(g, c) or b"")
+        mid = first_id(h["Message-ID"])
+        related = ids(h["References"]) + ids(h["In-Reply-To"])
+        if mid and (mid == root or root in related):
+            parent = first_id(h["In-Reply-To"]) or (ids(h["References"]) or [None])[-1]
+            nodes[mid] = (c, author, ts, subject, parent)
+    children = {}
+    for mid, (*_, parent) in nodes.items():
+        children.setdefault(parent if parent in nodes else None, []).append(mid)
+    for kids in children.values():
+        kids.sort(key=lambda k: nodes[k][2])
+
+    def walk(mid, prefix, last):
+        c, author, ts, subject, _ = nodes[mid]
+        mark = " *" if mid == target else ""
+        print(f"{c[:10]} {local_time(ts)} {prefix}{'└─' if last else '├─'} {author}: {subject}{mark}")
+        kids = children.get(mid, [])
+        for i, k in enumerate(kids):
+            walk(k, prefix + ("   " if last else "│  "), i == len(kids) - 1)
+
+    tops = children.get(None, [])
+    for i, mid in enumerate(tops):
+        walk(mid, "", i == len(tops) - 1)
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = ap.add_subparsers(dest="cmd")
+    ls = sub.add_parser("ls")
+    ls.add_argument("--days", type=int, default=3)
+    ls.add_argument("-a", "--author")
+    ls.add_argument("-g", "--grep", help="regex on subject")
+    for name in ("show", "reply", "tree"):
+        p = sub.add_parser(name)
+        p.add_argument("id")
+        p.add_argument("--days", type=int, default=30)
+        if name == "reply":
+            p.add_argument("-o", "--output")
+    argv = sys.argv[1:]
+    if not argv or argv[0] not in (*sub.choices, "-h", "--help"):
+        argv = ["ls", *argv]
+    args = ap.parse_args(argv)
+    {"ls": cmd_ls, "show": cmd_show, "reply": cmd_reply, "tree": cmd_tree}[args.cmd](args)
+
+
+if __name__ == "__main__":
+    main()
