@@ -43,8 +43,8 @@ exec touch /tmp/workspace-highlight.css && exec waybar
 
 # Preserve the lid-dependent output state across a Sway reload. With the lid
 # open, reapply the kanshi profile to restore the configured output layout.
-bindswitch --reload lid:on output eDP-1 disable
-bindswitch --reload lid:off exec kanshictl reload
+bindswitch --locked --reload lid:on output eDP-1 disable
+bindswitch --locked --reload lid:off exec kanshictl reload
 
 # Lock after 10 idle minutes and before suspend.
 exec swayidle -w \
