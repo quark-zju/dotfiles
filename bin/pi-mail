@@ -462,7 +462,12 @@ def cmd_stats(args):
 def cmd_show(args):
     for gitdir, commit in args.index.resolve(args.sel, args.days):
         sys.stdout.write(f"From {commit} Mon Sep 17 00:00:00 2001\n")
-        sys.stdout.write(load(gitdir, commit).as_string(unixfrom=False).rstrip("\n") + "\n\n")
+        text = load(gitdir, commit).as_string(unixfrom=False).rstrip("\n")
+        if sys.stdout.isatty():
+            headers, separator, body = text.partition("\n\n")
+            body = re.sub(r"(?m)^>.*$", "\x1b[36m\\g<0>\x1b[0m", body)
+            text = headers + separator + body
+        sys.stdout.write(text + "\n\n")
 
 
 def self_addresses():
