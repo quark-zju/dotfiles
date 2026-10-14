@@ -18,10 +18,10 @@ Update every inbox recorded in the index with `pi-mail fetch`.
 
 import argparse
 import email
-import email.parser
 import email.policy
 import email.utils
 import glob
+import io
 import os
 import re
 import sqlite3
@@ -34,6 +34,8 @@ INBOX = os.path.expanduser(os.environ.get("PI_INBOX", "~/public-inbox/git/git"))
 CACHE = os.path.join(os.path.expanduser(os.environ.get("XDG_CACHE_HOME", "~/.cache")),
                      "pi-mail", "index.sqlite3")
 POLICY = email.policy.default
+THREAD_HEADERS = {b"message-id", b"in-reply-to", b"references"}
+BYTE_IDS = re.compile(rb"<([^>]+)>")
 
 
 def epochs():
@@ -79,8 +81,31 @@ class Blobs:
         return data
 
 
-def headers(data):
-    return email.parser.BytesHeaderParser(policy=POLICY).parsebytes(data.split(b"\n\n", 1)[0])
+def thread_ids(data):
+    """Extract thread IDs without parsing unrelated mail headers."""
+    values = {}
+    current = None
+    for line in io.BytesIO(data):
+        line = line.rstrip(b"\r\n")
+        if not line:
+            break
+        if line[:1] in (b" ", b"\t"):
+            if current is not None:
+                values[current] += b" " + line.strip()
+            continue
+        name, separator, value = line.partition(b":")
+        name = name.lower()
+        if separator and name in THREAD_HEADERS and name not in values:
+            values[name] = value.strip()
+            current = name
+        else:
+            current = None
+
+    def extract(name):
+        return [value.decode("ascii", "replace")
+                for value in BYTE_IDS.findall(values.get(name, b""))]
+
+    return extract(b"message-id"), extract(b"in-reply-to"), extract(b"references")
 
 
 class Progress:
@@ -195,12 +220,11 @@ class Index:
         rows = []
         values = set()
         for commit, author, timestamp, subject in entries:
-            h = headers(blobs.read(gitdir, commit) or b"")
+            message_ids, in_reply_to, refs = thread_ids(blobs.read(gitdir, commit) or b"")
             # Broken mail occasionally has an empty Message-ID. Keep it in the
             # index under an internal identity so it does not block the batch.
-            message_id = first_id(h["Message-ID"]) or f"oid:{commit}"
-            refs = ids(h["References"])
-            parent = first_id(h["In-Reply-To"]) or (refs or [None])[-1]
+            message_id = (message_ids or [f"oid:{commit}"])[0]
+            parent = (in_reply_to or [None])[0] or (refs or [None])[-1]
             thread = refs[0] if refs else message_id
             rows.append((commit, message_id, parent, thread, timestamp, author, subject))
             values.update((message_id, thread, author))
