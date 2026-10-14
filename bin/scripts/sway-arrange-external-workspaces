@@ -1,0 +1,19 @@
+#!/bin/sh
+
+external=$(swaymsg -t get_outputs -r |
+    jq -r '.[] | select(.active and .name != "eDP-1") | .name' |
+    head -n 1)
+focused=$(swaymsg -t get_workspaces -r |
+    jq -r '.[] | select(.focused) | .num')
+
+[ -n "$external" ] || exit 0
+
+swaymsg -t get_workspaces -r |
+    jq -r '.[] | select(.num >= 1 and .num <= 10) | .num' |
+    while read -r workspace; do
+        output=eDP-1
+        [ "$workspace" -ne 10 ] || output=$external
+        swaymsg "workspace number $workspace, move workspace to output \"$output\"" >/dev/null
+    done
+
+[ -z "$focused" ] || swaymsg "workspace number $focused" >/dev/null

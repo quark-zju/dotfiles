@@ -9,8 +9,7 @@ profile docked-t32p {
 profile external {
     output eDP-1 enable position 0,0
     output "*" enable position 1920,0
-    exec swaymsg '[workspace="^[1-9](:.*)?$"] move workspace to output eDP-1'
-    exec ~/bin/scripts/sway-workspace-to-external 10
+    exec ~/bin/scripts/sway-arrange-external-workspaces
 }
 
 profile laptop {

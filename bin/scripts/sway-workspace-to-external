@@ -1,9 +1,0 @@
-#!/bin/sh
-
-output=$(swaymsg -t get_outputs -r |
-    jq -r '.[] | select(.active and .name != "eDP-1") | .name' |
-    head -n 1)
-
-if [ -n "$output" ]; then
-    swaymsg "[workspace=\"^$1(:.*)?$\"] move workspace to output \"$output\""
-fi
