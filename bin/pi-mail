@@ -2,15 +2,15 @@
 """Browse a public-inbox v2 mirror through an on-demand SQLite index.
 
   pi-mail [ls] [--days N] [-a AUTHOR] [-g SUBJECT]    list recent mails
-  pi-mail show  SEL [--days N] [-v]                   print the mail(s)
+  pi-mail show  SEL... [--days N] [-v]                print the mail(s)
   pi-mail reply SEL [-o FILE]                         reply template for git send-email
-  pi-mail tree  SEL [--days N]                        thread tree(s)
+  pi-mail tree  SEL... [--days N]                     thread tree(s)
   pi-mail fetch                                       update every registered inbox
   pi-mail stats                                       show index statistics
 
 SEL is a commit hash shown by `ls`/`tree`, a Message-ID, a lore URL, or
 otherwise a regex matched against subjects within --days. `show` and `tree`
-handle every match; `reply` needs exactly one.
+accept multiple selectors and handle every match; `reply` needs exactly one.
 `reply` drops your own addresses from Cc; add extra ones with
 `git config --global --add pimail.self ADDRESS`.
 The inbox defaults to ~/public-inbox/git/git (override with $PI_INBOX).
@@ -432,6 +432,17 @@ def format_size(size):
         size /= 1024
 
 
+def resolve_many(index, sels, days):
+    found = []
+    seen = set()
+    for sel in sels:
+        for match in index.resolve(sel, days):
+            if match not in seen:
+                seen.add(match)
+                found.append(match)
+    return found
+
+
 def cmd_ls(args):
     for gitdir, commit, author, ts, subject in args.index.recent(args.days):
         if args.author and args.author.casefold() not in author.casefold():
@@ -460,7 +471,7 @@ def cmd_stats(args):
 
 
 def cmd_show(args):
-    for gitdir, commit in args.index.resolve(args.sel, args.days):
+    for gitdir, commit in resolve_many(args.index, args.sels, args.days):
         if args.verbose:
             sys.stdout.write(f"From {commit} Mon Sep 17 00:00:00 2001\n")
         message = load(gitdir, commit)
@@ -525,7 +536,7 @@ def cmd_reply(args):
 
 def cmd_tree(args):
     targets, threads = set(), []
-    for _, commit in args.index.resolve(args.sel, args.days):
+    for _, commit in resolve_many(args.index, args.sels, args.days):
         message_sid, thread_sid = args.index.thread_target(commit)
         targets.add(message_sid)
         if thread_sid not in threads:
@@ -568,7 +579,10 @@ def main():
     sub.add_parser("stats")
     for name in ("show", "reply", "tree"):
         p = sub.add_parser(name)
-        p.add_argument("sel")
+        if name in ("show", "tree"):
+            p.add_argument("sels", metavar="SEL", nargs="+")
+        else:
+            p.add_argument("sel")
         p.add_argument("--days", type=int, default=30)
         if name == "show":
             p.add_argument("-v", "--verbose", action="store_true", help="show all headers")
