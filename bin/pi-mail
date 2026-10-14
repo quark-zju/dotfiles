@@ -345,10 +345,11 @@ class Index:
         return sorted(found)
 
     def stats(self):
-        return self.db.execute(
-            "SELECT e.path, count(m.id), min(m.commit_time), max(m.commit_time) "
-            "FROM epochs e LEFT JOIN messages m ON m.epoch_id = e.id "
-            "GROUP BY e.id ORDER BY e.path").fetchall()
+        messages = self.db.execute("SELECT count(*) FROM messages").fetchone()[0]
+        epochs = self.db.execute(
+            "SELECT path, tip_oid, oldest_indexed_oid, history_complete "
+            "FROM epochs ORDER BY path").fetchall()
+        return messages, epochs
 
     def resolve(self, sel, days):
         """Return [(gitdir, commit)] for a hash, Message-ID, lore URL, or subject regex."""
@@ -424,10 +425,6 @@ def local_time(ts):
     return datetime.fromtimestamp(ts).strftime("%m-%d %H:%M")
 
 
-def local_date(ts):
-    return datetime.fromtimestamp(ts).strftime("%Y-%m-%d")
-
-
 def format_size(size):
     for unit in ("bytes", "KiB", "MiB", "GiB"):
         if size < 1024 or unit == "GiB":
@@ -450,16 +447,16 @@ def cmd_fetch(args):
 
 
 def cmd_stats(args):
-    rows = args.index.stats()
+    messages, epochs = args.index.stats()
     print(f"Database: {os.path.abspath(CACHE)}")
     print(f"Size: {format_size(os.path.getsize(CACHE))}")
-    print(f"Messages: {sum(row[1] for row in rows)}")
+    print(f"Messages: {messages}")
     print("Epochs:")
-    for path, count, oldest, newest in rows:
-        indexed = f"{local_date(oldest)} .. {local_date(newest)}" if count else "none"
+    for path, tip, oldest, complete in epochs:
         print(f"  {path}")
-        print(f"    Messages: {count}")
-        print(f"    Indexed: {indexed}")
+        print(f"    Tip: {tip or 'unknown'}")
+        print(f"    Oldest indexed: {oldest or 'none'}")
+        print(f"    Complete: {'yes' if complete else 'no'}")
 
 
 def cmd_show(args):
