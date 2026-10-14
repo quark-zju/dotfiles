@@ -6,6 +6,7 @@
   pi-mail reply SEL [-o FILE]                         reply template for git send-email
   pi-mail tree  SEL [--days N]                        ASCII thread tree(s)
   pi-mail fetch                                       update every registered inbox
+  pi-mail stats                                       show index statistics
 
 SEL is a commit hash shown by `ls`/`tree`, a Message-ID, a lore URL, or
 otherwise a regex matched against subjects within --days. `show` and `tree`
@@ -343,6 +344,12 @@ class Index:
             found.add(directory)
         return sorted(found)
 
+    def stats(self):
+        return self.db.execute(
+            "SELECT e.path, count(m.id), min(m.commit_time), max(m.commit_time) "
+            "FROM epochs e LEFT JOIN messages m ON m.epoch_id = e.id "
+            "GROUP BY e.id ORDER BY e.path").fetchall()
+
     def resolve(self, sel, days):
         """Return [(gitdir, commit)] for a hash, Message-ID, lore URL, or subject regex."""
         match = re.search(r"lore\.kernel\.org/[^/]+/([^/]+)", sel)
@@ -417,6 +424,17 @@ def local_time(ts):
     return datetime.fromtimestamp(ts).strftime("%m-%d %H:%M")
 
 
+def local_date(ts):
+    return datetime.fromtimestamp(ts).strftime("%Y-%m-%d")
+
+
+def format_size(size):
+    for unit in ("bytes", "KiB", "MiB", "GiB"):
+        if size < 1024 or unit == "GiB":
+            return f"{size:.0f} {unit}" if unit == "bytes" else f"{size:.1f} {unit}"
+        size /= 1024
+
+
 def cmd_ls(args):
     for gitdir, commit, author, ts, subject in args.index.recent(args.days):
         if args.author and args.author.casefold() not in author.casefold():
@@ -429,6 +447,19 @@ def cmd_ls(args):
 def cmd_fetch(args):
     for directory in args.index.update_dirs():
         subprocess.run(["make", "update"], cwd=directory, check=True)
+
+
+def cmd_stats(args):
+    rows = args.index.stats()
+    print(f"Database: {os.path.abspath(CACHE)}")
+    print(f"Size: {format_size(os.path.getsize(CACHE))}")
+    print(f"Messages: {sum(row[1] for row in rows)}")
+    print("Epochs:")
+    for path, count, oldest, newest in rows:
+        indexed = f"{local_date(oldest)} .. {local_date(newest)}" if count else "none"
+        print(f"  {path}")
+        print(f"    Messages: {count}")
+        print(f"    Indexed: {indexed}")
 
 
 def cmd_show(args):
@@ -528,6 +559,7 @@ def main():
     ls.add_argument("-a", "--author")
     ls.add_argument("-g", "--grep", help="regex on subject")
     sub.add_parser("fetch")
+    sub.add_parser("stats")
     for name in ("show", "reply", "tree"):
         p = sub.add_parser(name)
         p.add_argument("sel")
@@ -540,8 +572,8 @@ def main():
     args = ap.parse_args(argv)
     args.index = Index()
     try:
-        if args.cmd == "fetch":
-            cmd_fetch(args)
+        if args.cmd in ("fetch", "stats"):
+            {"fetch": cmd_fetch, "stats": cmd_stats}[args.cmd](args)
         else:
             args.index.sync(args.days)
             {"ls": cmd_ls, "show": cmd_show, "reply": cmd_reply, "tree": cmd_tree}[args.cmd](args)
