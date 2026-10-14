@@ -88,14 +88,12 @@ class Progress:
         self.count = 0
         self.start = start or time.perf_counter()
         self.tty = sys.stderr.isatty()
-        if self.tty:
-            sys.stderr.write("Indexing 0 messages")
-            sys.stderr.flush()
 
-    def update(self):
+    def update(self, timestamp):
         self.count += 1
-        if self.tty and self.count % 100 == 0:
-            sys.stderr.write(f"\rIndexing {self.count} messages")
+        if self.tty and (self.count == 1 or self.count % 100 == 0):
+            date = datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d")
+            sys.stderr.write(f"\rIndexing {self.count} messages ({date})")
             sys.stderr.flush()
 
     def finish(self):
@@ -208,7 +206,7 @@ class Index:
             values.update((message_id, thread, author))
             if parent:
                 values.add(parent)
-            progress.update()
+            progress.update(timestamp)
 
         self.db.executemany("INSERT OR IGNORE INTO strings(value) VALUES (?)",
                             ((value,) for value in values))
