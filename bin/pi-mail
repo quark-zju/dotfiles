@@ -198,9 +198,9 @@ class Index:
         values = set()
         for commit, author, timestamp, subject in entries:
             h = headers(blobs.read(gitdir, commit) or b"")
-            message_id = first_id(h["Message-ID"])
-            if not message_id:
-                raise RuntimeError(f"{commit} has no Message-ID")
+            # Broken mail occasionally has an empty Message-ID. Keep it in the
+            # index under an internal identity so it does not block the batch.
+            message_id = first_id(h["Message-ID"]) or f"oid:{commit}"
             refs = ids(h["References"])
             parent = first_id(h["In-Reply-To"]) or (refs or [None])[-1]
             thread = refs[0] if refs else message_id
@@ -431,6 +431,8 @@ def cmd_reply(args):
         sys.exit(f"{len(found)} mails match; pick one by commit hash")
     m = load(*found[0])
     msgid = first_id(m["Message-ID"])
+    if not msgid:
+        sys.exit(f"{found[0][1]} has no Message-ID; cannot reply")
     sender = email.utils.getaddresses([str(m["Reply-To"] or m["From"])])
     seen = {a.lower() for _, a in sender} | self_addresses()
     cc = []
