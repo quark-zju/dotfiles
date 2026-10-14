@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
+"""Arrange Sway workspaces across the laptop panel and an external display."""
 
+import argparse
 import json
 import subprocess
-import sys
 
 
 def get_sway_state(message_type):
@@ -12,41 +13,62 @@ def get_sway_state(message_type):
     return json.loads(output)
 
 
-if len(sys.argv) != 2 or sys.argv[1] not in {"internal", "external"}:
-    raise SystemExit(f"usage: {sys.argv[0]} internal|external")
-
-outputs = get_sway_state("get_outputs")
-external = next(
-    (
-        output["name"]
-        for output in outputs
-        if output["active"] and output["name"] != "eDP-1"
-    ),
-    None,
-)
-internal_active = any(
-    output["active"] and output["name"] == "eDP-1" for output in outputs
-)
-if external is None or not internal_active:
-    raise SystemExit
-
-workspaces = get_sway_state("get_workspaces")
-focused = next(
-    (workspace["num"] for workspace in workspaces if workspace["focused"]), None
-)
-workspace_10_output = "eDP-1" if sys.argv[1] == "internal" else external
-other_output = external if sys.argv[1] == "internal" else "eDP-1"
-
-for workspace in workspaces:
-    number = workspace["num"]
-    if 1 <= number <= 10:
-        output = workspace_10_output if number == 10 else other_output
-        command = f"workspace number {number}, move workspace to output {json.dumps(output)}"
-        subprocess.run(["swaymsg", command], stdout=subprocess.DEVNULL, check=True)
-
-if focused is not None:
-    subprocess.run(
-        ["swaymsg", f"workspace number {focused}"],
-        stdout=subprocess.DEVNULL,
-        check=True,
+def main():
+    parser = argparse.ArgumentParser(
+        description=(
+            "Place workspaces 1-9 on one display and workspace 10 on the other. "
+            "The original focused workspace is restored afterward."
+        )
     )
+    parser.add_argument(
+        "workspace_10",
+        choices=("internal", "external"),
+        help="display on which to place workspace 10",
+    )
+    args = parser.parse_args()
+
+    outputs = get_sway_state("get_outputs")
+    external = next(
+        (
+            output["name"]
+            for output in outputs
+            if output["active"] and output["name"] != "eDP-1"
+        ),
+        None,
+    )
+    internal_active = any(
+        output["active"] and output["name"] == "eDP-1" for output in outputs
+    )
+    if external is None or not internal_active:
+        return
+
+    workspaces = get_sway_state("get_workspaces")
+    focused = next(
+        (workspace["num"] for workspace in workspaces if workspace["focused"]),
+        None,
+    )
+    workspace_10_output = "eDP-1" if args.workspace_10 == "internal" else external
+    other_output = external if args.workspace_10 == "internal" else "eDP-1"
+
+    for workspace in workspaces:
+        number = workspace["num"]
+        if 1 <= number <= 10:
+            output = workspace_10_output if number == 10 else other_output
+            command = (
+                f"workspace number {number}, "
+                f"move workspace to output {json.dumps(output)}"
+            )
+            subprocess.run(
+                ["swaymsg", command], stdout=subprocess.DEVNULL, check=True
+            )
+
+    if focused is not None:
+        subprocess.run(
+            ["swaymsg", f"workspace number {focused}"],
+            stdout=subprocess.DEVNULL,
+            check=True,
+        )
+
+
+if __name__ == "__main__":
+    main()
