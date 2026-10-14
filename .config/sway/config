@@ -43,6 +43,11 @@ exec kanshi
 # kanshi applies a profile when it first starts.
 exec_always kanshictl reload
 
+# Use only the external display while the laptop lid is closed. Reapply the
+# kanshi profile when it is opened to restore the configured output layout.
+bindswitch lid:on output eDP-1 disable
+bindswitch lid:off exec kanshictl reload
+
 # Lock after 10 idle minutes and before suspend.
 exec swayidle -w \
     timeout 600 'swaylock -f -c 111111' \

@@ -6,6 +6,12 @@ profile docked-t32p {
     exec swaymsg '[workspace="^10(:.*)?$"] move workspace to output eDP-1'
 }
 
+profile external {
+    output eDP-1 enable position 0,0
+    output "*" enable position 1920,0
+    exec swaymsg '[workspace="^10(:.*)?$"] move workspace to output right'
+}
+
 profile laptop {
     output eDP-1 enable
 }
