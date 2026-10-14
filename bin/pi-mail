@@ -2,7 +2,7 @@
 """Browse a public-inbox v2 mirror through an on-demand SQLite index.
 
   pi-mail [ls] [--days N] [-a AUTHOR] [-g SUBJECT]    list recent mails
-  pi-mail show  SEL [--days N]                        print the raw mail(s)
+  pi-mail show  SEL [--days N] [-v]                   print the mail(s)
   pi-mail reply SEL [-o FILE]                         reply template for git send-email
   pi-mail tree  SEL [--days N]                        thread tree(s)
   pi-mail fetch                                       update every registered inbox
@@ -461,13 +461,17 @@ def cmd_stats(args):
 
 def cmd_show(args):
     for gitdir, commit in args.index.resolve(args.sel, args.days):
-        sys.stdout.write(f"From {commit} Mon Sep 17 00:00:00 2001\n")
-        text = load(gitdir, commit).as_string(unixfrom=False).rstrip("\n")
+        if args.verbose:
+            sys.stdout.write(f"From {commit} Mon Sep 17 00:00:00 2001\n")
+        message = load(gitdir, commit)
+        text = message.as_string(unixfrom=False).rstrip("\n")
+        headers, separator, body = text.partition("\n\n")
+        if not args.verbose:
+            subject = message["Subject"]
+            headers = subject.fold(policy=POLICY).rstrip("\n") if subject else "Subject:"
         if sys.stdout.isatty():
-            headers, separator, body = text.partition("\n\n")
             body = re.sub(r"(?m)^>.*$", "\x1b[36m\\g<0>\x1b[0m", body)
-            text = headers + separator + body
-        sys.stdout.write(text + "\n\n")
+        sys.stdout.write(headers + separator + body + "\n\n")
 
 
 def self_addresses():
@@ -566,7 +570,9 @@ def main():
         p = sub.add_parser(name)
         p.add_argument("sel")
         p.add_argument("--days", type=int, default=30)
-        if name == "reply":
+        if name == "show":
+            p.add_argument("-v", "--verbose", action="store_true", help="show all headers")
+        elif name == "reply":
             p.add_argument("-o", "--output")
     argv = sys.argv[1:]
     if not argv or argv[0] not in (*sub.choices, "-h", "--help"):
