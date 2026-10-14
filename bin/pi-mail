@@ -5,6 +5,7 @@
   pi-mail show  SEL [--days N]                        print the raw mail(s)
   pi-mail reply SEL [-o FILE]                         reply template for git send-email
   pi-mail tree  SEL [--days N]                        ASCII thread tree(s)
+  pi-mail fetch                                       update every registered inbox
 
 SEL is a commit hash shown by `ls`/`tree`, a Message-ID, a lore URL, or
 otherwise a regex matched against subjects within --days. `show` and `tree`
@@ -12,7 +13,7 @@ handle every match; `reply` needs exactly one.
 `reply` drops your own addresses from Cc; add extra ones with
 `git config --global --add pimail.self ADDRESS`.
 The inbox defaults to ~/public-inbox/git/git (override with $PI_INBOX).
-Update it with `public-inbox-fetch` in the inbox's parent directory.
+Update every inbox recorded in the index with `pi-mail fetch`.
 """
 
 import argparse
@@ -308,6 +309,18 @@ class Index:
             f"ORDER BY m.commit_time DESC, m.id DESC",
             (*self.epoch_ids, cutoff))
 
+    def update_dirs(self):
+        found = set()
+        for path, in self.db.execute("SELECT path FROM epochs"):
+            directory = os.path.dirname(path)
+            while not os.path.isfile(os.path.join(directory, "Makefile")):
+                parent = os.path.dirname(directory)
+                if parent == directory:
+                    sys.exit(f"no Makefile found above registered epoch {path}")
+                directory = parent
+            found.add(directory)
+        return sorted(found)
+
     def resolve(self, sel, days):
         """Return [(gitdir, commit)] for a hash, Message-ID, lore URL, or subject regex."""
         match = re.search(r"lore\.kernel\.org/[^/]+/([^/]+)", sel)
@@ -389,6 +402,11 @@ def cmd_ls(args):
         if args.grep and not re.search(args.grep, subject, re.I):
             continue
         print(f"{commit[:10]} {local_time(ts)} {author[:20]:20} {subject}")
+
+
+def cmd_fetch(args):
+    for directory in args.index.update_dirs():
+        subprocess.run(["make", "update"], cwd=directory, check=True)
 
 
 def cmd_show(args):
@@ -485,6 +503,7 @@ def main():
     ls.add_argument("--days", type=int, default=3)
     ls.add_argument("-a", "--author")
     ls.add_argument("-g", "--grep", help="regex on subject")
+    sub.add_parser("fetch")
     for name in ("show", "reply", "tree"):
         p = sub.add_parser(name)
         p.add_argument("sel")
@@ -496,9 +515,12 @@ def main():
         argv = ["ls", *argv]
     args = ap.parse_args(argv)
     args.index = Index()
-    args.index.sync(args.days)
     try:
-        {"ls": cmd_ls, "show": cmd_show, "reply": cmd_reply, "tree": cmd_tree}[args.cmd](args)
+        if args.cmd == "fetch":
+            cmd_fetch(args)
+        else:
+            args.index.sync(args.days)
+            {"ls": cmd_ls, "show": cmd_show, "reply": cmd_reply, "tree": cmd_tree}[args.cmd](args)
     finally:
         args.index.db.close()
 
