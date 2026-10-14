@@ -2,6 +2,7 @@
 
 import json
 import subprocess
+import sys
 
 
 def get_sway_state(message_type):
@@ -10,6 +11,9 @@ def get_sway_state(message_type):
     )
     return json.loads(output)
 
+
+if len(sys.argv) != 2 or sys.argv[1] not in {"internal", "external"}:
+    raise SystemExit(f"usage: {sys.argv[0]} internal|external")
 
 outputs = get_sway_state("get_outputs")
 external = next(
@@ -30,11 +34,13 @@ workspaces = get_sway_state("get_workspaces")
 focused = next(
     (workspace["num"] for workspace in workspaces if workspace["focused"]), None
 )
+workspace_10_output = "eDP-1" if sys.argv[1] == "internal" else external
+other_output = external if sys.argv[1] == "internal" else "eDP-1"
 
 for workspace in workspaces:
     number = workspace["num"]
     if 1 <= number <= 10:
-        output = external if number == 10 else "eDP-1"
+        output = workspace_10_output if number == 10 else other_output
         command = f"workspace number {number}, move workspace to output {json.dumps(output)}"
         subprocess.run(["swaymsg", command], stdout=subprocess.DEVNULL, check=True)
 

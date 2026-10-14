@@ -2,14 +2,13 @@ profile docked-t32p {
     output "Lenovo Group Limited LEN T32p-20 *" enable position 0,0
     output eDP-1 enable position 3840,0
     ...output "*" disable
-    exec swaymsg '[workspace="^[1-9](:.*)?$"] move workspace to output DP-1'
-    exec swaymsg '[workspace="^10(:.*)?$"] move workspace to output eDP-1'
+    exec ~/bin/scripts/sway-arrange-workspaces internal
 }
 
 profile external {
     output eDP-1 enable position 0,0
     output "*" enable position 1920,0
-    exec ~/bin/scripts/sway-arrange-external-workspaces
+    exec ~/bin/scripts/sway-arrange-workspaces external
 }
 
 profile laptop {
