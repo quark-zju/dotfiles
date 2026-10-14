@@ -1,19 +1,46 @@
-#!/bin/sh
+#!/usr/bin/env python3
 
-external=$(swaymsg -t get_outputs -r |
-    jq -r '.[] | select(.active and .name != "eDP-1") | .name' |
-    head -n 1)
-focused=$(swaymsg -t get_workspaces -r |
-    jq -r '.[] | select(.focused) | .num')
+import json
+import subprocess
 
-[ -n "$external" ] || exit 0
 
-swaymsg -t get_workspaces -r |
-    jq -r '.[] | select(.num >= 1 and .num <= 10) | .num' |
-    while read -r workspace; do
-        output=eDP-1
-        [ "$workspace" -ne 10 ] || output=$external
-        swaymsg "workspace number $workspace, move workspace to output \"$output\"" >/dev/null
-    done
+def get_sway_state(message_type):
+    output = subprocess.check_output(
+        ["swaymsg", "-t", message_type, "-r"], text=True
+    )
+    return json.loads(output)
 
-[ -z "$focused" ] || swaymsg "workspace number $focused" >/dev/null
+
+outputs = get_sway_state("get_outputs")
+external = next(
+    (
+        output["name"]
+        for output in outputs
+        if output["active"] and output["name"] != "eDP-1"
+    ),
+    None,
+)
+internal_active = any(
+    output["active"] and output["name"] == "eDP-1" for output in outputs
+)
+if external is None or not internal_active:
+    raise SystemExit
+
+workspaces = get_sway_state("get_workspaces")
+focused = next(
+    (workspace["num"] for workspace in workspaces if workspace["focused"]), None
+)
+
+for workspace in workspaces:
+    number = workspace["num"]
+    if 1 <= number <= 10:
+        output = external if number == 10 else "eDP-1"
+        command = f"workspace number {number}, move workspace to output {json.dumps(output)}"
+        subprocess.run(["swaymsg", command], stdout=subprocess.DEVNULL, check=True)
+
+if focused is not None:
+    subprocess.run(
+        ["swaymsg", f"workspace number {focused}"],
+        stdout=subprocess.DEVNULL,
+        check=True,
+    )
