@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Browse a public-inbox v2 mirror directly via git, without an index.
+"""Browse a public-inbox v2 mirror through an on-demand SQLite index.
 
   pi-mail [ls] [--days N] [-a AUTHOR] [-g SUBJECT]   list recent mails
   pi-mail show  SEL [--days N]                        print the raw mail(s)
@@ -23,11 +23,15 @@ import email.utils
 import glob
 import os
 import re
+import sqlite3
 import subprocess
 import sys
+import time
 from datetime import datetime
 
 INBOX = os.path.expanduser(os.environ.get("PI_INBOX", "~/public-inbox/git/git"))
+CACHE = os.path.join(os.path.expanduser(os.environ.get("XDG_CACHE_HOME", "~/.cache")),
+                     "pi-mail", "index.sqlite3")
 POLICY = email.policy.default
 
 
@@ -74,38 +78,295 @@ class Blobs:
         return data
 
 
-def recent(days):
-    """Yield (gitdir, commit, author, timestamp, subject), newest first."""
-    for gitdir in epochs():
-        out = git(gitdir, "log", f"--since={days}.days", "--format=%H%x00%an%x00%at%x00%s")
-        for line in out.splitlines():
-            commit, author, ts, subject = line.split("\0", 3)
-            yield gitdir, commit, author, int(ts), subject
-
-
 def headers(data):
     return email.parser.BytesHeaderParser(policy=POLICY).parsebytes(data.split(b"\n\n", 1)[0])
 
 
-def resolve(sel, days):
-    """Return [(gitdir, commit)] for a commit hash, Message-ID, lore URL or subject regex."""
-    m = re.search(r"lore\.kernel\.org/[^/]+/([^/]+)", sel)
-    key = (m.group(1) if m else sel).strip().strip("<>")
-    if re.fullmatch(r"[0-9a-f]{7,40}", key):
-        for gitdir in epochs():
-            ok = subprocess.run(["git", f"--git-dir={gitdir}", "cat-file", "-e", f"{key}^{{commit}}"],
-                                capture_output=True)
-            if ok.returncode == 0:
-                return [(gitdir, key)]
-    if "@" in key:
+class Progress:
+    def __init__(self, start=None):
+        self.count = 0
+        self.start = start or time.perf_counter()
+        self.tty = sys.stderr.isatty()
+        if self.tty:
+            sys.stderr.write("Indexing 0 messages")
+            sys.stderr.flush()
+
+    def update(self):
+        self.count += 1
+        if self.tty and self.count % 100 == 0:
+            sys.stderr.write(f"\rIndexing {self.count} messages")
+            sys.stderr.flush()
+
+    def finish(self):
+        elapsed = time.perf_counter() - self.start
+        prefix = "\r" if self.tty else ""
+        print(f"{prefix}Indexed {self.count} messages in {elapsed:.1f} seconds.", file=sys.stderr)
+
+
+class Index:
+    SCHEMA = """
+        CREATE TABLE epochs (
+            id INTEGER PRIMARY KEY,
+            path TEXT NOT NULL UNIQUE,
+            tip_oid TEXT,
+            oldest_indexed_oid TEXT,
+            oldest_indexed_time INTEGER,
+            indexed_since_time INTEGER,
+            history_complete INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE TABLE strings (
+            id INTEGER PRIMARY KEY,
+            value TEXT NOT NULL UNIQUE
+        );
+        CREATE TABLE messages (
+            id INTEGER PRIMARY KEY,
+            epoch_id INTEGER NOT NULL REFERENCES epochs(id),
+            git_commit_oid TEXT NOT NULL UNIQUE,
+            message_sid INTEGER NOT NULL REFERENCES strings(id),
+            parent_sid INTEGER REFERENCES strings(id),
+            thread_sid INTEGER NOT NULL REFERENCES strings(id),
+            commit_time INTEGER NOT NULL,
+            author_sid INTEGER NOT NULL REFERENCES strings(id),
+            subject TEXT NOT NULL
+        );
+        CREATE INDEX messages_message_sid ON messages(message_sid);
+        CREATE INDEX messages_thread_sid ON messages(thread_sid);
+        CREATE INDEX messages_author_sid ON messages(author_sid);
+        CREATE INDEX messages_commit_time ON messages(commit_time DESC);
+        PRAGMA user_version = 1;
+    """
+
+    def __init__(self):
+        os.makedirs(os.path.dirname(CACHE), exist_ok=True)
+        self.db = sqlite3.connect(CACHE, timeout=30)
+        self.db.execute("PRAGMA foreign_keys = ON")
+        self.db.execute("PRAGMA busy_timeout = 30000")
+        version = self.db.execute("PRAGMA user_version").fetchone()[0]
+        if version == 0:
+            self.db.executescript(self.SCHEMA)
+        elif version != 1:
+            sys.exit(f"unsupported index version {version}; remove {CACHE} to rebuild")
+        self.gitdirs = [os.path.realpath(path) for path in epochs()]
+        with self.db:
+            self.db.executemany("INSERT OR IGNORE INTO epochs(path) VALUES (?)",
+                                ((path,) for path in self.gitdirs))
+        rows = self.db.execute(
+            f"SELECT id, path FROM epochs WHERE path IN ({','.join('?' * len(self.gitdirs))})",
+            self.gitdirs).fetchall()
+        ids = {path: epoch_id for epoch_id, path in rows}
+        self.epoch_ids = [ids[path] for path in self.gitdirs]
+
+    @property
+    def scope(self):
+        return ",".join("?" * len(self.epoch_ids))
+
+    @staticmethod
+    def _log_entries(gitdir, rev, since=None):
+        args = ["log", "--first-parent", "--format=%H%x00%an%x00%at%x00%s"]
+        if since is not None:
+            args.append(f"--since=@{since}")
+        args.append(rev)
+        out = git(gitdir, *args)
+        entries = []
+        for line in out.splitlines():
+            commit, author, timestamp, subject = line.split("\0", 3)
+            entries.append((commit, author, int(timestamp), subject))
+        return entries
+
+    @staticmethod
+    def _log_entry(gitdir, commit):
+        out = git(gitdir, "log", "-1", "--format=%H%x00%an%x00%at%x00%s", commit)
+        oid, author, timestamp, subject = out.rstrip("\n").split("\0", 3)
+        return oid, author, int(timestamp), subject
+
+    def _unindexed(self, entries):
+        if not entries:
+            return []
+        existing = set()
+        oids = [entry[0] for entry in entries]
+        for start in range(0, len(oids), 500):
+            chunk = oids[start:start + 500]
+            rows = self.db.execute(
+                f"SELECT git_commit_oid FROM messages WHERE git_commit_oid IN "
+                f"({','.join('?' * len(chunk))})", chunk)
+            existing.update(row[0] for row in rows)
+        return [entry for entry in entries if entry[0] not in existing]
+
+    def _index_entries(self, gitdir, epoch_id, entries, blobs, progress):
+        rows = []
+        values = set()
+        for commit, author, timestamp, subject in entries:
+            h = headers(blobs.read(gitdir, commit) or b"")
+            message_id = first_id(h["Message-ID"])
+            if not message_id:
+                raise RuntimeError(f"{commit} has no Message-ID")
+            refs = ids(h["References"])
+            parent = first_id(h["In-Reply-To"]) or (refs or [None])[-1]
+            thread = refs[0] if refs else message_id
+            rows.append((commit, message_id, parent, thread, timestamp, author, subject))
+            values.update((message_id, thread, author))
+            if parent:
+                values.add(parent)
+            progress.update()
+
+        self.db.executemany("INSERT OR IGNORE INTO strings(value) VALUES (?)",
+                            ((value,) for value in values))
+        string_ids = {}
+        values = list(values)
+        for start in range(0, len(values), 500):
+            chunk = values[start:start + 500]
+            found = self.db.execute(
+                f"SELECT id, value FROM strings WHERE value IN ({','.join('?' * len(chunk))})",
+                chunk)
+            string_ids.update((value, sid) for sid, value in found)
+        self.db.executemany(
+            "INSERT INTO messages(epoch_id, git_commit_oid, message_sid, parent_sid, "
+            "thread_sid, commit_time, author_sid, subject) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            ((epoch_id, commit, string_ids[message_id],
+              string_ids[parent] if parent else None, string_ids[thread], timestamp,
+              string_ids[author], subject)
+             for commit, message_id, parent, thread, timestamp, author, subject in rows))
+
+    def sync(self, days):
+        started = time.perf_counter()
+        cutoff = int(time.time()) - days * 86400
+        plans = []
+        for gitdir, epoch_id in zip(self.gitdirs, self.epoch_ids):
+            tip, oldest, oldest_time, covered, complete = self.db.execute(
+                "SELECT tip_oid, oldest_indexed_oid, oldest_indexed_time, "
+                "indexed_since_time, history_complete FROM epochs WHERE id = ?",
+                (epoch_id,)).fetchone()
+            head = git(gitdir, "rev-parse", "HEAD").strip()
+            reset = False
+            if tip and tip != head:
+                ancestor = subprocess.run(
+                    ["git", f"--git-dir={gitdir}", "merge-base", "--is-ancestor", tip, head])
+                if ancestor.returncode:
+                    tip = oldest = oldest_time = covered = None
+                    complete = 0
+                    reset = True
+
+            entries = []
+            if tip and tip != head:
+                entries.extend(self._log_entries(gitdir, f"{tip}..{head}"))
+
+            if not complete and (covered is None or cutoff < covered):
+                if oldest:
+                    parents = git(gitdir, "log", "-1", "--format=%P", oldest).split()
+                    start = parents[0] if parents else None
+                else:
+                    start = head
+                older = self._log_entries(gitdir, start, cutoff) if start else []
+                entries.extend(older)
+                covered = cutoff
+                if older:
+                    oldest, _, oldest_time, _ = older[-1]
+                    complete = not bool(git(gitdir, "log", "-1", "--format=%P", oldest).strip())
+                elif start is None:
+                    complete = 1
+
+            unique = []
+            seen = set()
+            for entry in entries:
+                if entry[0] not in seen:
+                    seen.add(entry[0])
+                    unique.append(entry)
+            entries = unique if reset else self._unindexed(unique)
+            plans.append((gitdir, epoch_id, reset, entries, head, oldest,
+                          oldest_time, covered, complete))
+
+        count = sum(len(plan[3]) for plan in plans)
+        progress = Progress(started) if count else None
         blobs = Blobs()
-        found = [(g, c) for g, c, *_ in recent(days)
-                 if key in ids(headers(blobs.read(g, c) or b"")["Message-ID"])]
-    else:
-        found = [(g, c) for g, c, _, _, subject in recent(days) if re.search(key, subject, re.I)]
-    if not found:
-        sys.exit(f"{sel} not found within {days} days; try --days")
-    return found
+        try:
+            with self.db:
+                for (gitdir, epoch_id, reset, entries, head, oldest,
+                     oldest_time, covered, complete) in plans:
+                    if reset:
+                        self.db.execute("DELETE FROM messages WHERE epoch_id = ?", (epoch_id,))
+                    if entries:
+                        self._index_entries(gitdir, epoch_id, entries, blobs, progress)
+                    self.db.execute(
+                        "UPDATE epochs SET tip_oid = ?, oldest_indexed_oid = ?, "
+                        "oldest_indexed_time = ?, indexed_since_time = ?, history_complete = ? "
+                        "WHERE id = ?",
+                        (head, oldest, oldest_time, covered, complete, epoch_id))
+        except Exception:
+            if progress and progress.tty:
+                print(file=sys.stderr)
+            raise
+        if progress:
+            progress.finish()
+
+    def recent(self, days):
+        cutoff = int(time.time()) - days * 86400
+        yield from self.db.execute(
+            f"SELECT e.path, m.git_commit_oid, a.value, m.commit_time, m.subject "
+            f"FROM messages m JOIN epochs e ON e.id = m.epoch_id "
+            f"JOIN strings a ON a.id = m.author_sid "
+            f"WHERE m.epoch_id IN ({self.scope}) AND m.commit_time >= ? "
+            f"ORDER BY m.commit_time DESC, m.id DESC",
+            (*self.epoch_ids, cutoff))
+
+    def resolve(self, sel, days):
+        """Return [(gitdir, commit)] for a hash, Message-ID, lore URL, or subject regex."""
+        match = re.search(r"lore\.kernel\.org/[^/]+/([^/]+)", sel)
+        key = (match.group(1) if match else sel).strip().strip("<>")
+        if re.fullmatch(r"[0-9a-f]{7,40}", key):
+            found = self.db.execute(
+                f"SELECT e.path, m.git_commit_oid FROM messages m "
+                f"JOIN epochs e ON e.id = m.epoch_id "
+                f"WHERE m.epoch_id IN ({self.scope}) AND m.git_commit_oid GLOB ?",
+                (*self.epoch_ids, key + "*")).fetchall()
+            if found:
+                return found
+            for gitdir, epoch_id in zip(self.gitdirs, self.epoch_ids):
+                check = subprocess.run(
+                    ["git", f"--git-dir={gitdir}", "cat-file", "-e", f"{key}^{{commit}}"],
+                    capture_output=True)
+                if check.returncode == 0:
+                    commit = git(gitdir, "rev-parse", f"{key}^{{commit}}").strip()
+                    entries = self._unindexed([self._log_entry(gitdir, commit)])
+                    if entries:
+                        progress = Progress()
+                        with self.db:
+                            self._index_entries(gitdir, epoch_id, entries, Blobs(), progress)
+                        progress.finish()
+                    return [(gitdir, commit)]
+
+        cutoff = int(time.time()) - days * 86400
+        if "@" in key:
+            found = self.db.execute(
+                f"SELECT e.path, m.git_commit_oid FROM messages m "
+                f"JOIN epochs e ON e.id = m.epoch_id "
+                f"JOIN strings s ON s.id = m.message_sid "
+                f"WHERE m.epoch_id IN ({self.scope}) AND m.commit_time >= ? AND s.value = ? "
+                f"ORDER BY m.commit_time DESC",
+                (*self.epoch_ids, cutoff, key)).fetchall()
+        else:
+            found = [(gitdir, commit) for gitdir, commit, _, _, subject in self.recent(days)
+                     if re.search(key, subject, re.I)]
+        if not found:
+            sys.exit(f"{sel} not found within {days} days; try --days")
+        return found
+
+    def thread_target(self, commit):
+        return self.db.execute(
+            f"SELECT message_sid, thread_sid FROM messages "
+            f"WHERE epoch_id IN ({self.scope}) AND git_commit_oid = ?",
+            (*self.epoch_ids, commit)).fetchone()
+
+    def thread_nodes(self, thread_sid, days):
+        cutoff = int(time.time()) - days * 86400
+        rows = self.db.execute(
+            f"SELECT m.message_sid, m.git_commit_oid, a.value, m.commit_time, "
+            f"m.subject, m.parent_sid FROM messages m "
+            f"JOIN strings a ON a.id = m.author_sid "
+            f"WHERE m.epoch_id IN ({self.scope}) AND m.thread_sid = ? "
+            f"AND m.commit_time >= ?",
+            (*self.epoch_ids, thread_sid, cutoff))
+        return {message_sid: (commit, author, timestamp, subject, parent_sid)
+                for message_sid, commit, author, timestamp, subject, parent_sid in rows}
 
 
 def describe(gitdir, commit):
@@ -122,8 +383,8 @@ def local_time(ts):
 
 
 def cmd_ls(args):
-    for gitdir, commit, author, ts, subject in recent(args.days):
-        if args.author and args.author.lower() not in author.lower():
+    for gitdir, commit, author, ts, subject in args.index.recent(args.days):
+        if args.author and args.author.casefold() not in author.casefold():
             continue
         if args.grep and not re.search(args.grep, subject, re.I):
             continue
@@ -131,7 +392,7 @@ def cmd_ls(args):
 
 
 def cmd_show(args):
-    for gitdir, commit in resolve(args.sel, args.days):
+    for gitdir, commit in args.index.resolve(args.sel, args.days):
         sys.stdout.write(f"From {commit} Mon Sep 17 00:00:00 2001\n")
         sys.stdout.write(load(gitdir, commit).as_string(unixfrom=False).rstrip("\n") + "\n\n")
 
@@ -146,7 +407,7 @@ def self_addresses():
 
 
 def cmd_reply(args):
-    found = resolve(args.sel, args.days)
+    found = args.index.resolve(args.sel, args.days)
     if len(found) > 1:
         print("\n".join(describe(*f) for f in found), file=sys.stderr)
         sys.exit(f"{len(found)} mails match; pick one by commit hash")
@@ -184,27 +445,16 @@ def cmd_reply(args):
 
 
 def cmd_tree(args):
-    targets, roots = set(), []
-    for gitdir, commit in resolve(args.sel, args.days):
-        m = load(gitdir, commit)
-        targets.add(first_id(m["Message-ID"]))
-        root = first_id(m["References"]) or first_id(m["Message-ID"])
-        if root not in roots:
-            roots.append(root)
-    blobs = Blobs()
-    window = []  # (Message-ID, related ids, commit, author, ts, subject, parent)
-    for g, c, author, ts, subject in recent(args.days):
-        h = headers(blobs.read(g, c) or b"")
-        mid = first_id(h["Message-ID"])
-        if mid:
-            parent = first_id(h["In-Reply-To"]) or (ids(h["References"]) or [None])[-1]
-            related = ids(h["References"]) + ids(h["In-Reply-To"])
-            window.append((mid, related, c, author, ts, subject, parent))
-    for i, root in enumerate(roots):
+    targets, threads = set(), []
+    for _, commit in args.index.resolve(args.sel, args.days):
+        message_sid, thread_sid = args.index.thread_target(commit)
+        targets.add(message_sid)
+        if thread_sid not in threads:
+            threads.append(thread_sid)
+    for i, thread_sid in enumerate(threads):
         if i:
             print()
-        nodes = {mid: rest for mid, related, *rest in window if mid == root or root in related}
-        print_tree(nodes, targets)
+        print_tree(args.index.thread_nodes(thread_sid, args.days), targets)
 
 
 def print_tree(nodes, targets):
@@ -245,7 +495,12 @@ def main():
     if not argv or argv[0] not in (*sub.choices, "-h", "--help"):
         argv = ["ls", *argv]
     args = ap.parse_args(argv)
-    {"ls": cmd_ls, "show": cmd_show, "reply": cmd_reply, "tree": cmd_tree}[args.cmd](args)
+    args.index = Index()
+    args.index.sync(args.days)
+    try:
+        {"ls": cmd_ls, "show": cmd_show, "reply": cmd_reply, "tree": cmd_tree}[args.cmd](args)
+    finally:
+        args.index.db.close()
 
 
 if __name__ == "__main__":
