@@ -783,6 +783,15 @@ def cmd_draft_send(args):
     record_draft_change(args.commit, f"Send reply to {args.commit[:12]}")
 
 
+def delete_draft(commit):
+    path = draft_path(commit)
+    if not os.path.isfile(path):
+        raise FileNotFoundError(f"draft does not exist: {path}")
+    record_draft_change(commit, f"Save reply to {commit[:12]} before deletion")
+    os.unlink(path)
+    record_draft_change(commit, f"Delete reply to {commit[:12]}")
+
+
 def cmd_view_mail(args):
     message = load(*args.index.message_location(args.commit))
     text = message.as_string(unixfrom=False).rstrip("\n")
@@ -810,7 +819,7 @@ def cmd_tui(args):
         from rich.text import Text
         from textual.app import App, ComposeResult
         from textual.binding import Binding
-        from textual.containers import Horizontal
+        from textual.containers import Grid
         from textual.css.query import NoMatches
         from textual.widgets import Button, Footer, Header, Static, TabbedContent, TabPane, Tree
     except ImportError:
@@ -832,7 +841,7 @@ def cmd_tui(args):
         CSS = """
         TabbedContent { height: 1fr; }
         Tree { height: 1fr; }
-        #actions { height: 3; }
+        #actions { height: 6; grid-size: 4 2; }
         #actions Button { min-width: 12; }
         #status { height: 1; padding: 0 1; }
         """
@@ -845,6 +854,7 @@ def cmd_tui(args):
             Binding("shift+i", "toggle_read", show=False),
             Binding("e", "archive", "Archive"),
             Binding("s", "send", "Send"),
+            Binding("d", "delete", "Delete"),
             Binding("f", "fetch", "Fetch"),
             Binding("R", "all_read", "All read"),
             Binding("shift+r", "all_read", show=False),
@@ -864,12 +874,13 @@ def cmd_tui(args):
                     yield MailTree("Home", id="home-tree")
                 with TabPane("Archive", id="archive-pane"):
                     yield MailTree("Archive", id="archive-tree")
-            with Horizontal(id="actions"):
+            with Grid(id="actions"):
                 yield Button("View", id="view")
                 yield Button("Reply", id="reply")
                 yield Button("Read/Unread", id="read")
                 yield Button("Archive", id="archive")
                 yield Button("Send", id="send")
+                yield Button("Delete", id="delete")
                 yield Button("Fetch", id="fetch")
                 yield Button("All Read", id="all-read")
             yield Static("", id="status")
@@ -1037,7 +1048,7 @@ def cmd_tui(args):
         def update_buttons(self):
             record = self.selected()
             if not record:
-                for button_id in ("view", "reply", "read", "archive", "send"):
+                for button_id in ("view", "reply", "read", "archive", "send", "delete"):
                     self.query_one(f"#{button_id}", Button).disabled = True
                 return
             draft = record["kind"] == "draft"
@@ -1046,6 +1057,7 @@ def cmd_tui(args):
             for button_id in ("reply", "read", "archive"):
                 self.query_one(f"#{button_id}", Button).disabled = draft
             self.query_one("#send", Button).disabled = not draft
+            self.query_one("#delete", Button).disabled = not draft
             if draft:
                 self.query_one("#archive", Button).label = "Archive"
                 return
@@ -1067,6 +1079,7 @@ def cmd_tui(args):
                 "read": self.action_toggle_read,
                 "archive": self.action_archive,
                 "send": self.action_send,
+                "delete": self.action_delete,
                 "fetch": self.action_fetch,
                 "all-read": self.action_all_read,
             }
@@ -1159,6 +1172,21 @@ def cmd_tui(args):
                 self.notify("Select a draft to send.", severity="warning")
                 return
             self.launch_terminal("--internal-draft-send", record["commit"], "send reply")
+
+        def action_delete(self):
+            record = self.require_selected()
+            if not record:
+                return
+            if record["kind"] != "draft":
+                self.notify("Select a draft to delete.", severity="warning")
+                return
+            try:
+                delete_draft(record["commit"])
+            except (OSError, subprocess.SubprocessError) as error:
+                self.notify(str(error), severity="error")
+                return
+            self.reload()
+            self.notify("Draft deleted.")
 
         def action_fetch(self):
             if self.fetch_process and self.fetch_process.poll() is None:
