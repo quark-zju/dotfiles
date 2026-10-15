@@ -841,11 +841,13 @@ def cmd_tui(args):
             Binding("k", "previous_mail", "Previous"),
             Binding("o", "view", "Open"),
             Binding("r", "reply", "Reply"),
-            Binding("shift+i", "toggle_read", "Read/Unread"),
+            Binding("I", "toggle_read", "Read/Unread"),
+            Binding("shift+i", "toggle_read", show=False),
             Binding("e", "archive", "Archive"),
             Binding("s", "send", "Send"),
             Binding("f", "fetch", "Fetch"),
-            Binding("shift+r", "all_read", "All read"),
+            Binding("R", "all_read", "All read"),
+            Binding("shift+r", "all_read", show=False),
             Binding("q", "quit", "Quit"),
         ]
 
@@ -895,8 +897,6 @@ def cmd_tui(args):
         def label(record, inherited=False):
             unread = "●" if not record["read"] else " "
             flags = []
-            if record["draft"]:
-                flags.append("D")
             if record["archived"]:
                 flags.append("A")
             elif inherited:
@@ -911,6 +911,15 @@ def cmd_tui(args):
             return label
 
         @staticmethod
+        def draft_label(record):
+            subject = re.sub(r"^(re:\s*)+", "", record["subject"], flags=re.I)
+            return Text(f"  ✎ Draft: Re: {subject}", style="italic yellow")
+
+        @staticmethod
+        def record_key(record):
+            return record["kind"], record["commit"]
+
+        @staticmethod
         def forest(records):
             by_id = {record["message_id"]: record for record in records}
             children = {}
@@ -921,39 +930,50 @@ def cmd_tui(args):
                 values.sort(key=lambda record: record["timestamp"])
             return children
 
-        def add_home(self, parent, record, children, selected_commit, selected_nodes):
+        def add_draft(self, parent, record, tree_key, selected_key, selected_nodes):
+            draft = {"kind": "draft", "commit": record["commit"]}
+            node = parent.add_leaf(self.draft_label(record), data=draft)
+            if self.record_key(draft) == selected_key:
+                selected_nodes[tree_key] = node
+
+        def add_home(self, parent, record, children, selected_key, selected_nodes):
             if record["archived"]:
                 return
             node = parent.add(self.label(record), data=record)
             node.expand()
-            if record["commit"] == selected_commit:
+            if self.record_key(record) == selected_key:
                 selected_nodes["home"] = node
+            if record["has_draft"]:
+                self.add_draft(node, record, "home", selected_key, selected_nodes)
             for child in children.get(record["message_id"], []):
-                self.add_home(node, child, children, selected_commit, selected_nodes)
+                self.add_home(node, child, children, selected_key, selected_nodes)
 
         def add_archive(self, parent, record, children, inherited,
-                        selected_commit, selected_nodes):
+                        selected_key, selected_nodes):
             shown = dict(record)
             shown["archive_inherited"] = inherited and not record["archived"]
             node = parent.add(self.label(record, inherited), data=shown)
             node.expand()
-            if record["commit"] == selected_commit:
+            if self.record_key(shown) == selected_key:
                 selected_nodes["archive"] = node
+            if record["has_draft"]:
+                self.add_draft(node, record, "archive", selected_key, selected_nodes)
             for child in children.get(record["message_id"], []):
                 self.add_archive(node, child, children, True,
-                                 selected_commit, selected_nodes)
+                                 selected_key, selected_nodes)
 
         def reload(self):
             selected = self.selected() if self.is_mounted else None
-            selected_commit = selected["commit"] if selected else None
+            selected_key = self.record_key(selected) if selected else None
             rows = args.index.related_messages(name, address)
             stored = state.get([row["commit"] for row in rows])
             for row in rows:
                 values = stored.get(row["commit"], {})
+                row["kind"] = "mail"
                 row["own"] = bool(row["own"])
                 row["read"] = row["own"] or values.get("read", False)
                 row["archived"] = values.get("archived", False)
-                row["draft"] = os.path.isfile(draft_path(row["commit"]))
+                row["has_draft"] = os.path.isfile(draft_path(row["commit"]))
                 row["archive_inherited"] = False
             self.records = rows
 
@@ -979,7 +999,7 @@ def cmd_tui(args):
                     group = home.root.add(Text(f"{title} ({len(records)})", style="bold"))
                     group.expand()
                     for record in visible_roots:
-                        self.add_home(group, record, children, selected_commit, selected_nodes)
+                        self.add_home(group, record, children, selected_key, selected_nodes)
 
                 archived_roots = []
 
@@ -998,7 +1018,7 @@ def cmd_tui(args):
                     group.expand()
                     for record in archived_roots:
                         self.add_archive(group, record, children, False,
-                                         selected_commit, selected_nodes)
+                                         selected_key, selected_nodes)
 
             pane = self.query_one("#tabs", TabbedContent).active
             key = "archive" if pane == "archive-pane" else "home"
@@ -1006,7 +1026,7 @@ def cmd_tui(args):
                 tree = archive if key == "archive" else home
                 self.call_after_refresh(tree.move_cursor, selected_nodes[key])
             unread = sum(not row["read"] for row in rows)
-            drafts = sum(row["draft"] for row in rows)
+            drafts = sum(row["has_draft"] for row in rows)
             self.set_status(f"{len(threads)} threads, {unread} unread, {drafts} drafts  "
                             "[A] explicit archive  [a] inherited archive")
             self.update_buttons()
@@ -1020,14 +1040,19 @@ def cmd_tui(args):
                 for button_id in ("view", "reply", "read", "archive", "send"):
                     self.query_one(f"#{button_id}", Button).disabled = True
                 return
-            for button_id in ("view", "reply", "read", "archive"):
-                self.query_one(f"#{button_id}", Button).disabled = False
-            self.query_one("#view", Button).label = "Edit" if record["draft"] else "View"
+            draft = record["kind"] == "draft"
+            self.query_one("#view", Button).disabled = False
+            self.query_one("#view", Button).label = "Edit" if draft else "View"
+            for button_id in ("reply", "read", "archive"):
+                self.query_one(f"#{button_id}", Button).disabled = draft
+            self.query_one("#send", Button).disabled = not draft
+            if draft:
+                self.query_one("#archive", Button).label = "Archive"
+                return
             archive_label = "Unarchive" if record["archived"] else "Archive"
             if record.get("archive_inherited"):
                 archive_label = "Inherited"
             self.query_one("#archive", Button).label = archive_label
-            self.query_one("#send", Button).disabled = not record["draft"]
 
         def on_tree_node_highlighted(self, event: Tree.NodeHighlighted):
             self.update_buttons()
@@ -1075,17 +1100,20 @@ def cmd_tui(args):
             record = self.require_selected()
             if not record:
                 return
+            if record["kind"] == "draft":
+                self.launch_terminal("--internal-draft-edit", record["commit"], "edit draft")
+                return
             if not record["own"]:
                 state.set(record["commit"], "read")
-            action = ("--internal-draft-edit" if record["draft"]
-                      else "--internal-view-mail")
-            self.launch_terminal(action, record["commit"],
-                                 "edit draft" if record["draft"] else "view mail")
+            self.launch_terminal("--internal-view-mail", record["commit"], "view mail")
             self.reload()
 
         def action_reply(self):
             record = self.require_selected()
             if not record:
+                return
+            if record["kind"] == "draft":
+                self.notify("Select a mail to reply.", severity="warning")
                 return
             try:
                 create_draft(args.index, record["commit"])
@@ -1101,6 +1129,9 @@ def cmd_tui(args):
             record = self.require_selected()
             if not record:
                 return
+            if record["kind"] == "draft":
+                self.notify("Read state applies to mail only.", severity="warning")
+                return
             if record["own"]:
                 self.notify("Mail from yourself is always read.")
                 return
@@ -1110,6 +1141,9 @@ def cmd_tui(args):
         def action_archive(self):
             record = self.require_selected()
             if not record:
+                return
+            if record["kind"] == "draft":
+                self.notify("Archive applies to mail only.", severity="warning")
                 return
             if record.get("archive_inherited"):
                 self.notify("Unarchive the explicit [A] ancestor first.", severity="warning")
@@ -1121,8 +1155,8 @@ def cmd_tui(args):
             record = self.require_selected()
             if not record:
                 return
-            if not record["draft"]:
-                self.notify("The selected mail has no reply draft.", severity="warning")
+            if record["kind"] != "draft":
+                self.notify("Select a draft to send.", severity="warning")
                 return
             self.launch_terminal("--internal-draft-send", record["commit"], "send reply")
 
