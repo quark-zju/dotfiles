@@ -832,7 +832,7 @@ def cmd_tui(args):
         BINDINGS = [
             Binding("v", "view", "View/Edit"),
             Binding("r", "reply", "Reply"),
-            Binding("space", "toggle_read", "Read/Unread"),
+            Binding("m", "toggle_read", "Read/Unread"),
             Binding("a", "archive", "Archive"),
             Binding("s", "send", "Send"),
             Binding("f", "fetch", "Fetch"),
