@@ -820,6 +820,13 @@ def cmd_tui(args):
     state = MailState()
     program = os.path.realpath(__file__)
 
+    class MailTree(Tree):
+        BINDINGS = [Binding("enter", "open_mail", show=False)]
+
+        def action_open_mail(self):
+            if self.cursor_node and self.cursor_node.data:
+                self.app.action_view()
+
     class PiMailApp(App):
         TITLE = "pi-mail"
         CSS = """
@@ -830,10 +837,12 @@ def cmd_tui(args):
         #status { height: 1; padding: 0 1; }
         """
         BINDINGS = [
-            Binding("v", "view", "View/Edit"),
+            Binding("j", "next_mail", "Next"),
+            Binding("k", "previous_mail", "Previous"),
+            Binding("o", "view", "Open"),
             Binding("r", "reply", "Reply"),
-            Binding("m", "toggle_read", "Read/Unread"),
-            Binding("a", "archive", "Archive"),
+            Binding("shift+i", "toggle_read", "Read/Unread"),
+            Binding("e", "archive", "Archive"),
             Binding("s", "send", "Send"),
             Binding("f", "fetch", "Fetch"),
             Binding("shift+r", "all_read", "All read"),
@@ -850,9 +859,9 @@ def cmd_tui(args):
             yield Header()
             with TabbedContent(initial="home-pane", id="tabs"):
                 with TabPane("Home", id="home-pane"):
-                    yield Tree("Home", id="home-tree")
+                    yield MailTree("Home", id="home-tree")
                 with TabPane("Archive", id="archive-pane"):
-                    yield Tree("Archive", id="archive-tree")
+                    yield MailTree("Archive", id="archive-tree")
             with Horizontal(id="actions"):
                 yield Button("View", id="view")
                 yield Button("Reply", id="reply")
@@ -872,12 +881,15 @@ def cmd_tui(args):
 
         def selected(self):
             try:
-                pane = self.query_one("#tabs", TabbedContent).active
-                tree_id = "#archive-tree" if pane == "archive-pane" else "#home-tree"
-                node = self.query_one(tree_id, Tree).cursor_node
+                node = self.active_tree().cursor_node
             except NoMatches:
                 return None
             return node.data if node and node.data else None
+
+        def active_tree(self):
+            pane = self.query_one("#tabs", TabbedContent).active
+            tree_id = "#archive-tree" if pane == "archive-pane" else "#home-tree"
+            return self.query_one(tree_id, Tree)
 
         @staticmethod
         def label(record, inherited=False):
@@ -991,7 +1003,8 @@ def cmd_tui(args):
             pane = self.query_one("#tabs", TabbedContent).active
             key = "archive" if pane == "archive-pane" else "home"
             if key in selected_nodes:
-                (archive if key == "archive" else home).select_node(selected_nodes[key])
+                tree = archive if key == "archive" else home
+                self.call_after_refresh(tree.move_cursor, selected_nodes[key])
             unread = sum(not row["read"] for row in rows)
             drafts = sum(row["draft"] for row in rows)
             self.set_status(f"{len(threads)} threads, {unread} unread, {drafts} drafts  "
@@ -1051,6 +1064,12 @@ def cmd_tui(args):
             if not record:
                 self.notify("Select a mail first.", severity="warning")
             return record
+
+        def action_next_mail(self):
+            self.active_tree().action_cursor_down()
+
+        def action_previous_mail(self):
+            self.active_tree().action_cursor_up()
 
         def action_view(self):
             record = self.require_selected()
