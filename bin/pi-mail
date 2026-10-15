@@ -8,6 +8,7 @@
   pi-mail fetch                                       update every registered inbox
   pi-mail stats                                       show index statistics
   pi-mail config edit                                 edit the Python configuration
+  pi-mail tui                                         browse related threads
 
 SEL is a commit hash shown by `ls`/`tree`, a Message-ID, a lore URL, or
 otherwise a regex matched against subjects within --days. `show` and `tree`
@@ -31,6 +32,7 @@ import shlex
 import sqlite3
 import subprocess
 import sys
+import tempfile
 import time
 from datetime import datetime
 
@@ -39,6 +41,10 @@ CACHE = os.path.join(os.path.expanduser(os.environ.get("XDG_CACHE_HOME", "~/.cac
                      "pi-mail", "index.sqlite3")
 CONFIG = os.path.join(os.path.expanduser(os.environ.get("XDG_CONFIG_HOME", "~/.config")),
                       "pi-mail", "config.py")
+STATE_DIR = os.path.join(os.path.expanduser(
+    os.environ.get("XDG_STATE_HOME", "~/.local/state")), "pi-mail")
+STATE_DB = os.path.join(STATE_DIR, "state.sqlite3")
+DRAFT_DIR = os.path.join(STATE_DIR, "draft")
 POLICY = email.policy.default
 THREAD_HEADERS = {b"message-id", b"in-reply-to", b"references"}
 BYTE_IDS = re.compile(rb"<([^>]+)>")
@@ -421,6 +427,45 @@ class Index:
         return {message_sid: (commit, author, timestamp, subject, parent_sid)
                 for message_sid, commit, author, timestamp, subject, parent_sid in rows}
 
+    def related_messages(self, name, address):
+        """Return complete threads containing mail confirmed by both name and Message-ID."""
+        rows = self.db.execute(
+            f"WITH related(thread_sid) AS ("
+            f"  SELECT DISTINCT m.thread_sid FROM messages m "
+            f"  JOIN strings a ON a.id = m.author_sid "
+            f"  JOIN strings mid ON mid.id = m.message_sid "
+            f"  WHERE m.epoch_id IN ({self.scope}) "
+            f"  AND a.value = ? COLLATE NOCASE "
+            f"  AND instr(lower(mid.value), lower(?)) > 0"
+            f") "
+            f"SELECT thread.value, mid.value, parent.value, e.path, "
+            f"m.git_commit_oid, a.value, m.commit_time, m.subject, "
+            f"(a.value = ? COLLATE NOCASE "
+            f" AND instr(lower(mid.value), lower(?)) > 0) "
+            f"FROM messages m "
+            f"JOIN related r ON r.thread_sid = m.thread_sid "
+            f"JOIN epochs e ON e.id = m.epoch_id "
+            f"JOIN strings thread ON thread.id = m.thread_sid "
+            f"JOIN strings mid ON mid.id = m.message_sid "
+            f"LEFT JOIN strings parent ON parent.id = m.parent_sid "
+            f"JOIN strings a ON a.id = m.author_sid "
+            f"WHERE m.epoch_id IN ({self.scope}) "
+            f"ORDER BY m.commit_time, m.id",
+            (*self.epoch_ids, name, address, name, address, *self.epoch_ids))
+        keys = ("thread", "message_id", "parent", "gitdir", "commit", "author",
+                "timestamp", "subject", "own")
+        return [dict(zip(keys, row)) for row in rows]
+
+    def message_location(self, commit):
+        row = self.db.execute(
+            f"SELECT e.path, m.git_commit_oid FROM messages m "
+            f"JOIN epochs e ON e.id = m.epoch_id "
+            f"WHERE m.epoch_id IN ({self.scope}) AND m.git_commit_oid = ?",
+            (*self.epoch_ids, commit)).fetchone()
+        if row is None:
+            sys.exit(f"{commit} is not in the index")
+        return row
+
 
 def describe(gitdir, commit):
     author, ts, subject = git(gitdir, "log", "-1", "--format=%an%x00%at%x00%s", commit).rstrip("\n").split("\0", 2)
@@ -465,6 +510,7 @@ def cmd_ls(args):
 def cmd_fetch(args):
     for directory in args.index.update_dirs():
         subprocess.run(["make", "update"], cwd=directory, check=True)
+    args.index.sync(args.days)
 
 
 def cmd_stats(args):
@@ -518,15 +564,10 @@ def prepare_reply_body(body, headers):
     return body
 
 
-def cmd_reply(args):
-    found = args.index.resolve(args.sel, args.days)
-    if len(found) > 1:
-        print("\n".join(describe(*f) for f in found), file=sys.stderr)
-        sys.exit(f"{len(found)} mails match; pick one by commit hash")
-    m = load(*found[0])
+def reply_text(m):
     msgid = first_id(m["Message-ID"])
     if not msgid:
-        sys.exit(f"{found[0][1]} has no Message-ID; cannot reply")
+        raise ValueError("mail has no Message-ID; cannot reply")
     sender = email.utils.getaddresses([str(m["Reply-To"] or m["From"])])
     seen = {a.lower() for _, a in sender} | self_addresses()
     cc = []
@@ -557,8 +598,23 @@ def cmd_reply(args):
     body = prepare_reply_body(body, headers)
     lines = ["From git Mon Sep 17 00:00:00 2001",
              *(f"{key}: {value}" for key, value in headers.items()), "", body]
-    out = open(args.output, "w") if args.output else sys.stdout
-    out.write("\n".join(lines))
+    return "\n".join(lines)
+
+
+def cmd_reply(args):
+    found = args.index.resolve(args.sel, args.days)
+    if len(found) > 1:
+        print("\n".join(describe(*f) for f in found), file=sys.stderr)
+        sys.exit(f"{len(found)} mails match; pick one by commit hash")
+    try:
+        text = reply_text(load(*found[0]))
+    except ValueError as error:
+        sys.exit(f"{found[0][1]} {error}")
+    if args.output:
+        with open(args.output, "w") as out:
+            out.write(text)
+    else:
+        sys.stdout.write(text)
 
 
 def cmd_config(args):
@@ -576,6 +632,514 @@ def cmd_config(args):
     if not command:
         sys.exit("editor is empty")
     subprocess.run([*command, CONFIG], check=True)
+
+
+class MailState:
+    SCHEMA = """
+        CREATE TABLE message_state (
+            git_commit_oid TEXT PRIMARY KEY,
+            is_read INTEGER NOT NULL DEFAULT 0,
+            archived INTEGER NOT NULL DEFAULT 0,
+            updated_at INTEGER NOT NULL
+        );
+        PRAGMA user_version = 1;
+    """
+
+    def __init__(self):
+        os.makedirs(STATE_DIR, exist_ok=True)
+        self.db = sqlite3.connect(STATE_DB, timeout=30)
+        self.db.execute("PRAGMA busy_timeout = 30000")
+        self.db.execute("PRAGMA journal_mode = WAL")
+        version = self.db.execute("PRAGMA user_version").fetchone()[0]
+        if version == 0:
+            self.db.executescript(self.SCHEMA)
+        elif version != 1:
+            sys.exit(f"unsupported state version {version}; remove {STATE_DB} to rebuild")
+
+    def get(self, commits):
+        result = {}
+        for start in range(0, len(commits), 500):
+            chunk = commits[start:start + 500]
+            if not chunk:
+                continue
+            rows = self.db.execute(
+                f"SELECT git_commit_oid, is_read, archived FROM message_state "
+                f"WHERE git_commit_oid IN ({','.join('?' * len(chunk))})", chunk)
+            result.update((commit, {"read": bool(read), "archived": bool(archived)})
+                          for commit, read, archived in rows)
+        return result
+
+    def set(self, commit, field, value=True):
+        columns = {"read": "is_read", "archived": "archived"}
+        column = columns[field]
+        now = int(time.time())
+        with self.db:
+            self.db.execute(
+                f"INSERT INTO message_state(git_commit_oid, {column}, updated_at) "
+                f"VALUES (?, ?, ?) ON CONFLICT(git_commit_oid) DO UPDATE SET "
+                f"{column} = excluded.{column}, updated_at = excluded.updated_at",
+                (commit, int(value), now))
+
+    def mark_read(self, commits):
+        now = int(time.time())
+        with self.db:
+            self.db.executemany(
+                "INSERT INTO message_state(git_commit_oid, is_read, updated_at) "
+                "VALUES (?, 1, ?) ON CONFLICT(git_commit_oid) DO UPDATE SET "
+                "is_read = 1, updated_at = excluded.updated_at",
+                ((commit, now) for commit in commits))
+
+    def close(self):
+        self.db.close()
+
+
+def sendemail_identity():
+    result = subprocess.run(["git", "config", "--get", "sendemail.from"],
+                            capture_output=True, text=True)
+    name, address = email.utils.parseaddr(result.stdout.strip())
+    if result.returncode or not name or not address:
+        sys.exit("sendemail.from must contain both a name and an email address")
+    return name, address
+
+
+def draft_path(commit):
+    if not re.fullmatch(r"[0-9a-f]{40}", commit):
+        sys.exit(f"invalid mail commit: {commit}")
+    return os.path.join(DRAFT_DIR, commit + ".patch")
+
+
+def ensure_draft_repo():
+    if not os.path.isdir(os.path.join(DRAFT_DIR, ".git")):
+        os.makedirs(DRAFT_DIR, exist_ok=True)
+        subprocess.run(["git", "init", "-q", DRAFT_DIR], check=True)
+
+
+def record_draft_change(commit, message):
+    path = draft_path(commit)
+    subprocess.run(["git", "-C", DRAFT_DIR, "add", "-A", "--", os.path.basename(path)],
+                   check=True)
+    changed = subprocess.run(["git", "-C", DRAFT_DIR, "diff", "--cached", "--quiet"])
+    if changed.returncode == 1:
+        subprocess.run(["git", "-C", DRAFT_DIR, "commit", "-q", "-m", message], check=True)
+    elif changed.returncode:
+        sys.exit("cannot inspect draft repository changes")
+
+
+def editor_command():
+    try:
+        command = shlex.split(os.environ.get("EDITOR") or "nvim")
+    except ValueError as error:
+        sys.exit(f"invalid EDITOR: {error}")
+    if not command:
+        sys.exit("EDITOR is empty")
+    return command
+
+
+def create_draft(index, commit):
+    path = draft_path(commit)
+    if os.path.exists(path):
+        return path
+    ensure_draft_repo()
+    try:
+        text = reply_text(load(*index.message_location(commit)))
+    except ValueError as error:
+        raise ValueError(f"{commit} {error}") from error
+    with open(path, "x") as out:
+        out.write(text)
+    return path
+
+
+def cmd_draft_edit(args):
+    path = draft_path(args.commit)
+    if not os.path.isfile(path):
+        sys.exit(f"draft does not exist: {path}")
+    subprocess.run([*editor_command(), path], check=False)
+    record_draft_change(args.commit, f"Edit reply to {args.commit[:12]}")
+
+
+def cmd_draft_send(args):
+    path = draft_path(args.commit)
+    if not os.path.isfile(path):
+        sys.exit(f"draft does not exist: {path}")
+    try:
+        result = subprocess.run(["git", "send-email", path])
+        returncode = result.returncode
+    except OSError as error:
+        print(error, file=sys.stderr)
+        returncode = 1
+    if returncode:
+        try:
+            input("\nSend failed. Press Enter to close this window...")
+        except EOFError:
+            pass
+        raise SystemExit(returncode)
+    os.unlink(path)
+    record_draft_change(args.commit, f"Send reply to {args.commit[:12]}")
+
+
+def cmd_view_mail(args):
+    message = load(*args.index.message_location(args.commit))
+    text = message.as_string(unixfrom=False).rstrip("\n")
+    _, separator, body = text.partition("\n\n")
+    subject = message["Subject"]
+    header = subject.fold(policy=POLICY).rstrip("\n") if subject else "Subject:"
+    path = None
+    try:
+        with tempfile.NamedTemporaryFile(
+                "w", suffix=".eml", prefix=f"pi-mail-{args.commit[:10]}-", delete=False) as out:
+            path = out.name
+            out.write(header + separator + body + "\n")
+        subprocess.run([*editor_command(), path], check=False)
+    finally:
+        if path:
+            try:
+                os.unlink(path)
+            except FileNotFoundError:
+                pass
+
+
+def cmd_tui(args):
+    # Keep Textual and Rich out of the startup path for every CLI command.
+    try:
+        from rich.text import Text
+        from textual.app import App, ComposeResult
+        from textual.binding import Binding
+        from textual.containers import Horizontal
+        from textual.css.query import NoMatches
+        from textual.widgets import Button, Footer, Header, Static, TabbedContent, TabPane, Tree
+    except ImportError:
+        sys.exit("pi-mail tui requires Textual (pip install textual)")
+
+    name, address = sendemail_identity()
+    state = MailState()
+    program = os.path.realpath(__file__)
+
+    class PiMailApp(App):
+        TITLE = "pi-mail"
+        CSS = """
+        TabbedContent { height: 1fr; }
+        Tree { height: 1fr; }
+        #actions { height: 3; }
+        #actions Button { min-width: 12; }
+        #status { height: 1; padding: 0 1; }
+        """
+        BINDINGS = [
+            Binding("v", "view", "View/Edit"),
+            Binding("r", "reply", "Reply"),
+            Binding("space", "toggle_read", "Read/Unread"),
+            Binding("a", "archive", "Archive"),
+            Binding("s", "send", "Send"),
+            Binding("f", "fetch", "Fetch"),
+            Binding("shift+r", "all_read", "All read"),
+            Binding("q", "quit", "Quit"),
+        ]
+
+        def __init__(self):
+            super().__init__()
+            self.records = []
+            self.fetch_process = None
+            self.terminals = []
+
+        def compose(self) -> ComposeResult:
+            yield Header()
+            with TabbedContent(initial="home-pane", id="tabs"):
+                with TabPane("Home", id="home-pane"):
+                    yield Tree("Home", id="home-tree")
+                with TabPane("Archive", id="archive-pane"):
+                    yield Tree("Archive", id="archive-tree")
+            with Horizontal(id="actions"):
+                yield Button("View", id="view")
+                yield Button("Reply", id="reply")
+                yield Button("Read/Unread", id="read")
+                yield Button("Archive", id="archive")
+                yield Button("Send", id="send")
+                yield Button("Fetch", id="fetch")
+                yield Button("All Read", id="all-read")
+            yield Static("", id="status")
+            yield Footer()
+
+        def on_mount(self):
+            self.query_one("#home-tree", Tree).show_root = False
+            self.query_one("#archive-tree", Tree).show_root = False
+            self.reload()
+            self.set_interval(0.5, self.check_processes)
+
+        def selected(self):
+            try:
+                pane = self.query_one("#tabs", TabbedContent).active
+                tree_id = "#archive-tree" if pane == "archive-pane" else "#home-tree"
+                node = self.query_one(tree_id, Tree).cursor_node
+            except NoMatches:
+                return None
+            return node.data if node and node.data else None
+
+        @staticmethod
+        def label(record, inherited=False):
+            unread = "●" if not record["read"] else " "
+            flags = []
+            if record["draft"]:
+                flags.append("D")
+            if record["archived"]:
+                flags.append("A")
+            elif inherited:
+                flags.append("a")
+            suffix = f" [{' '.join(flags)}]" if flags else ""
+            label = Text(f"{unread} {local_time(record['timestamp'])} "
+                         f"{record['author']}: {record['subject']}{suffix}")
+            if not record["read"]:
+                label.stylize("bold cyan")
+            elif record["own"]:
+                label.stylize("dim")
+            return label
+
+        @staticmethod
+        def forest(records):
+            by_id = {record["message_id"]: record for record in records}
+            children = {}
+            for record in records:
+                parent = record["parent"] if record["parent"] in by_id else None
+                children.setdefault(parent, []).append(record)
+            for values in children.values():
+                values.sort(key=lambda record: record["timestamp"])
+            return children
+
+        def add_home(self, parent, record, children, selected_commit, selected_nodes):
+            if record["archived"]:
+                return
+            node = parent.add(self.label(record), data=record)
+            node.expand()
+            if record["commit"] == selected_commit:
+                selected_nodes["home"] = node
+            for child in children.get(record["message_id"], []):
+                self.add_home(node, child, children, selected_commit, selected_nodes)
+
+        def add_archive(self, parent, record, children, inherited,
+                        selected_commit, selected_nodes):
+            shown = dict(record)
+            shown["archive_inherited"] = inherited and not record["archived"]
+            node = parent.add(self.label(record, inherited), data=shown)
+            node.expand()
+            if record["commit"] == selected_commit:
+                selected_nodes["archive"] = node
+            for child in children.get(record["message_id"], []):
+                self.add_archive(node, child, children, True,
+                                 selected_commit, selected_nodes)
+
+        def reload(self):
+            selected = self.selected() if self.is_mounted else None
+            selected_commit = selected["commit"] if selected else None
+            rows = args.index.related_messages(name, address)
+            stored = state.get([row["commit"] for row in rows])
+            for row in rows:
+                values = stored.get(row["commit"], {})
+                row["own"] = bool(row["own"])
+                row["read"] = row["own"] or values.get("read", False)
+                row["archived"] = values.get("archived", False)
+                row["draft"] = os.path.isfile(draft_path(row["commit"]))
+                row["archive_inherited"] = False
+            self.records = rows
+
+            threads = {}
+            for row in rows:
+                threads.setdefault(row["thread"], []).append(row)
+            ordered = sorted(threads.values(),
+                             key=lambda records: max(r["timestamp"] for r in records),
+                             reverse=True)
+            home = self.query_one("#home-tree", Tree)
+            archive = self.query_one("#archive-tree", Tree)
+            home.reset("Home")
+            archive.reset("Archive")
+            home.root.expand()
+            archive.root.expand()
+            selected_nodes = {}
+            for records in ordered:
+                children = self.forest(records)
+                roots = children.get(None, [])
+                visible_roots = [record for record in roots if not record["archived"]]
+                if visible_roots:
+                    title = re.sub(r"^(re:\s*)+", "", records[0]["subject"], flags=re.I)
+                    group = home.root.add(Text(f"{title} ({len(records)})", style="bold"))
+                    group.expand()
+                    for record in visible_roots:
+                        self.add_home(group, record, children, selected_commit, selected_nodes)
+
+                archived_roots = []
+
+                def find_archived(record, inherited=False):
+                    now_inherited = inherited or record["archived"]
+                    if record["archived"] and not inherited:
+                        archived_roots.append(record)
+                    for child in children.get(record["message_id"], []):
+                        find_archived(child, now_inherited)
+
+                for record in roots:
+                    find_archived(record)
+                if archived_roots:
+                    title = re.sub(r"^(re:\s*)+", "", records[0]["subject"], flags=re.I)
+                    group = archive.root.add(Text(f"{title} ({len(records)})", style="bold"))
+                    group.expand()
+                    for record in archived_roots:
+                        self.add_archive(group, record, children, False,
+                                         selected_commit, selected_nodes)
+
+            pane = self.query_one("#tabs", TabbedContent).active
+            key = "archive" if pane == "archive-pane" else "home"
+            if key in selected_nodes:
+                (archive if key == "archive" else home).select_node(selected_nodes[key])
+            unread = sum(not row["read"] for row in rows)
+            drafts = sum(row["draft"] for row in rows)
+            self.set_status(f"{len(threads)} threads, {unread} unread, {drafts} drafts  "
+                            "[A] explicit archive  [a] inherited archive")
+            self.update_buttons()
+
+        def set_status(self, message):
+            self.query_one("#status", Static).update(message)
+
+        def update_buttons(self):
+            record = self.selected()
+            if not record:
+                for button_id in ("view", "reply", "read", "archive", "send"):
+                    self.query_one(f"#{button_id}", Button).disabled = True
+                return
+            for button_id in ("view", "reply", "read", "archive"):
+                self.query_one(f"#{button_id}", Button).disabled = False
+            self.query_one("#view", Button).label = "Edit" if record["draft"] else "View"
+            archive_label = "Unarchive" if record["archived"] else "Archive"
+            if record.get("archive_inherited"):
+                archive_label = "Inherited"
+            self.query_one("#archive", Button).label = archive_label
+            self.query_one("#send", Button).disabled = not record["draft"]
+
+        def on_tree_node_highlighted(self, event: Tree.NodeHighlighted):
+            self.update_buttons()
+
+        def on_tabbed_content_tab_activated(self, event: TabbedContent.TabActivated):
+            self.update_buttons()
+
+        def on_button_pressed(self, event: Button.Pressed):
+            actions = {
+                "view": self.action_view,
+                "reply": self.action_reply,
+                "read": self.action_toggle_read,
+                "archive": self.action_archive,
+                "send": self.action_send,
+                "fetch": self.action_fetch,
+                "all-read": self.action_all_read,
+            }
+            actions[event.button.id]()
+
+        def launch_terminal(self, action, commit, title):
+            try:
+                process = subprocess.Popen([
+                    "xdg-terminal-exec", f"--title=pi-mail: {title}", "--",
+                    sys.executable, program, action, commit])
+            except OSError as error:
+                self.notify(str(error), severity="error")
+                return
+            self.terminals.append(process)
+            self.set_status(f"Opened terminal for {title}.")
+
+        def require_selected(self):
+            record = self.selected()
+            if not record:
+                self.notify("Select a mail first.", severity="warning")
+            return record
+
+        def action_view(self):
+            record = self.require_selected()
+            if not record:
+                return
+            if not record["own"]:
+                state.set(record["commit"], "read")
+            action = ("--internal-draft-edit" if record["draft"]
+                      else "--internal-view-mail")
+            self.launch_terminal(action, record["commit"],
+                                 "edit draft" if record["draft"] else "view mail")
+            self.reload()
+
+        def action_reply(self):
+            record = self.require_selected()
+            if not record:
+                return
+            try:
+                create_draft(args.index, record["commit"])
+            except (OSError, ValueError, subprocess.SubprocessError) as error:
+                self.notify(str(error), severity="error")
+                return
+            if not record["own"]:
+                state.set(record["commit"], "read")
+            self.launch_terminal("--internal-draft-edit", record["commit"], "edit reply")
+            self.reload()
+
+        def action_toggle_read(self):
+            record = self.require_selected()
+            if not record:
+                return
+            if record["own"]:
+                self.notify("Mail from yourself is always read.")
+                return
+            state.set(record["commit"], "read", not record["read"])
+            self.reload()
+
+        def action_archive(self):
+            record = self.require_selected()
+            if not record:
+                return
+            if record.get("archive_inherited"):
+                self.notify("Unarchive the explicit [A] ancestor first.", severity="warning")
+                return
+            state.set(record["commit"], "archived", not record["archived"])
+            self.reload()
+
+        def action_send(self):
+            record = self.require_selected()
+            if not record:
+                return
+            if not record["draft"]:
+                self.notify("The selected mail has no reply draft.", severity="warning")
+                return
+            self.launch_terminal("--internal-draft-send", record["commit"], "send reply")
+
+        def action_fetch(self):
+            if self.fetch_process and self.fetch_process.poll() is None:
+                self.notify("Fetch is already running.")
+                return
+            try:
+                self.fetch_process = subprocess.Popen(
+                    [sys.executable, program, "fetch", "--days", "30"],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            except OSError as error:
+                self.notify(str(error), severity="error")
+                return
+            self.set_status("Fetching mail…")
+            self.query_one("#fetch", Button).disabled = True
+
+        def action_all_read(self):
+            state.mark_read([record["commit"] for record in self.records
+                             if not record["own"]])
+            self.reload()
+
+        def check_processes(self):
+            finished = [process for process in self.terminals if process.poll() is not None]
+            if finished:
+                self.terminals = [process for process in self.terminals
+                                  if process.poll() is None]
+                self.reload()
+            if self.fetch_process and self.fetch_process.poll() is not None:
+                returncode = self.fetch_process.returncode
+                self.fetch_process = None
+                self.query_one("#fetch", Button).disabled = False
+                if returncode:
+                    self.notify(f"Fetch failed with status {returncode}.", severity="error")
+                    self.set_status("Fetch failed.")
+                else:
+                    self.reload()
+                    self.notify("Fetch complete.")
+
+    try:
+        PiMailApp().run()
+    finally:
+        state.close()
 
 
 def cmd_tree(args):
@@ -613,14 +1177,33 @@ def print_tree(nodes, targets):
 
 
 def main():
+    internal = {
+        "--internal-draft-edit": cmd_draft_edit,
+        "--internal-draft-send": cmd_draft_send,
+        "--internal-view-mail": cmd_view_mail,
+    }
+    if len(sys.argv) == 3 and sys.argv[1] in internal:
+        args = argparse.Namespace(commit=sys.argv[2])
+        if sys.argv[1] == "--internal-view-mail":
+            args.index = Index()
+            try:
+                internal[sys.argv[1]](args)
+            finally:
+                args.index.db.close()
+        else:
+            internal[sys.argv[1]](args)
+        return
+
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd")
     ls = sub.add_parser("ls")
     ls.add_argument("--days", type=int, default=3)
     ls.add_argument("-a", "--author")
     ls.add_argument("-g", "--grep", help="regex on subject")
-    sub.add_parser("fetch")
+    fetch = sub.add_parser("fetch")
+    fetch.add_argument("--days", type=int, default=30)
     sub.add_parser("stats")
+    sub.add_parser("tui")
     config = sub.add_parser("config")
     config_sub = config.add_subparsers(dest="config_cmd", required=True)
     config_sub.add_parser("edit")
@@ -644,8 +1227,8 @@ def main():
         return
     args.index = Index()
     try:
-        if args.cmd in ("fetch", "stats"):
-            {"fetch": cmd_fetch, "stats": cmd_stats}[args.cmd](args)
+        if args.cmd in ("fetch", "stats", "tui"):
+            {"fetch": cmd_fetch, "stats": cmd_stats, "tui": cmd_tui}[args.cmd](args)
         else:
             args.index.sync(args.days)
             {"ls": cmd_ls, "show": cmd_show, "reply": cmd_reply, "tree": cmd_tree}[args.cmd](args)
