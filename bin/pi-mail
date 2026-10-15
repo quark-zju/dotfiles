@@ -720,32 +720,15 @@ def ensure_draft_repo():
         subprocess.run(["git", "init", "-q", DRAFT_DIR], check=True)
 
 
-def commit_draft_change(message):
+def record_draft_change(commit, message):
+    path = draft_path(commit)
+    subprocess.run(["git", "-C", DRAFT_DIR, "add", "-A", "--", os.path.basename(path)],
+                   check=True)
     changed = subprocess.run(["git", "-C", DRAFT_DIR, "diff", "--cached", "--quiet"])
     if changed.returncode == 1:
         subprocess.run(["git", "-C", DRAFT_DIR, "commit", "-q", "-m", message], check=True)
     elif changed.returncode:
         sys.exit("cannot inspect draft repository changes")
-
-
-def migrate_draft(commit):
-    path = draft_path(commit)
-    legacy = os.path.join(DRAFT_DIR, commit + ".patch")
-    if not os.path.exists(path) and os.path.isfile(legacy):
-        ensure_draft_repo()
-        os.rename(legacy, path)
-        subprocess.run([
-            "git", "-C", DRAFT_DIR, "add", "-A", "--",
-            os.path.basename(legacy), os.path.basename(path)], check=True)
-        commit_draft_change(f"Rename reply to {commit[:12]} as .eml")
-    return path
-
-
-def record_draft_change(commit, message):
-    path = draft_path(commit)
-    subprocess.run(["git", "-C", DRAFT_DIR, "add", "-A", "--", os.path.basename(path)],
-                   check=True)
-    commit_draft_change(message)
 
 
 def editor_command():
@@ -759,7 +742,7 @@ def editor_command():
 
 
 def create_draft(index, commit):
-    path = migrate_draft(commit)
+    path = draft_path(commit)
     if os.path.exists(path):
         return path
     ensure_draft_repo()
@@ -773,7 +756,7 @@ def create_draft(index, commit):
 
 
 def cmd_draft_edit(args):
-    path = migrate_draft(args.commit)
+    path = draft_path(args.commit)
     if not os.path.isfile(path):
         sys.exit(f"draft does not exist: {path}")
     subprocess.run([*editor_command(), path], check=False)
@@ -781,7 +764,7 @@ def cmd_draft_edit(args):
 
 
 def cmd_draft_send(args):
-    path = migrate_draft(args.commit)
+    path = draft_path(args.commit)
     if not os.path.isfile(path):
         sys.exit(f"draft does not exist: {path}")
     try:
@@ -801,7 +784,7 @@ def cmd_draft_send(args):
 
 
 def delete_draft(commit):
-    path = migrate_draft(commit)
+    path = draft_path(commit)
     if not os.path.isfile(path):
         raise FileNotFoundError(f"draft does not exist: {path}")
     record_draft_change(commit, f"Save reply to {commit[:12]} before deletion")
@@ -1001,7 +984,7 @@ def cmd_tui(args):
                 row["own"] = bool(row["own"])
                 row["read"] = row["own"] or values.get("read", False)
                 row["archived"] = values.get("archived", False)
-                row["has_draft"] = os.path.isfile(migrate_draft(row["commit"]))
+                row["has_draft"] = os.path.isfile(draft_path(row["commit"]))
                 row["archive_inherited"] = False
             self.records = rows
 
