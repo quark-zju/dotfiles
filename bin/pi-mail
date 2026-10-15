@@ -842,7 +842,7 @@ def cmd_tui(args):
         TabbedContent { height: 1fr; }
         Tree { height: 1fr; }
         Tree > .tree--highlight-line { background: transparent; }
-        Tree > .tree--highlight { background: $block-hover-background; }
+        Tree > .tree--highlight { background: $block-hover-background 50%; }
         #actions { height: 6; grid-size: 4 2; }
         #actions Button { min-width: 12; }
         #status { height: 1; padding: 0 1; }
