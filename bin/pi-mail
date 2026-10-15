@@ -950,8 +950,8 @@ def cmd_tui(args):
         def add_home(self, parent, record, children, selected_key, selected_nodes):
             if record["archived"]:
                 return
-            node = parent.add(self.label(record), data=record)
-            node.expand()
+            node = parent.add(self.label(record), data=record,
+                              expand=True, allow_expand=False)
             if self.record_key(record) == selected_key:
                 selected_nodes["home"] = node
             if record["has_draft"]:
@@ -963,8 +963,8 @@ def cmd_tui(args):
                         selected_key, selected_nodes):
             shown = dict(record)
             shown["archive_inherited"] = inherited and not record["archived"]
-            node = parent.add(self.label(record, inherited), data=shown)
-            node.expand()
+            node = parent.add(self.label(record, inherited), data=shown,
+                              expand=True, allow_expand=False)
             if self.record_key(shown) == selected_key:
                 selected_nodes["archive"] = node
             if record["has_draft"]:
@@ -999,7 +999,9 @@ def cmd_tui(args):
             home.reset("Home")
             archive.reset("Archive")
             home.root.expand()
+            home.root.allow_expand = False
             archive.root.expand()
+            archive.root.allow_expand = False
             selected_nodes = {}
             for records in ordered:
                 children = self.forest(records)
@@ -1007,8 +1009,8 @@ def cmd_tui(args):
                 visible_roots = [record for record in roots if not record["archived"]]
                 if visible_roots:
                     title = re.sub(r"^(re:\s*)+", "", records[0]["subject"], flags=re.I)
-                    group = home.root.add(Text(f"{title} ({len(records)})", style="bold"))
-                    group.expand()
+                    group = home.root.add(Text(f"{title} ({len(records)})", style="bold"),
+                                          expand=True, allow_expand=False)
                     for record in visible_roots:
                         self.add_home(group, record, children, selected_key, selected_nodes)
 
@@ -1025,8 +1027,9 @@ def cmd_tui(args):
                     find_archived(record)
                 if archived_roots:
                     title = re.sub(r"^(re:\s*)+", "", records[0]["subject"], flags=re.I)
-                    group = archive.root.add(Text(f"{title} ({len(records)})", style="bold"))
-                    group.expand()
+                    group = archive.root.add(
+                        Text(f"{title} ({len(records)})", style="bold"),
+                        expand=True, allow_expand=False)
                     for record in archived_roots:
                         self.add_archive(group, record, children, False,
                                          selected_key, selected_nodes)
