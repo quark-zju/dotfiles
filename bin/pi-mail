@@ -1038,7 +1038,8 @@ def cmd_tui(args):
             try:
                 process = subprocess.Popen([
                     "xdg-terminal-exec", f"--title=pi-mail: {title}", "--",
-                    sys.executable, program, action, commit])
+                    sys.executable, program, action, commit],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             except OSError as error:
                 self.notify(str(error), severity="error")
                 return
