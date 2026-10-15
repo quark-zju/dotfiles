@@ -3,7 +3,7 @@
 
   pi-mail [ls] [--days N] [-a AUTHOR] [-g SUBJECT]    list recent mails
   pi-mail show  SEL... [--days N] [-v]                print the mail(s)
-  pi-mail reply SEL [-o FILE]                         reply template for git send-email
+  pi-mail reply SEL [-o FILE]                         edit a reply draft (or write FILE)
   pi-mail tree  SEL... [--days N]                     thread tree(s)
   pi-mail fetch                                       update every registered inbox
   pi-mail stats                                       show index statistics
@@ -15,6 +15,8 @@ otherwise a regex matched against subjects within --days. `show` and `tree`
 accept multiple selectors and handle every match; `reply` needs exactly one.
 `reply` drops your own addresses from Cc; add extra ones with
 `git config --global --add pimail.self ADDRESS`.
+Without `-o`, it keeps a Git-tracked draft under the XDG state directory and
+opens $EDITOR (or nvim). With `-o`, it only writes the generated template.
 The inbox defaults to ~/public-inbox/git/git (override with $PI_INBOX).
 Update every inbox recorded in the index with `pi-mail fetch`.
 """
@@ -606,15 +608,19 @@ def cmd_reply(args):
     if len(found) > 1:
         print("\n".join(describe(*f) for f in found), file=sys.stderr)
         sys.exit(f"{len(found)} mails match; pick one by commit hash")
-    try:
-        text = reply_text(load(*found[0]))
-    except ValueError as error:
-        sys.exit(f"{found[0][1]} {error}")
     if args.output:
+        try:
+            text = reply_text(load(*found[0]))
+        except ValueError as error:
+            sys.exit(f"{found[0][1]} {error}")
         with open(args.output, "w") as out:
             out.write(text)
     else:
-        sys.stdout.write(text)
+        try:
+            create_draft(args.index, found[0][1])
+        except ValueError as error:
+            sys.exit(str(error))
+        cmd_draft_edit(argparse.Namespace(commit=found[0][1]))
 
 
 def cmd_config(args):
@@ -1217,7 +1223,7 @@ def main():
         if name == "show":
             p.add_argument("-v", "--verbose", action="store_true", help="show all headers")
         elif name == "reply":
-            p.add_argument("-o", "--output")
+            p.add_argument("-o", "--output", help="write a template without editing")
     argv = sys.argv[1:]
     if not argv or argv[0] not in (*sub.choices, "-h", "--help"):
         argv = ["ls", *argv]
