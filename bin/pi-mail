@@ -458,6 +458,63 @@ class Index:
                 "timestamp", "subject", "own")
         return [dict(zip(keys, row)) for row in rows]
 
+    def recent_messages(self, days, name, address):
+        """Return every message within the cutoff, regardless of author."""
+        cutoff = int(time.time()) - days * 86400
+        rows = self.db.execute(
+            f"SELECT thread.value, mid.value, parent.value, e.path, "
+            f"m.git_commit_oid, a.value, m.commit_time, m.subject, "
+            f"(a.value = ? COLLATE NOCASE "
+            f" AND instr(lower(mid.value), lower(?)) > 0) "
+            f"FROM messages m "
+            f"JOIN epochs e ON e.id = m.epoch_id "
+            f"JOIN strings thread ON thread.id = m.thread_sid "
+            f"JOIN strings mid ON mid.id = m.message_sid "
+            f"LEFT JOIN strings parent ON parent.id = m.parent_sid "
+            f"JOIN strings a ON a.id = m.author_sid "
+            f"WHERE m.epoch_id IN ({self.scope}) AND m.commit_time >= ? "
+            f"ORDER BY m.commit_time, m.id",
+            (name, address, *self.epoch_ids, cutoff))
+        keys = ("thread", "message_id", "parent", "gitdir", "commit", "author",
+                "timestamp", "subject", "own")
+        return [dict(zip(keys, row)) for row in rows]
+
+    def messages_for_commits(self, commits, name, address):
+        """Return complete threads containing any of the given commits."""
+        thread_sids = set()
+        for start in range(0, len(commits), 500):
+            chunk = commits[start:start + 500]
+            rows = self.db.execute(
+                f"SELECT DISTINCT thread_sid FROM messages "
+                f"WHERE epoch_id IN ({self.scope}) AND git_commit_oid IN "
+                f"({','.join('?' * len(chunk))})",
+                (*self.epoch_ids, *chunk))
+            thread_sids.update(row[0] for row in rows)
+
+        result = []
+        thread_sids = list(thread_sids)
+        for start in range(0, len(thread_sids), 500):
+            chunk = thread_sids[start:start + 500]
+            rows = self.db.execute(
+                f"SELECT thread.value, mid.value, parent.value, e.path, "
+                f"m.git_commit_oid, a.value, m.commit_time, m.subject, "
+                f"(a.value = ? COLLATE NOCASE "
+                f" AND instr(lower(mid.value), lower(?)) > 0) "
+                f"FROM messages m "
+                f"JOIN epochs e ON e.id = m.epoch_id "
+                f"JOIN strings thread ON thread.id = m.thread_sid "
+                f"JOIN strings mid ON mid.id = m.message_sid "
+                f"LEFT JOIN strings parent ON parent.id = m.parent_sid "
+                f"JOIN strings a ON a.id = m.author_sid "
+                f"WHERE m.epoch_id IN ({self.scope}) AND m.thread_sid IN "
+                f"({','.join('?' * len(chunk))}) "
+                f"ORDER BY m.commit_time, m.id",
+                (name, address, *self.epoch_ids, *chunk))
+            keys = ("thread", "message_id", "parent", "gitdir", "commit", "author",
+                    "timestamp", "subject", "own")
+            result.extend(dict(zip(keys, row)) for row in rows)
+        return result
+
     def message_location(self, commit):
         row = self.db.execute(
             f"SELECT e.path, m.git_commit_oid FROM messages m "
@@ -694,6 +751,10 @@ class MailState:
                 "VALUES (?, 1, ?) ON CONFLICT(git_commit_oid) DO UPDATE SET "
                 "is_read = 1, updated_at = excluded.updated_at",
                 ((commit, now) for commit in commits))
+
+    def archived_commits(self):
+        return [commit for commit, in self.db.execute(
+            "SELECT git_commit_oid FROM message_state WHERE archived = 1")]
 
     def close(self):
         self.db.close()
@@ -995,9 +1056,13 @@ def cmd_tui(args):
         def reload(self):
             selected = self.selected() if self.is_mounted else None
             selected_key = self.record_key(selected) if selected else None
-            rows = args.index.related_messages(name, address)
-            stored = state.get([row["commit"] for row in rows])
-            for row in rows:
+            home_rows = args.index.related_messages(name, address)
+            recent_rows = args.index.recent_messages(7, name, address)
+            archive_rows = args.index.messages_for_commits(
+                state.archived_commits(), name, address)
+            all_rows = home_rows + recent_rows + archive_rows
+            stored = state.get(list({row["commit"] for row in all_rows}))
+            for row in all_rows:
                 values = stored.get(row["commit"], {})
                 row["kind"] = "mail"
                 row["own"] = bool(row["own"])
@@ -1005,14 +1070,7 @@ def cmd_tui(args):
                 row["archived"] = values.get("archived", False)
                 row["has_draft"] = os.path.isfile(draft_path(row["commit"]))
                 row["archive_inherited"] = False
-            self.records = rows
 
-            threads = {}
-            for row in rows:
-                threads.setdefault(row["thread"], []).append(row)
-            ordered = sorted(threads.values(),
-                             key=lambda records: max(r["timestamp"] for r in records),
-                             reverse=True)
             home = self.query_one("#home-tree", Tree)
             recent = self.query_one("#recent-tree", Tree)
             archive = self.query_one("#archive-tree", Tree)
@@ -1026,19 +1084,17 @@ def cmd_tui(args):
             archive.root.expand()
             archive.root.allow_expand = False
             selected_nodes = {}
-            recent_cutoff = int(time.time()) - 7 * 86400
-            for records in ordered:
+
+            home_threads = {}
+            for row in home_rows:
+                home_threads.setdefault(row["thread"], []).append(row)
+            home_ordered = sorted(
+                home_threads.values(),
+                key=lambda records: max(r["timestamp"] for r in records),
+                reverse=True)
+            for records in home_ordered:
                 children = self.forest(records)
                 roots = children.get(None, [])
-
-                def mark_inherited(record, inherited=False):
-                    record["archive_inherited"] = inherited and not record["archived"]
-                    for child in children.get(record["message_id"], []):
-                        mark_inherited(child, inherited or record["archived"])
-
-                for record in roots:
-                    mark_inherited(record)
-
                 visible_roots = [record for record in roots if not record["archived"]]
                 if visible_roots:
                     title = re.sub(r"^(re:\s*)+", "", records[0]["subject"], flags=re.I)
@@ -1047,22 +1103,23 @@ def cmd_tui(args):
                     for record in visible_roots:
                         self.add_home(group, record, children, selected_key, selected_nodes)
 
-                recent_records = [record for record in records
-                                  if record["timestamp"] >= recent_cutoff]
-                if recent_records:
-                    recent_children = self.forest(recent_records)
-                    title = re.sub(r"^(re:\s*)+", "", records[0]["subject"], flags=re.I)
-                    group = recent.root.add(
-                        Text(f"{title} ({len(recent_records)})", style="bold"),
-                        expand=True, allow_expand=False)
-                    for record in recent_children.get(None, []):
-                        self.add_recent(group, record, recent_children,
-                                        selected_key, selected_nodes)
-
+            archive_threads = {}
+            for row in archive_rows:
+                archive_threads.setdefault(row["thread"], []).append(row)
+            archive_ordered = sorted(
+                archive_threads.values(),
+                key=lambda records: max(r["timestamp"] for r in records),
+                reverse=True)
+            archived_commits = set()
+            for records in archive_ordered:
+                children = self.forest(records)
+                roots = children.get(None, [])
                 archived_roots = []
 
                 def find_archived(record, inherited=False):
                     now_inherited = inherited or record["archived"]
+                    if now_inherited:
+                        archived_commits.add(record["commit"])
                     if record["archived"] and not inherited:
                         archived_roots.append(record)
                     for child in children.get(record["message_id"], []):
@@ -1079,6 +1136,33 @@ def cmd_tui(args):
                         self.add_archive(group, record, children, False,
                                          selected_key, selected_nodes)
 
+            recent_rows = [row for row in recent_rows
+                           if row["commit"] not in archived_commits]
+            recent_threads = {}
+            for row in recent_rows:
+                recent_threads.setdefault(row["thread"], []).append(row)
+            recent_ordered = sorted(
+                recent_threads.values(),
+                key=lambda records: max(r["timestamp"] for r in records),
+                reverse=True)
+            for records in recent_ordered:
+                children = self.forest(records)
+                title = re.sub(r"^(re:\s*)+", "", records[0]["subject"], flags=re.I)
+                group = recent.root.add(
+                    Text(f"{title} ({len(records)})", style="bold"),
+                    expand=True, allow_expand=False)
+                for record in children.get(None, []):
+                    self.add_recent(group, record, children,
+                                    selected_key, selected_nodes)
+
+            visible = {
+                row["commit"]: row for row in
+                home_rows
+                + [row for row in archive_rows if row["commit"] in archived_commits]
+                + recent_rows
+            }
+            self.records = list(visible.values())
+
             pane = self.query_one("#tabs", TabbedContent).active
             key = {
                 "home-pane": "home",
@@ -1088,9 +1172,10 @@ def cmd_tui(args):
             if key in selected_nodes:
                 tree = {"home": home, "recent": recent, "archive": archive}[key]
                 self.call_after_refresh(tree.move_cursor, selected_nodes[key])
-            unread = sum(not row["read"] for row in rows)
-            drafts = sum(row["has_draft"] for row in rows)
-            self.set_status(f"{len(threads)} threads, {unread} unread, {drafts} drafts  "
+            unread = sum(not row["read"] for row in self.records)
+            drafts = sum(row["has_draft"] for row in self.records)
+            threads = len({row["thread"] for row in self.records})
+            self.set_status(f"{threads} threads, {unread} unread, {drafts} drafts  "
                             "[A] explicit archive  [a] inherited archive")
             self.update_buttons()
 
