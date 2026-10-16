@@ -897,10 +897,11 @@ def cmd_tui(args):
     program = os.path.realpath(__file__)
 
     class MailTree(Tree):
+        GUIDE_DEPTH = 2
         BINDINGS = [Binding("enter", "open_mail", show=False)]
 
         def on_mount(self):
-            self.guide_depth = 2
+            self.guide_depth = self.GUIDE_DEPTH
 
         def render_line(self, y):
             line = super().render_line(y)
@@ -915,6 +916,7 @@ def cmd_tui(args):
 
     class PiMailApp(App):
         TITLE = "pi-mail"
+        AUTHOR_COLUMN = 22  # Align through five levels of tree indentation.
         CSS = """
         TabbedContent { height: 1fr; }
         Tree { height: 1fr; }
@@ -990,15 +992,23 @@ def cmd_tui(args):
             }[pane]
             return self.query_one(tree_id, Tree)
 
-        @staticmethod
-        def label(record, inherited=False):
+        @classmethod
+        def label(cls, record, parent, inherited=False):
             flags = []
             if record["archived"]:
                 flags.append("A")
             elif inherited:
                 flags.append("a")
             suffix = f" [{' '.join(flags)}]" if flags else ""
-            label = Text(f"{local_time(record['timestamp'])} "
+            date = local_time(record["timestamp"])
+            depth = 0
+            ancestor = parent
+            while ancestor.parent is not None:
+                depth += 1
+                ancestor = ancestor.parent
+            gap = " " * max(1, cls.AUTHOR_COLUMN - depth * MailTree.GUIDE_DEPTH
+                            - len(date))
+            label = Text(f"{date}{gap}"
                          f"{record['author'][:20]:20} {record['subject']}{suffix}")
             if not record["read"]:
                 label.stylize("bold cyan")
@@ -1035,7 +1045,7 @@ def cmd_tui(args):
         def add_home(self, parent, record, children, selected_key, selected_nodes):
             if record["archived"]:
                 return
-            node = parent.add(self.label(record), data=record,
+            node = parent.add(self.label(record, parent), data=record,
                               expand=True, allow_expand=False)
             if self.record_key(record) == selected_key:
                 selected_nodes["home"] = node
@@ -1045,7 +1055,8 @@ def cmd_tui(args):
                 self.add_home(node, child, children, selected_key, selected_nodes)
 
         def add_recent(self, parent, record, children, selected_key, selected_nodes):
-            node = parent.add(self.label(record, record["archive_inherited"]), data=record,
+            node = parent.add(self.label(record, parent, record["archive_inherited"]),
+                              data=record,
                               expand=True, allow_expand=False)
             if self.record_key(record) == selected_key:
                 selected_nodes["recent"] = node
@@ -1058,7 +1069,7 @@ def cmd_tui(args):
                         selected_key, selected_nodes):
             shown = dict(record)
             shown["archive_inherited"] = inherited and not record["archived"]
-            node = parent.add(self.label(record, inherited), data=shown,
+            node = parent.add(self.label(record, parent, inherited), data=shown,
                               expand=True, allow_expand=False)
             if self.record_key(shown) == selected_key:
                 selected_nodes["archive"] = node
