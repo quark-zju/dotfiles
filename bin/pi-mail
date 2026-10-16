@@ -874,6 +874,8 @@ def cmd_tui(args):
             with TabbedContent(initial="home-pane", id="tabs"):
                 with TabPane("Home", id="home-pane"):
                     yield MailTree("Home", id="home-tree")
+                with TabPane("Recent", id="recent-pane"):
+                    yield MailTree("Recent", id="recent-tree")
                 with TabPane("Archive", id="archive-pane"):
                     yield MailTree("Archive", id="archive-tree")
             with Grid(id="actions"):
@@ -890,6 +892,7 @@ def cmd_tui(args):
 
         def on_mount(self):
             self.query_one("#home-tree", Tree).show_root = False
+            self.query_one("#recent-tree", Tree).show_root = False
             self.query_one("#archive-tree", Tree).show_root = False
             self.reload()
             self.set_interval(0.5, self.check_processes)
@@ -903,7 +906,11 @@ def cmd_tui(args):
 
         def active_tree(self):
             pane = self.query_one("#tabs", TabbedContent).active
-            tree_id = "#archive-tree" if pane == "archive-pane" else "#home-tree"
+            tree_id = {
+                "home-pane": "#home-tree",
+                "recent-pane": "#recent-tree",
+                "archive-pane": "#archive-tree",
+            }[pane]
             return self.query_one(tree_id, Tree)
 
         @staticmethod
@@ -961,6 +968,16 @@ def cmd_tui(args):
             for child in children.get(record["message_id"], []):
                 self.add_home(node, child, children, selected_key, selected_nodes)
 
+        def add_recent(self, parent, record, children, selected_key, selected_nodes):
+            node = parent.add(self.label(record, record["archive_inherited"]), data=record,
+                              expand=True, allow_expand=False)
+            if self.record_key(record) == selected_key:
+                selected_nodes["recent"] = node
+            if record["has_draft"]:
+                self.add_draft(node, record, "recent", selected_key, selected_nodes)
+            for child in children.get(record["message_id"], []):
+                self.add_recent(node, child, children, selected_key, selected_nodes)
+
         def add_archive(self, parent, record, children, inherited,
                         selected_key, selected_nodes):
             shown = dict(record)
@@ -997,17 +1014,31 @@ def cmd_tui(args):
                              key=lambda records: max(r["timestamp"] for r in records),
                              reverse=True)
             home = self.query_one("#home-tree", Tree)
+            recent = self.query_one("#recent-tree", Tree)
             archive = self.query_one("#archive-tree", Tree)
             home.reset("Home")
+            recent.reset("Recent")
             archive.reset("Archive")
             home.root.expand()
             home.root.allow_expand = False
+            recent.root.expand()
+            recent.root.allow_expand = False
             archive.root.expand()
             archive.root.allow_expand = False
             selected_nodes = {}
+            recent_cutoff = int(time.time()) - 7 * 86400
             for records in ordered:
                 children = self.forest(records)
                 roots = children.get(None, [])
+
+                def mark_inherited(record, inherited=False):
+                    record["archive_inherited"] = inherited and not record["archived"]
+                    for child in children.get(record["message_id"], []):
+                        mark_inherited(child, inherited or record["archived"])
+
+                for record in roots:
+                    mark_inherited(record)
+
                 visible_roots = [record for record in roots if not record["archived"]]
                 if visible_roots:
                     title = re.sub(r"^(re:\s*)+", "", records[0]["subject"], flags=re.I)
@@ -1015,6 +1046,18 @@ def cmd_tui(args):
                                           expand=True, allow_expand=False)
                     for record in visible_roots:
                         self.add_home(group, record, children, selected_key, selected_nodes)
+
+                recent_records = [record for record in records
+                                  if record["timestamp"] >= recent_cutoff]
+                if recent_records:
+                    recent_children = self.forest(recent_records)
+                    title = re.sub(r"^(re:\s*)+", "", records[0]["subject"], flags=re.I)
+                    group = recent.root.add(
+                        Text(f"{title} ({len(recent_records)})", style="bold"),
+                        expand=True, allow_expand=False)
+                    for record in recent_children.get(None, []):
+                        self.add_recent(group, record, recent_children,
+                                        selected_key, selected_nodes)
 
                 archived_roots = []
 
@@ -1037,9 +1080,13 @@ def cmd_tui(args):
                                          selected_key, selected_nodes)
 
             pane = self.query_one("#tabs", TabbedContent).active
-            key = "archive" if pane == "archive-pane" else "home"
+            key = {
+                "home-pane": "home",
+                "recent-pane": "recent",
+                "archive-pane": "archive",
+            }[pane]
             if key in selected_nodes:
-                tree = archive if key == "archive" else home
+                tree = {"home": home, "recent": recent, "archive": archive}[key]
                 self.call_after_refresh(tree.move_cursor, selected_nodes[key])
             unread = sum(not row["read"] for row in rows)
             drafts = sum(row["has_draft"] for row in rows)
