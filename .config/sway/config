@@ -2,7 +2,7 @@
 #
 # Fedora dependencies used directly by this file:
 #   sudo dnf install sway waybar foot wmenu swaylock swayidle kanshi SwayNotificationCenter \
-#       network-manager-applet blueman xfce-polkit wl-clipboard \
+#       network-manager-applet blueman xfce-polkit wl-clipboard grim slurp \
 #       xorg-x11-server-Xwayland i3
 # Additional window switcher: github.com/quark-zju/i3-selwin
 #
@@ -68,6 +68,8 @@ bindsym $mod+c kill
 bindsym $alt+F4 kill
 bindsym $mod+x exec swaylock -f -c 111111
 bindsym $mod+p exec $menu
+bindsym Print exec grim
+bindsym $alt+Print exec grim -g "$(slurp)"
 
 # i3-input uses XWayland for its UI, but its IPC commands work with Sway.
 bindsym $mod+comma exec i3-selwin
