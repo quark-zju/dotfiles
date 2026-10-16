@@ -992,15 +992,14 @@ def cmd_tui(args):
 
         @staticmethod
         def label(record, inherited=False):
-            unread = "●" if not record["read"] else " "
             flags = []
             if record["archived"]:
                 flags.append("A")
             elif inherited:
                 flags.append("a")
             suffix = f" [{' '.join(flags)}]" if flags else ""
-            label = Text(f"{unread} {local_time(record['timestamp'])} "
-                         f"{record['author']}: {record['subject']}{suffix}")
+            label = Text(f"{local_time(record['timestamp'])} "
+                         f"{record['author'][:20]:20} {record['subject']}{suffix}")
             if not record["read"]:
                 label.stylize("bold cyan")
             elif record["own"]:
