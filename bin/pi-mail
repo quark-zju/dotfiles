@@ -899,6 +899,9 @@ def cmd_tui(args):
     class MailTree(Tree):
         BINDINGS = [Binding("enter", "open_mail", show=False)]
 
+        def on_mount(self):
+            self.guide_depth = 2
+
         def render_line(self, y):
             line = super().render_line(y)
             if y == self.cursor_line:
