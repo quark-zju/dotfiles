@@ -922,7 +922,7 @@ def cmd_tui(args):
         Tree { height: 1fr; }
         Tree > .tree--highlight-line { background: transparent; }
         Tree > .tree--highlight { background: $surface-lighten-1; }
-        #actions { height: 6; grid-size: 4 2; }
+        #actions { height: 2; grid-size: 4 2; }
         #actions Button { min-width: 12; }
         #status { height: 1; padding: 0 1; }
         """
@@ -958,14 +958,14 @@ def cmd_tui(args):
                 with TabPane("Archive", id="archive-pane"):
                     yield MailTree("Archive", id="archive-tree")
             with Grid(id="actions"):
-                yield Button("View", id="view")
-                yield Button("Reply", id="reply")
-                yield Button("Read/Unread", id="read")
-                yield Button("Archive", id="archive")
-                yield Button("Send", id="send")
-                yield Button("Delete", id="delete")
-                yield Button("Fetch", id="fetch")
-                yield Button("All Read", id="all-read")
+                yield Button("View", id="view", compact=True)
+                yield Button("Reply", id="reply", compact=True)
+                yield Button("Read/Unread", id="read", compact=True)
+                yield Button("Archive", id="archive", compact=True)
+                yield Button("Send", id="send", compact=True)
+                yield Button("Delete", id="delete", compact=True)
+                yield Button("Fetch", id="fetch", compact=True)
+                yield Button("All Read", id="all-read", compact=True)
             yield Static("", id="status")
             yield Footer()
 
