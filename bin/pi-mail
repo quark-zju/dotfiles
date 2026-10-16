@@ -861,14 +861,16 @@ def cmd_view_mail(args):
         _, _, body = text.partition("\n\n")
     else:
         body = part.get_content().rstrip("\n")
-    subject = message["Subject"]
-    header = subject.fold(policy=POLICY).rstrip("\n") if subject else "Subject:"
+    headers = []
+    for name in ("From", "Subject"):
+        value = message[name]
+        headers.append(value.fold(policy=POLICY).rstrip("\n") if value else f"{name}:")
     path = None
     try:
         with tempfile.NamedTemporaryFile(
                 "w", suffix=".eml", prefix=f"pi-mail-{args.commit[:10]}-", delete=False) as out:
             path = out.name
-            out.write(header + "\n\n" + body + "\n")
+            out.write("\n".join(headers) + "\n\n" + body + "\n")
         subprocess.run([*editor_command(), path], check=False)
     finally:
         if path:
