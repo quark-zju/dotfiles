@@ -877,11 +877,13 @@ def cmd_view_mail(args):
 def cmd_tui(args):
     # Keep Textual and Rich out of the startup path for every CLI command.
     try:
+        from rich.segment import Segment
         from rich.text import Text
         from textual.app import App, ComposeResult
         from textual.binding import Binding
         from textual.containers import Grid
         from textual.css.query import NoMatches
+        from textual.strip import Strip
         from textual.widgets import Button, Footer, Header, Static, TabbedContent, TabPane, Tree
     except ImportError:
         sys.exit("pi-mail tui requires Textual (pip install textual)")
@@ -892,6 +894,13 @@ def cmd_tui(args):
 
     class MailTree(Tree):
         BINDINGS = [Binding("enter", "open_mail", show=False)]
+
+        def render_line(self, y):
+            line = super().render_line(y)
+            if y == self.cursor_line:
+                style = self.get_component_rich_style("tree--cursor")
+                return Strip(Segment.apply_style(line, post_style=style), line.cell_length)
+            return line
 
         def action_open_mail(self):
             if self.cursor_node and self.cursor_node.data:
@@ -1096,12 +1105,16 @@ def cmd_tui(args):
                 children = self.forest(records)
                 roots = children.get(None, [])
                 visible_roots = [record for record in roots if not record["archived"]]
-                if visible_roots:
-                    title = re.sub(r"^(re:\s*)+", "", records[0]["subject"], flags=re.I)
-                    group = home.root.add(Text(f"{title} ({len(records)})", style="bold"),
-                                          expand=True, allow_expand=False)
-                    for record in visible_roots:
-                        self.add_home(group, record, children, selected_key, selected_nodes)
+                missing = None
+                for record in visible_roots:
+                    parent = home.root
+                    if record["parent"] is not None:
+                        if missing is None:
+                            missing = home.root.add(
+                                Text("[missing]", style="dim italic"),
+                                expand=True, allow_expand=False)
+                        parent = missing
+                    self.add_home(parent, record, children, selected_key, selected_nodes)
 
             archive_threads = {}
             for row in archive_rows:
@@ -1127,14 +1140,17 @@ def cmd_tui(args):
 
                 for record in roots:
                     find_archived(record)
-                if archived_roots:
-                    title = re.sub(r"^(re:\s*)+", "", records[0]["subject"], flags=re.I)
-                    group = archive.root.add(
-                        Text(f"{title} ({len(records)})", style="bold"),
-                        expand=True, allow_expand=False)
-                    for record in archived_roots:
-                        self.add_archive(group, record, children, False,
-                                         selected_key, selected_nodes)
+                missing = None
+                for record in archived_roots:
+                    parent = archive.root
+                    if record["parent"] is not None:
+                        if missing is None:
+                            missing = archive.root.add(
+                                Text("[missing]", style="dim italic"),
+                                expand=True, allow_expand=False)
+                        parent = missing
+                    self.add_archive(parent, record, children, False,
+                                     selected_key, selected_nodes)
 
             recent_rows = [row for row in recent_rows
                            if row["commit"] not in archived_commits]
@@ -1147,12 +1163,16 @@ def cmd_tui(args):
                 reverse=True)
             for records in recent_ordered:
                 children = self.forest(records)
-                title = re.sub(r"^(re:\s*)+", "", records[0]["subject"], flags=re.I)
-                group = recent.root.add(
-                    Text(f"{title} ({len(records)})", style="bold"),
-                    expand=True, allow_expand=False)
+                missing = None
                 for record in children.get(None, []):
-                    self.add_recent(group, record, children,
+                    parent = recent.root
+                    if record["parent"] is not None:
+                        if missing is None:
+                            missing = recent.root.add(
+                                Text("[missing]", style="dim italic"),
+                                expand=True, allow_expand=False)
+                        parent = missing
+                    self.add_recent(parent, record, children,
                                     selected_key, selected_nodes)
 
             visible = {
