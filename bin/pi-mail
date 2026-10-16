@@ -855,8 +855,12 @@ def delete_draft(commit):
 
 def cmd_view_mail(args):
     message = load(*args.index.message_location(args.commit))
-    text = message.as_string(unixfrom=False).rstrip("\n")
-    _, separator, body = text.partition("\n\n")
+    part = message.get_body(preferencelist=("plain", "html"))
+    if part is None:
+        text = message.as_string(unixfrom=False).rstrip("\n")
+        _, _, body = text.partition("\n\n")
+    else:
+        body = part.get_content().rstrip("\n")
     subject = message["Subject"]
     header = subject.fold(policy=POLICY).rstrip("\n") if subject else "Subject:"
     path = None
@@ -864,7 +868,7 @@ def cmd_view_mail(args):
         with tempfile.NamedTemporaryFile(
                 "w", suffix=".eml", prefix=f"pi-mail-{args.commit[:10]}-", delete=False) as out:
             path = out.name
-            out.write(header + separator + body + "\n")
+            out.write(header + "\n\n" + body + "\n")
         subprocess.run([*editor_command(), path], check=False)
     finally:
         if path:
