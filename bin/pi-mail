@@ -995,6 +995,7 @@ def cmd_tui(args):
             self.query_one("#recent-tree", Tree).show_root = False
             self.query_one("#archive-tree", Tree).show_root = False
             self.query_one("#search", Input).display = False
+            self.active_tree().focus()
             self.reload()
             self.set_interval(0.5, self.check_processes)
 
