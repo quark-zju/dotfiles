@@ -6,6 +6,7 @@
 	br = branch
 	bf = "!git branch -f master && git checkout master && git branch -f master -u origin/master"
 	c = commit
+	fmtc = clang-format --style file --extensions c,h
 	co = checkout
 	d = diff
 	dc = diff --cached
