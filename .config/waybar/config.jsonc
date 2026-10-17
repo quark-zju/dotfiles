@@ -3,6 +3,8 @@
     "reload_style_on_change": true,
     "modules-left": ["sway/workspaces", "sway/mode"],
     "modules-right": [
+        "wireplumber",
+        "custom/separator#volume-clock",
         "clock",
         "custom/separator#clock-tray",
         "tray"
@@ -10,6 +12,17 @@
 
     "sway/workspaces": {
         "on-click-right": "~/bin/i3-wname --interactive-rename"
+    },
+
+    "wireplumber": {
+        "format": "VOL {volume}%",
+        "format-muted": "VOL mute",
+        "tooltip": false
+    },
+
+    "custom/separator#volume-clock": {
+        "format": "•",
+        "tooltip": false
     },
 
     "custom/separator#clock-tray": {

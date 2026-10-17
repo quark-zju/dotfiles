@@ -43,6 +43,7 @@ window#waybar {
 #battery,
 #temperature,
 #load,
+#wireplumber,
 #clock {
     padding: 1px 7px;
 }
