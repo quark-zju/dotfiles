@@ -232,15 +232,27 @@ SECRET_PATTERNS = [
 ]
 
 
+def normalize_model_name(model: str) -> str:
+    model = (model or "").strip()
+    if model.endswith("-internal"):
+        model = model[: -len("-internal")]
+    return model
+
+
 def get_agent_env() -> Dict[str, str]:
-    return (
+    env = (
         get_opencode_env()
         or get_codex_env()
         or get_zed_env()
         or get_claude_code_env()
         or get_dsh_env()
+        or get_muse_env()
         or get_kimi_code_env()
     )
+    for key in ("Agent-Model", "Committer-Agent-Model"):
+        if env.get(key):
+            env[key] = normalize_model_name(env[key])
+    return env
 
 
 def get_opencode_env() -> Dict[str, str]:
@@ -889,6 +901,145 @@ def dsh_env_from_lines(lines) -> Dict[str, str]:
         env["Agent-Model"] = model
     if prompt or model:
         env["Agent-Harness"] = "dsh"
+    return env
+
+
+def muse_data_home() -> str:
+    return os.getenv("XDG_DATA_HOME", "").strip() or os.path.expanduser(
+        "~/.local/share"
+    )
+
+
+def find_muse_session_file(session_id: str) -> str:
+    if not session_id:
+        return ""
+    candidates = glob.glob(
+        os.path.join(
+            muse_data_home(), "muse", "sessions", f"**/*{session_id}*", "session.jsonl"
+        ),
+        recursive=True,
+    )
+    if not candidates:
+        return ""
+    return max(candidates, key=os.path.getmtime)
+
+
+def muse_text_from_model_messages(model_messages) -> str:
+    if not isinstance(model_messages, list):
+        return ""
+    texts = []
+    for message in model_messages:
+        if not isinstance(message, dict):
+            continue
+        for part in message.get("content") or []:
+            if isinstance(part, dict) and part.get("kind") == "text":
+                text = str(part.get("text") or "").strip()
+                if text:
+                    texts.append(text)
+    return "\n".join(texts).strip()
+
+
+def muse_tool_calls_have_git_commit(tool_calls) -> bool:
+    if not isinstance(tool_calls, list):
+        return False
+    for call in tool_calls:
+        if not isinstance(call, dict) or call.get("name") != "bash":
+            continue
+        args = call.get("args", "")
+        if isinstance(args, dict):
+            command = str(args.get("command") or "")
+        elif isinstance(args, str):
+            try:
+                command = str(json.loads(args).get("command") or "")
+            except (json.JSONDecodeError, AttributeError):
+                command = args
+        else:
+            command = ""
+        if GIT_COMMIT_RE.search(command.lower()):
+            return True
+    return False
+
+
+def get_muse_env() -> Dict[str, str]:
+    env = {}
+    session_id = os.getenv("MUSE_SESSION_ID", "").strip() or os.getenv(
+        "MUSE_THREAD_ID", ""
+    ).strip()
+    if not session_id:
+        return env
+    session_file = find_muse_session_file(session_id)
+    if not session_file:
+        return env
+    try:
+        with open(session_file, "r") as f:
+            lines = f.readlines()
+    except OSError:
+        return env
+    model = None
+    prompt = []
+    seen_git_commit = False
+    for line in reversed(lines):
+        try:
+            data = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(data, dict):
+            continue
+        out = {}
+        if not model:
+            # {"payload_type":"run.model.configured",
+            #  "payload":{"record":{"model_id":"muse-spark-1.3-internal",...}}}
+            if match_obj(
+                data,
+                {
+                    "payload_type": "run.model.configured",
+                    "payload": {"record": {"model_id": "$model"}},
+                },
+                out,
+            ):
+                model = str(out.get("$model") or "").strip()
+        if not seen_git_commit:
+            # {"payload_type":"runtime.user_intent.accepted",
+            #  "payload":{"model_messages":[{"content":[{"kind":"text",
+            #  "text":...}]}]}}
+            if match_obj(
+                data,
+                {
+                    "payload_type": "runtime.user_intent.accepted",
+                    "payload": {"model_messages": "$messages"},
+                },
+                out,
+            ):
+                text = muse_text_from_model_messages(out.get("$messages"))
+                if text:
+                    prompt.append(text)
+            # Only use git commit as a boundary after we've already seen at
+            # least one prompt while scanning backwards (the in-flight commit
+            # that triggered this hook is not yet in the transcript).
+            calls = {}
+            if prompt and match_obj(
+                data,
+                {
+                    "payload_type": "runtime.session",
+                    "payload": {
+                        "event": {
+                            "kind": "assistant_tool_calls_committed",
+                            "tool_calls": "$calls",
+                        }
+                    },
+                },
+                calls,
+            ):
+                if muse_tool_calls_have_git_commit(calls.get("$calls")):
+                    seen_git_commit = True
+        if model and seen_git_commit:
+            break
+    if prompt:
+        env["Agent-Prompt"] = "\n----\n".join(reversed(prompt))
+    if model:
+        env["Agent-Model"] = model
+    if prompt or model:
+        env["Agent-Harness"] = "muse"
     return env
 
 
