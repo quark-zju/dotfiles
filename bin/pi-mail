@@ -12,9 +12,10 @@
   pi-mail tui                                         browse related threads
   pi-mail prev-cover PATCH...                         In-Reply-To for a reroll
 
-SEL is a commit hash shown by `ls`/`tree`, a Message-ID, a lore URL, or
-otherwise a regex matched against subjects within --days. `show` and `tree`
-accept multiple selectors and handle every match; `reply` needs exactly one.
+SEL is a commit hash shown by `ls`/`tree`, a Message-ID, a lore URL, `a:NAME`
+for a case-insensitive author-name match, or otherwise a regex matched against
+subjects within --days. `show` and `tree` accept multiple selectors and handle
+every match; `reply` needs exactly one.
 `reply` drops your own addresses from Cc; add extra ones with
 `git config --global --add pimail.self ADDRESS`.
 Without `-o`, it keeps a Git-tracked draft under the XDG state directory and
@@ -473,7 +474,7 @@ class Index:
         return messages, epochs
 
     def resolve(self, sel, days):
-        """Return [(gitdir, commit)] for a hash, Message-ID, lore URL, or subject regex."""
+        """Return [(gitdir, commit)] matching a SEL expression."""
         match = re.search(r"lore\.kernel\.org/[^/]+/([^/]+)", sel)
         key = (match.group(1) if match else sel).strip().strip("<>")
         if re.fullmatch(r"[0-9a-f]{7,40}", key):
@@ -499,7 +500,12 @@ class Index:
                     return [(gitdir, commit)]
 
         cutoff = int(time.time()) - days * 86400
-        if "@" in key:
+        if key.startswith("a:"):
+            name = key[2:].casefold()
+            found = [(gitdir, commit)
+                     for gitdir, commit, author, _, _ in self.recent(days)
+                     if name and name in author.casefold()]
+        elif "@" in key:
             found = self.db.execute(
                 f"SELECT e.path, m.git_commit_oid FROM messages m "
                 f"JOIN epochs e ON e.id = m.epoch_id "
