@@ -55,7 +55,7 @@
         "format-charging": "CHR {time}",
         "format-full": "FULL",
         "format-not-charging": "IDLE",
-        "format-plugged": "IDLE",
+        "format-plugged": "AC",
         "tooltip": false
     },
     "temperature": {
