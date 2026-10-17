@@ -932,7 +932,6 @@ def cmd_tui(args):
         Tree > .tree--highlight { background: $surface-lighten-1; }
         #actions { height: 2; grid-size: 4 2; }
         #actions Button { min-width: 12; }
-        #search { height: 1; }
         #status { height: 1; padding: 0 1; }
         """
         BINDINGS = [
@@ -986,7 +985,7 @@ def cmd_tui(args):
                 yield Button("Fetch", id="fetch", compact=True)
                 yield Button("All Read", id="all-read", compact=True)
             yield Input(placeholder="SEL (hash, Message-ID, lore URL, or subject regex)",
-                        id="search")
+                        id="search", compact=True)
             yield Static("", id="status")
             yield Footer()
 
