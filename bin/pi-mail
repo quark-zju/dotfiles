@@ -459,22 +459,27 @@ class Index:
         return [dict(zip(keys, row)) for row in rows]
 
     def recent_messages(self, days, name, address):
-        """Return every message within the cutoff, regardless of author."""
+        """Return complete threads active within the cutoff, regardless of author."""
         cutoff = int(time.time()) - days * 86400
         rows = self.db.execute(
+            f"WITH recent(thread_sid) AS ("
+            f"  SELECT DISTINCT m.thread_sid FROM messages m "
+            f"  WHERE m.epoch_id IN ({self.scope}) AND m.commit_time >= ?"
+            f") "
             f"SELECT thread.value, mid.value, parent.value, e.path, "
             f"m.git_commit_oid, a.value, m.commit_time, m.subject, "
             f"(a.value = ? COLLATE NOCASE "
             f" AND instr(lower(mid.value), lower(?)) > 0) "
             f"FROM messages m "
+            f"JOIN recent r ON r.thread_sid = m.thread_sid "
             f"JOIN epochs e ON e.id = m.epoch_id "
             f"JOIN strings thread ON thread.id = m.thread_sid "
             f"JOIN strings mid ON mid.id = m.message_sid "
             f"LEFT JOIN strings parent ON parent.id = m.parent_sid "
             f"JOIN strings a ON a.id = m.author_sid "
-            f"WHERE m.epoch_id IN ({self.scope}) AND m.commit_time >= ? "
+            f"WHERE m.epoch_id IN ({self.scope}) "
             f"ORDER BY m.commit_time, m.id",
-            (name, address, *self.epoch_ids, cutoff))
+            (*self.epoch_ids, cutoff, name, address, *self.epoch_ids))
         keys = ("thread", "message_id", "parent", "gitdir", "commit", "author",
                 "timestamp", "subject", "own")
         return [dict(zip(keys, row)) for row in rows]
@@ -890,7 +895,8 @@ def cmd_tui(args):
         from textual.containers import Grid
         from textual.css.query import NoMatches
         from textual.strip import Strip
-        from textual.widgets import Button, Footer, Header, Static, TabbedContent, TabPane, Tree
+        from textual.widgets import (Button, Footer, Header, Input, Static, TabbedContent,
+                                     TabPane, Tree)
     except ImportError:
         sys.exit("pi-mail tui requires Textual (pip install textual)")
 
@@ -926,6 +932,7 @@ def cmd_tui(args):
         Tree > .tree--highlight { background: $surface-lighten-1; }
         #actions { height: 2; grid-size: 4 2; }
         #actions Button { min-width: 12; }
+        #search { height: 1; }
         #status { height: 1; padding: 0 1; }
         """
         BINDINGS = [
@@ -941,14 +948,24 @@ def cmd_tui(args):
             Binding("f", "fetch", "Fetch"),
             Binding("R", "all_read", "All read"),
             Binding("shift+r", "all_read", show=False),
+            Binding("/", "search", "Search"),
+            Binding("escape", "clear_search", show=False),
             Binding("q", "quit", "Quit"),
         ]
 
         def __init__(self):
             super().__init__()
             self.records = []
+            self.tab_records = {}
+            self.searches = {"home": "", "recent": "", "archive": ""}
+            self.search_open = False
             self.fetch_process = None
             self.terminals = []
+
+        def check_action(self, action, parameters):
+            if self.search_open and action != "clear_search":
+                return False
+            return True
 
         def compose(self) -> ComposeResult:
             yield Header()
@@ -968,6 +985,8 @@ def cmd_tui(args):
                 yield Button("Delete", id="delete", compact=True)
                 yield Button("Fetch", id="fetch", compact=True)
                 yield Button("All Read", id="all-read", compact=True)
+            yield Input(placeholder="SEL (hash, Message-ID, lore URL, or subject regex)",
+                        id="search")
             yield Static("", id="status")
             yield Footer()
 
@@ -975,6 +994,7 @@ def cmd_tui(args):
             self.query_one("#home-tree", Tree).show_root = False
             self.query_one("#recent-tree", Tree).show_root = False
             self.query_one("#archive-tree", Tree).show_root = False
+            self.query_one("#search", Input).display = False
             self.reload()
             self.set_interval(0.5, self.check_processes)
 
@@ -985,14 +1005,32 @@ def cmd_tui(args):
                 return None
             return node.data if node and node.data else None
 
-        def active_tree(self):
+        def active_key(self):
             pane = self.query_one("#tabs", TabbedContent).active
-            tree_id = {
-                "home-pane": "#home-tree",
-                "recent-pane": "#recent-tree",
-                "archive-pane": "#archive-tree",
-            }[pane]
-            return self.query_one(tree_id, Tree)
+            return {"home-pane": "home", "recent-pane": "recent",
+                    "archive-pane": "archive"}[pane]
+
+        def active_tree(self):
+            return self.query_one(f"#{self.active_key()}-tree", Tree)
+
+        @staticmethod
+        def sel_matcher(sel):
+            match = re.search(r"lore\.kernel\.org/[^/]+/([^/]+)", sel)
+            key = (match.group(1) if match else sel).strip().strip("<>")
+            if re.fullmatch(r"[0-9a-f]{7,40}", key):
+                return lambda record: record["commit"].startswith(key)
+            if "@" in key:
+                return lambda record: record["message_id"] == key
+            pattern = re.compile(key, re.I)
+            return lambda record: pattern.search(record["subject"]) is not None
+
+        def filter_threads(self, records, key):
+            sel = self.searches[key]
+            if not sel:
+                return records
+            matches = self.sel_matcher(sel)
+            threads = {record["thread"] for record in records if matches(record)}
+            return [record for record in records if record["thread"] in threads]
 
         @classmethod
         def label(cls, record, parent, inherited=False):
@@ -1113,8 +1151,9 @@ def cmd_tui(args):
             archive.root.allow_expand = False
             selected_nodes = {}
 
+            shown_home_rows = self.filter_threads(home_rows, "home")
             home_threads = {}
-            for row in home_rows:
+            for row in shown_home_rows:
                 home_threads.setdefault(row["thread"], []).append(row)
             home_ordered = sorted(
                 home_threads.values(),
@@ -1143,6 +1182,8 @@ def cmd_tui(args):
                 key=lambda records: max(r["timestamp"] for r in records),
                 reverse=True)
             archived_commits = set()
+            shown_archive_rows = self.filter_threads(archive_rows, "archive")
+            shown_archive_threads = {row["thread"] for row in shown_archive_rows}
             for records in archive_ordered:
                 children = self.forest(records)
                 roots = children.get(None, [])
@@ -1159,6 +1200,8 @@ def cmd_tui(args):
 
                 for record in roots:
                     find_archived(record)
+                if records[0]["thread"] not in shown_archive_threads:
+                    continue
                 missing = None
                 for record in archived_roots:
                     parent = archive.root
@@ -1173,8 +1216,9 @@ def cmd_tui(args):
 
             recent_rows = [row for row in recent_rows
                            if row["commit"] not in archived_commits]
+            shown_recent_rows = self.filter_threads(recent_rows, "recent")
             recent_threads = {}
-            for row in recent_rows:
+            for row in shown_recent_rows:
                 recent_threads.setdefault(row["thread"], []).append(row)
             recent_ordered = sorted(
                 recent_threads.values(),
@@ -1201,6 +1245,12 @@ def cmd_tui(args):
                 + recent_rows
             }
             self.records = list(visible.values())
+            self.tab_records = {
+                "home": [row for row in shown_home_rows if not row["archived"]],
+                "recent": shown_recent_rows,
+                "archive": [row for row in shown_archive_rows
+                            if row["commit"] in archived_commits],
+            }
 
             pane = self.query_one("#tabs", TabbedContent).active
             key = {
@@ -1211,15 +1261,23 @@ def cmd_tui(args):
             if key in selected_nodes:
                 tree = {"home": home, "recent": recent, "archive": archive}[key]
                 self.call_after_refresh(tree.move_cursor, selected_nodes[key])
-            unread = sum(not row["read"] for row in self.records)
-            drafts = sum(row["has_draft"] for row in self.records)
-            threads = len({row["thread"] for row in self.records})
-            self.set_status(f"{threads} threads, {unread} unread, {drafts} drafts  "
-                            "[A] explicit archive  [a] inherited archive")
+            self.update_status()
             self.update_buttons()
 
         def set_status(self, message):
-            self.query_one("#status", Static).update(message)
+            self.query_one("#status", Static).update(Text(message))
+
+        def update_status(self):
+            unread = sum(not row["read"] for row in self.records)
+            drafts = sum(row["has_draft"] for row in self.records)
+            threads = len({row["thread"] for row in self.records})
+            message = (f"{threads} threads, {unread} unread, {drafts} drafts  "
+                       "[A] explicit archive  [a] inherited archive")
+            key = self.active_key()
+            if self.searches[key]:
+                matched = len({row["thread"] for row in self.tab_records[key]})
+                message += f"  /{self.searches[key]}: {matched} matches"
+            self.set_status(message)
 
         def update_buttons(self):
             record = self.selected()
@@ -1246,7 +1304,27 @@ def cmd_tui(args):
             self.update_buttons()
 
         def on_tabbed_content_tab_activated(self, event: TabbedContent.TabActivated):
+            search = self.query_one("#search", Input)
+            self.search_open = False
+            search.display = False
+            self.update_status()
             self.update_buttons()
+
+        def on_input_submitted(self, event: Input.Submitted):
+            if event.input.id != "search":
+                return
+            sel = event.value.strip()
+            try:
+                self.sel_matcher(sel)
+            except re.error as error:
+                self.notify(f"Invalid regex: {error}", severity="error")
+                event.input.select_all()
+                return
+            self.searches[self.active_key()] = sel
+            self.search_open = False
+            event.input.display = False
+            self.active_tree().focus()
+            self.reload()
 
         def on_button_pressed(self, event: Button.Pressed):
             actions = {
@@ -1284,6 +1362,26 @@ def cmd_tui(args):
 
         def action_previous_mail(self):
             self.active_tree().action_cursor_up()
+
+        def action_search(self):
+            search = self.query_one("#search", Input)
+            search.value = self.searches[self.active_key()]
+            self.search_open = True
+            search.display = True
+            search.focus()
+            search.cursor_position = len(search.value)
+
+        def action_clear_search(self):
+            search = self.query_one("#search", Input)
+            if search.display:
+                self.search_open = False
+                search.display = False
+                self.active_tree().focus()
+                return
+            key = self.active_key()
+            if self.searches[key]:
+                self.searches[key] = ""
+                self.reload()
 
         def action_view(self):
             record = self.require_selected()
