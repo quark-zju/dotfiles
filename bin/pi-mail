@@ -9,6 +9,7 @@
   pi-mail stats                                       show index statistics
   pi-mail config edit                                 edit the Python configuration
   pi-mail tui                                         browse related threads
+  pi-mail prev-cover PATCH...                         In-Reply-To for a reroll
 
 SEL is a commit hash shown by `ls`/`tree`, a Message-ID, a lore URL, or
 otherwise a regex matched against subjects within --days. `show` and `tree`
@@ -17,6 +18,10 @@ accept multiple selectors and handle every match; `reply` needs exactly one.
 `git config --global --add pimail.self ADDRESS`.
 Without `-o`, it keeps a Git-tracked draft under the XDG state directory and
 opens $EDITOR (or nvim). With `-o`, it only writes the generated template.
+`prev-cover` reads `git format-patch` output of a new version and prints the
+Message-ID of your latest earlier version's cover letter (or of the patch
+itself for series without one), matched by patch titles, for use with
+`git send-email --in-reply-to`.
 The inbox defaults to ~/public-inbox/git/git (override with $PI_INBOX).
 Update every inbox recorded in the index with `pi-mail fetch`.
 """
@@ -763,6 +768,65 @@ class MailState:
 
     def close(self):
         self.db.close()
+
+
+def parse_patch_subject(subject):
+    """Return (version, is_cover, title) for "[PATCH vN m/n] title", else None."""
+    match = re.match(r"\s*\[([^\]]*PATCH[^\]]*)\]\s*(.*)", subject or "", re.S)
+    if not match:
+        return None
+    tag, title = match.groups()
+    version = re.search(r"\bv(\d+)\b", tag)
+    number = re.search(r"\b(\d+)/\d+\b", tag)
+    return (int(version.group(1)) if version else 1,
+            bool(number) and int(number.group(1)) == 0,
+            " ".join(title.split()))
+
+
+def cmd_prev_cover(args):
+    current, titles = 0, set()
+    for path in args.patches:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            text = f.read()
+        if text.startswith("From "):
+            text = text.partition("\n")[2]
+        parsed = parse_patch_subject(email.message_from_string(text, policy=POLICY)["Subject"])
+        if parsed is None:
+            sys.exit(f"{path}: not a format-patch subject")
+        current = max(current, parsed[0])
+        titles.add(parsed[2])
+
+    index = args.index
+    name, address = sendemail_identity()
+    rows = index.db.execute(
+        f"SELECT mid.value, parent.value, m.subject, m.commit_time FROM messages m "
+        f"JOIN strings a ON a.id = m.author_sid "
+        f"JOIN strings mid ON mid.id = m.message_sid "
+        f"LEFT JOIN strings parent ON parent.id = m.parent_sid "
+        f"WHERE m.epoch_id IN ({index.scope}) AND a.value = ? COLLATE NOCASE "
+        f"AND instr(lower(mid.value), lower(?)) > 0",
+        (*index.epoch_ids, name, address))
+    best = None
+    for message_id, parent, subject, timestamp in rows:
+        parsed = parse_patch_subject(subject)
+        if parsed and parsed[0] < current and parsed[2] in titles:
+            if best is None or (parsed[0], timestamp) > (best[0][0], best[3]):
+                best = (parsed, message_id, parent, timestamp, subject)
+    if best is None:
+        sys.exit(f"no earlier version of this series (v{current}) found; try fetch")
+
+    (version, is_cover, _), message_id, parent, timestamp, subject = best
+    target = message_id
+    if not is_cover and parent:
+        row = index.db.execute(
+            f"SELECT m.subject FROM messages m JOIN strings mid ON mid.id = m.message_sid "
+            f"WHERE m.epoch_id IN ({index.scope}) AND mid.value = ?",
+            (*index.epoch_ids, parent)).fetchone()
+        parsed = parse_patch_subject(row[0]) if row else None
+        if parsed and parsed[1]:
+            target, subject = parent, row[0]
+    print(f"v{version} {local_time(timestamp)} {subject}", file=sys.stderr)
+    print(f"<{target}>")
 
 
 def sendemail_identity():
@@ -1566,6 +1630,9 @@ def main():
     fetch.add_argument("--days", type=int, default=30)
     sub.add_parser("stats")
     sub.add_parser("tui")
+    prev = sub.add_parser("prev-cover")
+    prev.add_argument("patches", metavar="PATCH", nargs="+")
+    prev.add_argument("--days", type=int, default=30)
     config = sub.add_parser("config")
     config_sub = config.add_subparsers(dest="config_cmd", required=True)
     config_sub.add_parser("edit")
@@ -1593,7 +1660,8 @@ def main():
             {"fetch": cmd_fetch, "stats": cmd_stats, "tui": cmd_tui}[args.cmd](args)
         else:
             args.index.sync(args.days)
-            {"ls": cmd_ls, "show": cmd_show, "reply": cmd_reply, "tree": cmd_tree}[args.cmd](args)
+            {"ls": cmd_ls, "show": cmd_show, "reply": cmd_reply, "tree": cmd_tree,
+             "prev-cover": cmd_prev_cover}[args.cmd](args)
     finally:
         args.index.db.close()
 
