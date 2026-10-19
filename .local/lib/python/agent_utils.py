@@ -234,9 +234,7 @@ SECRET_PATTERNS = [
 
 def normalize_model_name(model: str) -> str:
     model = (model or "").strip()
-    if model.endswith("-internal"):
-        model = model[: -len("-internal")]
-    return model
+    return re.sub(r"(?:-internal|\[[^\[\]]*\])+$", "", model).rstrip()
 
 
 def get_agent_env() -> Dict[str, str]:
