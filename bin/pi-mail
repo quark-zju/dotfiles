@@ -239,7 +239,9 @@ class Index:
         args.append(rev)
         out = git(gitdir, *args)
         entries = []
-        for line in out.splitlines():
+        for line in out.split("\n"):
+            if not line:
+                continue
             commit, author, timestamp, subject = line.split("\0", 3)
             entries.append((commit, author, int(timestamp), subject))
         return entries
