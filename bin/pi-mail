@@ -204,7 +204,7 @@ class Index:
         CREATE INDEX messages_thread_sid ON messages(thread_sid);
         CREATE INDEX messages_author_sid ON messages(author_sid);
         CREATE INDEX messages_commit_time ON messages(commit_time DESC);
-        PRAGMA user_version = 1;
+        PRAGMA user_version = 2;
     """
 
     def __init__(self):
@@ -215,7 +215,7 @@ class Index:
         version = self.db.execute("PRAGMA user_version").fetchone()[0]
         if version == 0:
             self.db.executescript(self.SCHEMA)
-        elif version != 1:
+        elif version != 2:
             sys.exit(f"unsupported index version {version}; remove {CACHE} to rebuild")
         self.gitdirs = [os.path.realpath(path) for path in epochs()]
         with self.db:
@@ -233,7 +233,8 @@ class Index:
 
     @staticmethod
     def _log_entries(gitdir, rev, since=None):
-        args = ["log", "--first-parent", "--format=%H%x00%an%x00%at%x00%s"]
+        # Archive arrival time is independent of the sender's clock (Date header).
+        args = ["log", "--first-parent", "--format=%H%x00%an%x00%ct%x00%s"]
         if since is not None:
             args.append(f"--since=@{since}")
         args.append(rev)
@@ -248,7 +249,7 @@ class Index:
 
     @staticmethod
     def _log_entry(gitdir, commit):
-        out = git(gitdir, "log", "-1", "--format=%H%x00%an%x00%at%x00%s", commit)
+        out = git(gitdir, "log", "-1", "--format=%H%x00%an%x00%ct%x00%s", commit)
         oid, author, timestamp, subject = out.rstrip("\n").split("\0", 3)
         return oid, author, int(timestamp), subject
 
@@ -643,7 +644,7 @@ class Index:
 
 
 def describe(gitdir, commit):
-    author, ts, subject = git(gitdir, "log", "-1", "--format=%an%x00%at%x00%s", commit).rstrip("\n").split("\0", 2)
+    author, ts, subject = git(gitdir, "log", "-1", "--format=%an%x00%ct%x00%s", commit).rstrip("\n").split("\0", 2)
     return f"{commit[:10]} {local_time(int(ts))} {author[:20]:20} {subject}"
 
 
