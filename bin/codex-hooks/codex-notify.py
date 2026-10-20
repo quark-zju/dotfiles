@@ -82,43 +82,16 @@ AGENT_PROCESS_NAMES = {
     # The muse launcher spawns the sandboxed agent as muse.real.
     "Muse": ("muse", "muse.real"),
 }
-_PROCESS_AGENT_NAMES = {
-    process: agent
-    for agent, processes in AGENT_PROCESS_NAMES.items()
-    for process in processes
-}
 
 
-def has_codex_fields(payload: dict[str, Any]) -> bool:
-    # Codex hooks do not inherit CODEX_THREAD_ID, so use Codex-specific fields.
-    # Note Muse sends the same model/turn_id shape, so this alone cannot tell
-    # Muse and Codex apart.
-    return isinstance(payload.get("model"), str) and isinstance(
-        payload.get("turn_id"), str
-    )
-
-
-def agent_process(payload: dict[str, Any]) -> tuple[str, int, int] | None:
-    # The nearest ancestor agent process owns this hook. Payload fields cannot
-    # replace this: Muse and Codex send the same model/turn_id shape.
+def agent_process(agent: str) -> tuple[int, int] | None:
+    """Return the nearest ancestor agent process's PID and start time."""
     for pid in ancestors(os.getppid()):
-        agent = _PROCESS_AGENT_NAMES.get(process_name(pid))
-        if agent is None:
-            continue
-        stat = process_stat(pid)
-        if stat is not None:
-            return agent, pid, stat[1]
+        if process_name(pid) in AGENT_PROCESS_NAMES[agent]:
+            stat = process_stat(pid)
+            if stat is not None:
+                return pid, stat[1]
     return None
-
-
-def agent_name(payload: dict[str, Any]) -> str:
-    process = agent_process(payload)
-    if process is not None:
-        return process[0]
-    # No agent ancestor (detached hook): fall back to payload fields.
-    if has_codex_fields(payload):
-        return "Codex"
-    return "Claude"
 
 
 def runtime_dir() -> str | None:
@@ -145,7 +118,7 @@ def state_path(session_id: str) -> Path | None:
     return directory / name
 
 
-def save_prompt(payload: dict[str, Any]) -> dict[str, object] | None:
+def save_prompt(payload: dict[str, Any], agent: str) -> dict[str, object] | None:
     session_id = payload.get("session_id")
     prompt = payload.get("prompt")
     if not isinstance(session_id, str):
@@ -157,14 +130,14 @@ def save_prompt(payload: dict[str, Any]) -> dict[str, object] | None:
     if prompt.startswith((TITLE_PROMPT_PREFIX, RECAP_PROMPT_PREFIX)):
         log_event("prompt_skipped", session_id=session_id, reason="internal_prompt")
         return
-    process = agent_process(payload)
-    if not process:
+    process = agent_process(agent)
+    if process is None:
         log_event(
             "prompt_skipped",
             session_id=session_id,
             reason="agent_process_not_found",
             parent_pid=os.getppid(),
-            has_codex_fields=has_codex_fields(payload),
+            agent=agent,
             ancestors=[
                 {"pid": pid, "name": process_name(pid)}
                 for pid in ancestors(os.getppid())
@@ -175,10 +148,10 @@ def save_prompt(payload: dict[str, Any]) -> dict[str, object] | None:
     if path is None:
         log_event("prompt_skipped", session_id=session_id, reason="no_state_path")
         return
-    agent_name, pid, start_time = process
+    pid, start_time = process
     try:
         state = {
-            "agent_name": agent_name,
+            "agent_name": agent,
             "prompt": prompt,
             "pid": pid,
             "process_start_time": start_time,
@@ -195,7 +168,7 @@ def save_prompt(payload: dict[str, Any]) -> dict[str, object] | None:
     log_event(
         "prompt_saved",
         session_id=session_id,
-        agent_name=agent_name,
+        agent_name=agent,
         pid=pid,
         path=str(path),
     )
@@ -739,7 +712,7 @@ def notify(payload: dict[str, Any]) -> None:
         )
         return
     agent_name = saved.get("agent_name", "Codex")
-    if agent_name not in ("Codex", "Claude", "Muse"):
+    if agent_name not in AGENT_PROCESS_NAMES:
         log_event("notification_skipped", session_id=session_id, reason="invalid_agent")
         return
     prompt = " ".join(saved["prompt"].split())
@@ -810,6 +783,10 @@ def main() -> None:
 
     parser = argparse.ArgumentParser()
     parser.add_argument(
+        "--agent",
+        help="owning agent; one of Codex, Claude, Muse",
+    )
+    parser.add_argument(
         "--cleanup",
         action="store_true",
         help="remove stale session workspace highlights",
@@ -817,6 +794,11 @@ def main() -> None:
     args = parser.parse_args()
     if args.cleanup:
         cleanup_workspace_highlights()
+        return
+    # Never fail the hook on a bad flag: exit 2 would block the user's prompt.
+    if args.agent not in AGENT_PROCESS_NAMES:
+        log_event("hook_skipped", reason="invalid_agent", agent=args.agent)
+        print("{}")
         return
 
     try:
@@ -833,7 +815,7 @@ def main() -> None:
             parent_pid=os.getppid(),
             has_swaysock=bool(os.environ.get("SWAYSOCK")),
             has_ssh_client_pid="SSH_CLIENT_PID" in os.environ,
-            has_codex_fields=has_codex_fields(payload),
+            agent=args.agent,
         )
         sway_socket = resolve_swaysock()
         if sway_socket is None and "SSH_CLIENT_PID" not in os.environ:
@@ -845,7 +827,7 @@ def main() -> None:
             )
             return
         if event == "UserPromptSubmit":
-            saved = save_prompt(payload)
+            saved = save_prompt(payload, args.agent)
             if saved is not None:
                 update_running_workspace(payload, saved)
         elif event in ("Stop", "Interrupt"):

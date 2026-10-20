@@ -1,6 +1,9 @@
 import importlib.machinery
 import importlib.util
+import io
 import os
+import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -13,32 +16,75 @@ codex_notify = importlib.util.module_from_spec(SPEC)
 LOADER.exec_module(codex_notify)
 
 
-class AgentDetection(unittest.TestCase):
-    def test_muse_processes(self):
-        self.assertEqual(codex_notify._PROCESS_AGENT_NAMES["muse"], "Muse")
-        self.assertEqual(codex_notify._PROCESS_AGENT_NAMES["muse.real"], "Muse")
-
-    def test_codex_fields(self):
-        self.assertTrue(codex_notify.has_codex_fields({"model": "m", "turn_id": "t"}))
-        self.assertFalse(codex_notify.has_codex_fields({"session_id": "s"}))
-
-    def test_agent_process_prefers_nearest(self):
+class AgentProcess(unittest.TestCase):
+    def test_finds_named_agent(self):
         names = {30: "muse.real", 20: "codex"}
         with mock.patch.object(
-            codex_notify, "ancestors", return_value=iter([30, 20, 10])
+            codex_notify, "ancestors", side_effect=lambda pid: iter([30, 20, 10])
         ):
             with mock.patch.object(codex_notify, "process_name", side_effect=names.get):
                 with mock.patch.object(
                     codex_notify, "process_stat", return_value=(1, 99)
                 ):
-                    self.assertEqual(codex_notify.agent_process({}), ("Muse", 30, 99))
+                    self.assertEqual(codex_notify.agent_process("Muse"), (30, 99))
 
-    def test_agent_name_without_agent_ancestor(self):
-        with mock.patch.object(codex_notify, "agent_process", return_value=None):
-            self.assertEqual(
-                codex_notify.agent_name({"model": "m", "turn_id": "t"}), "Codex"
-            )
-            self.assertEqual(codex_notify.agent_name({"session_id": "s"}), "Claude")
+    def test_skips_other_agents(self):
+        names = {30: "muse.real", 20: "codex"}
+        with mock.patch.object(
+            codex_notify, "ancestors", side_effect=lambda pid: iter([30, 20, 10])
+        ):
+            with mock.patch.object(codex_notify, "process_name", side_effect=names.get):
+                with mock.patch.object(
+                    codex_notify, "process_stat", return_value=(1, 99)
+                ):
+                    self.assertEqual(codex_notify.agent_process("Codex"), (20, 99))
+
+    def test_no_match(self):
+        with mock.patch.object(
+            codex_notify, "ancestors", side_effect=lambda pid: iter([30, 20])
+        ):
+            with mock.patch.object(codex_notify, "process_name", return_value="bash"):
+                self.assertIsNone(codex_notify.agent_process("Muse"))
+
+
+class SavePrompt(unittest.TestCase):
+    def test_stores_explicit_agent(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch.object(
+                codex_notify, "agent_process", return_value=(123, 456)
+            ):
+                with mock.patch.object(
+                    codex_notify, "state_path", return_value=Path(tmp) / "s.json"
+                ):
+                    state = codex_notify.save_prompt(
+                        {"session_id": "s", "prompt": "hi"}, "Muse"
+                    )
+        self.assertEqual(state["agent_name"], "Muse")
+        self.assertEqual(state["pid"], 123)
+        self.assertEqual(state["process_start_time"], 456)
+
+
+class MainAgentArg(unittest.TestCase):
+    def run_main(self, argv):
+        with mock.patch.object(sys, "argv", argv):
+            with mock.patch.object(codex_notify, "log_event") as log_mock:
+                with mock.patch("sys.stdout", new_callable=io.StringIO) as out:
+                    codex_notify.main()
+        return out.getvalue(), log_mock
+
+    def test_missing_agent_skips(self):
+        out, log_mock = self.run_main(["codex-notify.py"])
+        self.assertEqual(out, "{}\n")
+        log_mock.assert_called_once_with(
+            "hook_skipped", reason="invalid_agent", agent=None
+        )
+
+    def test_invalid_agent_skips(self):
+        out, log_mock = self.run_main(["codex-notify.py", "--agent", "Foo"])
+        self.assertEqual(out, "{}\n")
+        log_mock.assert_called_once_with(
+            "hook_skipped", reason="invalid_agent", agent="Foo"
+        )
 
 
 class RuntimeDir(unittest.TestCase):
