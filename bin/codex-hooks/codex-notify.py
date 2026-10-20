@@ -76,30 +76,67 @@ def ancestors(pid: int):
         pid = stat[0]
 
 
-def agent_name(payload: dict[str, Any]) -> str:
+AGENT_PROCESS_NAMES = {
+    "Codex": ("codex",),
+    "Claude": ("claude",),
+    # The muse launcher spawns the sandboxed agent as muse.real.
+    "Muse": ("muse", "muse.real"),
+}
+_PROCESS_AGENT_NAMES = {
+    process: agent
+    for agent, processes in AGENT_PROCESS_NAMES.items()
+    for process in processes
+}
+
+
+def has_codex_fields(payload: dict[str, Any]) -> bool:
     # Codex hooks do not inherit CODEX_THREAD_ID, so use Codex-specific fields.
-    if isinstance(payload.get("model"), str) and isinstance(
+    # Note Muse sends the same model/turn_id shape, so this alone cannot tell
+    # Muse and Codex apart.
+    return isinstance(payload.get("model"), str) and isinstance(
         payload.get("turn_id"), str
-    ):
+    )
+
+
+def agent_process(payload: dict[str, Any]) -> tuple[str, int, int] | None:
+    # The nearest ancestor agent process owns this hook. Payload fields cannot
+    # replace this: Muse and Codex send the same model/turn_id shape.
+    for pid in ancestors(os.getppid()):
+        agent = _PROCESS_AGENT_NAMES.get(process_name(pid))
+        if agent is None:
+            continue
+        stat = process_stat(pid)
+        if stat is not None:
+            return agent, pid, stat[1]
+    return None
+
+
+def agent_name(payload: dict[str, Any]) -> str:
+    process = agent_process(payload)
+    if process is not None:
+        return process[0]
+    # No agent ancestor (detached hook): fall back to payload fields.
+    if has_codex_fields(payload):
         return "Codex"
     return "Claude"
 
 
-def agent_process(payload: dict[str, Any]) -> tuple[str, int, int] | None:
-    name = agent_name(payload)
-    for pid in ancestors(os.getppid()):
-        if process_name(pid) == name.lower():
-            stat = process_stat(pid)
-            if stat is not None:
-                return name, pid, stat[1]
+def runtime_dir() -> str | None:
+    path = os.environ.get("XDG_RUNTIME_DIR")
+    if path and os.path.isabs(path):
+        return path
+    # Muse clears hook environments; fall back to the systemd runtime dir.
+    path = f"/run/user/{os.getuid()}"
+    if os.path.isdir(path):
+        return path
     return None
 
 
 def state_path(session_id: str) -> Path | None:
-    runtime_dir = os.environ.get("XDG_RUNTIME_DIR")
-    if not runtime_dir or not os.path.isabs(runtime_dir):
+    directory_base = runtime_dir()
+    if directory_base is None:
         return None
-    directory = Path(runtime_dir, "codex-notify")
+    directory = Path(directory_base, "codex-notify")
     try:
         directory.mkdir(mode=0o700, exist_ok=True)
     except OSError:
@@ -127,7 +164,7 @@ def save_prompt(payload: dict[str, Any]) -> dict[str, object] | None:
             session_id=session_id,
             reason="agent_process_not_found",
             parent_pid=os.getppid(),
-            has_codex_fields=agent_name(payload) == "Codex",
+            has_codex_fields=has_codex_fields(payload),
             ancestors=[
                 {"pid": pid, "name": process_name(pid)}
                 for pid in ancestors(os.getppid())
@@ -248,28 +285,37 @@ def sway_state(
         sway_state(child, terminals, focused, workspace_id, workspace_name)
 
 
-def run_swaymsg(*args: str, **kwargs: object):
+def resolve_swaysock() -> str | None:
+    """Return SWAYSOCK, inferring /run/user/<uid>/sway-ipc.*.sock if unset."""
     import glob
+    import os
+
+    sway_socket = os.environ.get("SWAYSOCK")
+    if sway_socket and os.path.exists(sway_socket):
+        return sway_socket
+    directory = runtime_dir()
+    candidates = (
+        glob.glob(os.path.join(directory, "sway-ipc.*.sock")) if directory else []
+    )
+    if not candidates:
+        return None
+    recovered_socket = max(candidates, key=os.path.getmtime)
+    log_event(
+        "sway_socket_recovered",
+        old_socket=sway_socket,
+        new_socket=recovered_socket,
+    )
+    return recovered_socket
+
+
+def run_swaymsg(*args: str, **kwargs: object):
     import os
     import subprocess
 
     environment = os.environ.copy()
-    sway_socket = environment.get("SWAYSOCK")
-    if not sway_socket or not os.path.exists(sway_socket):
-        runtime_dir = environment.get("XDG_RUNTIME_DIR")
-        candidates = (
-            glob.glob(os.path.join(runtime_dir, "sway-ipc.*.sock"))
-            if runtime_dir
-            else []
-        )
-        if candidates:
-            recovered_socket = max(candidates, key=os.path.getmtime)
-            environment["SWAYSOCK"] = recovered_socket
-            log_event(
-                "sway_socket_recovered",
-                old_socket=sway_socket,
-                new_socket=recovered_socket,
-            )
+    sway_socket = resolve_swaysock()
+    if sway_socket is not None:
+        environment["SWAYSOCK"] = sway_socket
     return subprocess.run(["swaymsg", *args], env=environment, **kwargs)
 
 
@@ -386,7 +432,8 @@ def write_workspace_highlights(
                         or (
                             "remote" not in entry
                             and isinstance(entry_pid, int)
-                            and process_name(entry_pid) not in ("codex", "claude")
+                            and process_name(entry_pid)
+                            not in ("codex", "claude", "muse", "muse.real")
                         )
                     )
                 ) or (
@@ -430,7 +477,7 @@ def write_workspace_highlights(
                     for name in workspaces
                 )
                 css = (
-                    "/* Generated by codex-notify.py: running Codex workspaces. */\n"
+                    "/* Generated by codex-notify.py: running agent workspaces. */\n"
                     f"{selectors} {{\n"
                     "    border-bottom: 2px solid #4caf50;\n"
                     "}\n"
@@ -457,7 +504,7 @@ def write_workspace_highlights(
 
 
 def clear_session_workspace_highlights(session_id: str) -> None:
-    """Remove all running turns belonging to one Codex session."""
+    """Remove all running turns belonging to one agent session."""
     write_workspace_highlights(session_id, None, clear_session=True)
 
 
@@ -635,6 +682,13 @@ def show_notify(
         os.dup2(devnull, 2)
         if devnull > 2:
             os.close(devnull)
+        environment = os.environ.copy()
+        # Muse clears hook environments; the session bus lives at the standard
+        # systemd path.
+        if not environment.get("DBUS_SESSION_BUS_ADDRESS"):
+            environment["DBUS_SESSION_BUS_ADDRESS"] = (
+                f"unix:path=/run/user/{os.getuid()}/bus"
+            )
         completed = subprocess.run(
             [
                 "notify-send",
@@ -652,6 +706,7 @@ def show_notify(
             stderr=subprocess.DEVNULL,
             text=True,
             timeout=NOTIFICATION_EXPIRE_MS / 1000 + 5,
+            env=environment,
         )
     except (OSError, subprocess.TimeoutExpired) as error:
         log_event("notification_failed", container=container_id, error=repr(error))
@@ -684,7 +739,7 @@ def notify(payload: dict[str, Any]) -> None:
         )
         return
     agent_name = saved.get("agent_name", "Codex")
-    if agent_name not in ("Codex", "Claude"):
+    if agent_name not in ("Codex", "Claude", "Muse"):
         log_event("notification_skipped", session_id=session_id, reason="invalid_agent")
         return
     prompt = " ".join(saved["prompt"].split())
@@ -778,9 +833,10 @@ def main() -> None:
             parent_pid=os.getppid(),
             has_swaysock=bool(os.environ.get("SWAYSOCK")),
             has_ssh_client_pid="SSH_CLIENT_PID" in os.environ,
-            has_codex_fields=agent_name(payload) == "Codex",
+            has_codex_fields=has_codex_fields(payload),
         )
-        if not os.environ.get("SWAYSOCK") and "SSH_CLIENT_PID" not in os.environ:
+        sway_socket = resolve_swaysock()
+        if sway_socket is None and "SSH_CLIENT_PID" not in os.environ:
             log_event(
                 "hook_skipped",
                 hook_event=event,
