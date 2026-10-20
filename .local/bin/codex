@@ -158,7 +158,7 @@ def main() -> int:
     try:
         executable = find_real_codex()
         args = sys.argv[1:]
-        if args and args[0] != "resume":
+        if args and args[0] != "resume" or os.getenv("CODEX_SKIP_AUTO_APP_SERVER"):
             command = sandboxed_codex_command(executable, *args)
             os.execv(command[0], command)
         return run_remote_tui(executable, args)
