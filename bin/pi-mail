@@ -1016,7 +1016,17 @@ def cmd_draft_edit(args):
     path = draft_path(args.commit)
     if not os.path.isfile(path):
         sys.exit(f"draft does not exist: {path}")
+    discard_unchanged = getattr(args, "discard_unchanged", False)
+    if discard_unchanged:
+        with open(path) as source:
+            original_body = source.read().partition("\n\n")[2]
     subprocess.run([*editor_command(), path], check=False)
+    if discard_unchanged:
+        with open(path) as source:
+            body = source.read().partition("\n\n")[2]
+        if body == original_body:
+            os.unlink(path)
+            return
     record_draft_change(args.commit, f"Edit reply to {args.commit[:12]}")
 
 
@@ -1594,13 +1604,15 @@ def cmd_tui(args):
                 self.notify("Select a mail to reply.", severity="warning")
                 return
             try:
+                new_draft = not os.path.exists(draft_path(record["commit"]))
                 create_draft(args.index, record["commit"])
             except (OSError, ValueError, subprocess.SubprocessError) as error:
                 self.notify(str(error), severity="error")
                 return
             if not record["own"]:
                 state.set(record["commit"], "read")
-            self.launch_terminal("--internal-draft-edit", record["commit"], "edit reply")
+            action = "--internal-draft-reply" if new_draft else "--internal-draft-edit"
+            self.launch_terminal(action, record["commit"], "edit reply")
             self.reload()
 
         def action_toggle_read(self):
@@ -1732,11 +1744,13 @@ def print_tree(nodes, targets):
 def main():
     internal = {
         "--internal-draft-edit": cmd_draft_edit,
+        "--internal-draft-reply": cmd_draft_edit,
         "--internal-draft-send": cmd_draft_send,
         "--internal-view-mail": cmd_view_mail,
     }
     if len(sys.argv) == 3 and sys.argv[1] in internal:
         args = argparse.Namespace(commit=sys.argv[2])
+        args.discard_unchanged = sys.argv[1] == "--internal-draft-reply"
         if sys.argv[1] == "--internal-view-mail":
             args.index = Index()
             try:
