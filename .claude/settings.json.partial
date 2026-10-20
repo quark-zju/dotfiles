@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ~/bin/codex-hooks/codex-notify.py --agent Claude",
+            "command": "python3 ~/bin/codex-hooks/codex-notify.py",
             "timeout": 3
           }
         ]
@@ -16,7 +16,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ~/bin/codex-hooks/codex-notify.py --agent Claude",
+            "command": "python3 ~/bin/codex-hooks/codex-notify.py",
             "async": true,
             "timeout": 30
           }
@@ -28,7 +28,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ~/bin/codex-hooks/codex-notify.py --agent Claude",
+            "command": "python3 ~/bin/codex-hooks/codex-notify.py",
             "timeout": 3
           }
         ]

@@ -84,10 +84,37 @@ AGENT_PROCESS_NAMES = {
 }
 
 
+def normalize_harness(harness: str) -> str:
+    """Canonicalize known harness names; pass unknown names through."""
+    lowered = harness.lower()
+    for name in AGENT_PROCESS_NAMES:
+        if name.lower() == lowered:
+            return name
+    return harness
+
+
+def detect_harness() -> str | None:
+    """Guess the harness from the nearest ancestor agent process."""
+    for pid in ancestors(os.getppid()):
+        name = process_name(pid)
+        for harness, processes in AGENT_PROCESS_NAMES.items():
+            if name in processes:
+                return harness
+    return None
+
+
+def harness_processes(harness: str) -> tuple[str, ...]:
+    """Process names owning a harness; unknown names match themselves."""
+    known = AGENT_PROCESS_NAMES.get(harness)
+    if known is not None:
+        return known
+    return tuple(dict.fromkeys((harness, harness.lower())))
+
+
 def agent_process(agent: str) -> tuple[int, int] | None:
     """Return the nearest ancestor agent process's PID and start time."""
     for pid in ancestors(os.getppid()):
-        if process_name(pid) in AGENT_PROCESS_NAMES[agent]:
+        if process_name(pid) in harness_processes(agent):
             stat = process_stat(pid)
             if stat is not None:
                 return pid, stat[1]
@@ -712,7 +739,7 @@ def notify(payload: dict[str, Any]) -> None:
         )
         return
     agent_name = saved.get("agent_name", "Codex")
-    if agent_name not in AGENT_PROCESS_NAMES:
+    if not isinstance(agent_name, str):
         log_event("notification_skipped", session_id=session_id, reason="invalid_agent")
         return
     prompt = " ".join(saved["prompt"].split())
@@ -783,9 +810,10 @@ def main() -> None:
 
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--agent",
-        help="owning agent; one of Codex, Claude, Muse",
+        "--harness",
+        help="harness name: codex, claude, muse, ... (default: auto-detect)",
     )
+    parser.add_argument("--agent", dest="harness", help=argparse.SUPPRESS)
     parser.add_argument(
         "--cleanup",
         action="store_true",
@@ -796,10 +824,14 @@ def main() -> None:
         cleanup_workspace_highlights()
         return
     # Never fail the hook on a bad flag: exit 2 would block the user's prompt.
-    if args.agent not in AGENT_PROCESS_NAMES:
-        log_event("hook_skipped", reason="invalid_agent", agent=args.agent)
-        print("{}")
-        return
+    if args.harness is None:
+        agent = detect_harness()
+        if agent is None:
+            log_event("hook_skipped", reason="unknown_harness")
+            print("{}")
+            return
+    else:
+        agent = normalize_harness(args.harness)
 
     try:
         payload = json.load(sys.stdin)
@@ -815,7 +847,7 @@ def main() -> None:
             parent_pid=os.getppid(),
             has_swaysock=bool(os.environ.get("SWAYSOCK")),
             has_ssh_client_pid="SSH_CLIENT_PID" in os.environ,
-            agent=args.agent,
+            agent=agent,
         )
         sway_socket = resolve_swaysock()
         if sway_socket is None and "SSH_CLIENT_PID" not in os.environ:
@@ -827,7 +859,7 @@ def main() -> None:
             )
             return
         if event == "UserPromptSubmit":
-            saved = save_prompt(payload, args.agent)
+            saved = save_prompt(payload, agent)
             if saved is not None:
                 update_running_workspace(payload, saved)
         elif event in ("Stop", "Interrupt"):
