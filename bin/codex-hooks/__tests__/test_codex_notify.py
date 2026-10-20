@@ -68,18 +68,6 @@ class AgentProcess(unittest.TestCase):
                 ):
                     self.assertEqual(codex_notify.agent_process("Codex"), (20, 99))
 
-    def test_unknown_harness_matches_same_named_process(self):
-        with mock.patch.object(
-            codex_notify, "ancestors", side_effect=lambda pid: iter([30, 20])
-        ):
-            with mock.patch.object(
-                codex_notify, "process_name", side_effect={30: "mybot"}.get
-            ):
-                with mock.patch.object(
-                    codex_notify, "process_stat", return_value=(1, 99)
-                ):
-                    self.assertEqual(codex_notify.agent_process("MyBot"), (30, 99))
-
     def test_no_match(self):
         with mock.patch.object(
             codex_notify, "ancestors", side_effect=lambda pid: iter([30, 20])
@@ -136,7 +124,9 @@ class MainHarnessArg(unittest.TestCase):
         with mock.patch.object(codex_notify, "detect_harness", return_value=None):
             out, log_mock = self.run_main(["codex-notify.py"])
         self.assertEqual(out, "{}\n")
-        log_mock.assert_called_once_with("hook_skipped", reason="unknown_harness")
+        log_mock.assert_called_once_with(
+            "hook_skipped", reason="unknown_harness", agent=None
+        )
 
     def test_harness_reaches_save(self):
         payload = {
@@ -154,19 +144,12 @@ class MainHarnessArg(unittest.TestCase):
         self.assertEqual(out, "{}\n")
         save_mock.assert_called_once_with(payload, "Muse")
 
-    def test_agent_alias_still_works(self):
-        payload = {
-            "hook_event_name": "UserPromptSubmit",
-            "session_id": "s",
-            "prompt": "hi",
-        }
-        with mock.patch.object(codex_notify, "resolve_swaysock", return_value="/sock"):
-            with mock.patch.object(
-                codex_notify, "save_prompt", return_value=None
-            ) as save_mock:
-                out, _ = self.run_main(["codex-notify.py", "--agent", "Muse"], payload)
+    def test_unknown_harness_skips(self):
+        out, log_mock = self.run_main(["codex-notify.py", "--harness", "mybot"])
         self.assertEqual(out, "{}\n")
-        save_mock.assert_called_once_with(payload, "Muse")
+        log_mock.assert_called_once_with(
+            "hook_skipped", reason="unknown_harness", agent="mybot"
+        )
 
 
 class RuntimeDir(unittest.TestCase):

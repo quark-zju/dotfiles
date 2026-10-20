@@ -103,18 +103,10 @@ def detect_harness() -> str | None:
     return None
 
 
-def harness_processes(harness: str) -> tuple[str, ...]:
-    """Process names owning a harness; unknown names match themselves."""
-    known = AGENT_PROCESS_NAMES.get(harness)
-    if known is not None:
-        return known
-    return tuple(dict.fromkeys((harness, harness.lower())))
-
-
 def agent_process(agent: str) -> tuple[int, int] | None:
     """Return the nearest ancestor agent process's PID and start time."""
     for pid in ancestors(os.getppid()):
-        if process_name(pid) in harness_processes(agent):
+        if process_name(pid) in AGENT_PROCESS_NAMES[agent]:
             stat = process_stat(pid)
             if stat is not None:
                 return pid, stat[1]
@@ -811,9 +803,8 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--harness",
-        help="harness name: codex, claude, muse, ... (default: auto-detect)",
+        help="harness name (default: auto-detect); unknown names are skipped",
     )
-    parser.add_argument("--agent", dest="harness", help=argparse.SUPPRESS)
     parser.add_argument(
         "--cleanup",
         action="store_true",
@@ -826,12 +817,14 @@ def main() -> None:
     # Never fail the hook on a bad flag: exit 2 would block the user's prompt.
     if args.harness is None:
         agent = detect_harness()
-        if agent is None:
-            log_event("hook_skipped", reason="unknown_harness")
-            print("{}")
-            return
     else:
         agent = normalize_harness(args.harness)
+        if agent not in AGENT_PROCESS_NAMES:
+            agent = None
+    if agent is None:
+        log_event("hook_skipped", reason="unknown_harness", agent=args.harness)
+        print("{}")
+        return
 
     try:
         payload = json.load(sys.stdin)
