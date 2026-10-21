@@ -7,8 +7,9 @@ session is disconnected, the script intentionally does nothing.
 
 Connection state is reconstructed from the current etserver log. Client IDs
 are mapped to etterminal PIDs through their open log files, and the result is
-checked against the number of established TCP connections. Ambiguous or
-changing observations are never cleaned.
+checked against the number of established TCP connections. Extra connections
+without logged online sessions are allowed: clients such as ssh_sync recover
+after their process trees are cleaned. Changing observations are never cleaned.
 
 Preview with ``./et-cleanup --dry-run`` and run with ``./et-cleanup``. The
 server port and log directory are read from /etc/et.cfg by default; --port,
@@ -268,7 +269,11 @@ def observe(log: Path, port: int) -> tuple[dict[str, int], frozenset[str]]:
     log_online = online_ids_from_log(log)
     online = frozenset(log_online & sessions.keys())
     established = established_connection_count(port)
-    if len(online) != established:
+    # Some clients, notably ssh_sync clients, do not emit the ET keepalive
+    # messages used above. Treat them as offline; ssh_sync recovers after
+    # cleanup. The reverse mismatch is unsafe because it means the log claims
+    # more live sessions than the TCP state can support.
+    if len(online) > established:
         raise UnsafeState(
             "cannot safely map TCP connections to sessions: "
             f"log says {len(online)} online, ss says {established} established"
