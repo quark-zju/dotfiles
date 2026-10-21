@@ -22,8 +22,6 @@ GPT6_CONTEXT = """
 """
 
 OTHER_CONTEXT = """
-## Do not use sub-agents
-Do not start sub-agents.
 """
 
 
