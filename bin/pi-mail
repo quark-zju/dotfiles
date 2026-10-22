@@ -546,10 +546,12 @@ class Index:
         rows = self.db.execute(
             f"WITH related(thread_sid) AS ("
             f"  SELECT DISTINCT m.thread_sid FROM messages m "
-            f"  JOIN strings a ON a.id = m.author_sid "
+            f"  INDEXED BY messages_author_sid "
             f"  JOIN strings mid ON mid.id = m.message_sid "
             f"  WHERE m.epoch_id IN ({self.scope}) "
-            f"  AND a.value = ? COLLATE NOCASE "
+            f"  AND m.author_sid IN ("
+            f"    SELECT id FROM strings WHERE value = ? COLLATE NOCASE"
+            f"  ) "
             f"  AND instr(lower(mid.value), lower(?)) > 0"
             f") "
             f"SELECT thread.value, mid.value, parent.value, e.path, "
@@ -576,6 +578,7 @@ class Index:
         rows = self.db.execute(
             f"WITH recent(thread_sid) AS ("
             f"  SELECT DISTINCT m.thread_sid FROM messages m "
+            f"  INDEXED BY messages_commit_time "
             f"  WHERE m.epoch_id IN ({self.scope}) AND m.commit_time >= ?"
             f") "
             f"SELECT thread.value, mid.value, parent.value, e.path, "
@@ -1161,6 +1164,7 @@ def cmd_tui(args):
             self.search_open = False
             self.fetch_process = None
             self.terminals = []
+            self.loaded_rows = None
 
         def check_action(self, action, parameters):
             if self.search_open and action != "clear_search":
@@ -1320,23 +1324,27 @@ def cmd_tui(args):
                 self.add_archive(node, child, children, True,
                                  selected_key, selected_nodes)
 
-        def reload(self):
+        def reload(self, requery=True):
             selected = self.selected() if self.is_mounted else None
             selected_key = self.record_key(selected) if selected else None
-            home_rows = args.index.related_messages(name, address)
-            recent_rows = args.index.recent_messages(args.recent, name, address)
-            archive_rows = args.index.messages_for_commits(
-                state.archived_commits(), name, address)
-            all_rows = home_rows + recent_rows + archive_rows
-            stored = state.get(list({row["commit"] for row in all_rows}))
-            for row in all_rows:
-                values = stored.get(row["commit"], {})
-                row["kind"] = "mail"
-                row["own"] = bool(row["own"])
-                row["read"] = row["own"] or values.get("read", False)
-                row["archived"] = values.get("archived", False)
-                row["has_draft"] = os.path.isfile(draft_path(row["commit"]))
-                row["archive_inherited"] = False
+            if requery or self.loaded_rows is None:
+                home_rows = args.index.related_messages(name, address)
+                recent_rows = args.index.recent_messages(args.recent, name, address)
+                archive_rows = args.index.messages_for_commits(
+                    state.archived_commits(), name, address)
+                all_rows = home_rows + recent_rows + archive_rows
+                stored = state.get(list({row["commit"] for row in all_rows}))
+                for row in all_rows:
+                    values = stored.get(row["commit"], {})
+                    row["kind"] = "mail"
+                    row["own"] = bool(row["own"])
+                    row["read"] = row["own"] or values.get("read", False)
+                    row["archived"] = values.get("archived", False)
+                    row["has_draft"] = os.path.isfile(draft_path(row["commit"]))
+                    row["archive_inherited"] = False
+                self.loaded_rows = home_rows, recent_rows, archive_rows
+            else:
+                home_rows, recent_rows, archive_rows = self.loaded_rows
 
             home = self.query_one("#home-tree", Tree)
             recent = self.query_one("#recent-tree", Tree)
@@ -1525,7 +1533,7 @@ def cmd_tui(args):
             self.search_open = False
             event.input.display = False
             self.active_tree().focus()
-            self.reload()
+            self.reload(requery=False)
 
         def on_button_pressed(self, event: Button.Pressed):
             actions = {
@@ -1582,7 +1590,7 @@ def cmd_tui(args):
             key = self.active_key()
             if self.searches[key]:
                 self.searches[key] = ""
-                self.reload()
+                self.reload(requery=False)
 
         def action_view(self):
             record = self.require_selected()
