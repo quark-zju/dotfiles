@@ -1270,7 +1270,7 @@ def cmd_tui(args):
                 for value, offset in fields:
                     for match in pattern.finditer(value):
                         if match.start() != match.end():
-                            label.stylize("bold black on yellow",
+                            label.stylize("bold #000000 on #ffff00",
                                           offset + match.start(), offset + match.end())
             return label
 
