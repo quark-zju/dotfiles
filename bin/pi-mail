@@ -1161,6 +1161,7 @@ def cmd_tui(args):
             self.records = []
             self.tab_records = {}
             self.searches = {"home": "", "recent": "", "archive": ""}
+            self.highlight_patterns = {}
             self.search_open = False
             self.fetch_process = None
             self.terminals = []
@@ -1223,22 +1224,24 @@ def cmd_tui(args):
             match = re.search(r"lore\.kernel\.org/[^/]+/([^/]+)", sel)
             key = (match.group(1) if match else sel).strip().strip("<>")
             if re.fullmatch(r"[0-9a-f]{7,40}", key):
-                return lambda record: record["commit"].startswith(key)
+                return lambda record: record["commit"].startswith(key), None
             if "@" in key:
-                return lambda record: record["message_id"] == key
+                return lambda record: record["message_id"] == key, None
             pattern = re.compile(key, re.I)
-            return lambda record: pattern.search(record["subject"]) is not None
+            return (lambda record: pattern.search(record["author"]) is not None
+                    or pattern.search(record["subject"]) is not None), pattern
 
         def filter_threads(self, records, key):
             sel = self.searches[key]
             if not sel:
+                self.highlight_patterns[key] = None
                 return records
-            matches = self.sel_matcher(sel)
+            matches, pattern = self.sel_matcher(sel)
+            self.highlight_patterns[key] = pattern
             threads = {record["thread"] for record in records if matches(record)}
             return [record for record in records if record["thread"] in threads]
 
-        @classmethod
-        def label(cls, record, parent, inherited=False):
+        def label(self, record, parent, tree_key, inherited=False):
             flags = []
             if record["archived"]:
                 flags.append("A")
@@ -1251,14 +1254,24 @@ def cmd_tui(args):
             while ancestor.parent is not None:
                 depth += 1
                 ancestor = ancestor.parent
-            gap = " " * max(1, cls.AUTHOR_COLUMN - depth * MailTree.GUIDE_DEPTH
+            gap = " " * max(1, self.AUTHOR_COLUMN - depth * MailTree.GUIDE_DEPTH
                             - len(date))
-            label = Text(f"{date}{gap}"
-                         f"{record['author'][:20]:20} {record['subject']}{suffix}")
+            author = record["author"][:20]
+            prefix = f"{date}{gap}"
+            label = Text(f"{prefix}{author:20} {record['subject']}{suffix}")
             if not record["read"]:
                 label.stylize("bold cyan")
             elif record["own"]:
                 label.stylize("dim")
+            pattern = self.highlight_patterns[tree_key]
+            if pattern is not None:
+                fields = ((author, len(prefix)),
+                          (record["subject"], len(prefix) + 21))
+                for value, offset in fields:
+                    for match in pattern.finditer(value):
+                        if match.start() != match.end():
+                            label.stylize("bold black on yellow",
+                                          offset + match.start(), offset + match.end())
             return label
 
         @staticmethod
@@ -1290,7 +1303,7 @@ def cmd_tui(args):
         def add_home(self, parent, record, children, selected_key, selected_nodes):
             if record["archived"]:
                 return
-            node = parent.add(self.label(record, parent), data=record,
+            node = parent.add(self.label(record, parent, "home"), data=record,
                               expand=True, allow_expand=False)
             if self.record_key(record) == selected_key:
                 selected_nodes["home"] = node
@@ -1300,7 +1313,8 @@ def cmd_tui(args):
                 self.add_home(node, child, children, selected_key, selected_nodes)
 
         def add_recent(self, parent, record, children, selected_key, selected_nodes):
-            node = parent.add(self.label(record, parent, record["archive_inherited"]),
+            node = parent.add(self.label(record, parent, "recent",
+                                         record["archive_inherited"]),
                               data=record,
                               expand=True, allow_expand=False)
             if self.record_key(record) == selected_key:
@@ -1314,7 +1328,7 @@ def cmd_tui(args):
                         selected_key, selected_nodes):
             shown = dict(record)
             shown["archive_inherited"] = inherited and not record["archived"]
-            node = parent.add(self.label(record, parent, inherited), data=shown,
+            node = parent.add(self.label(record, parent, "archive", inherited), data=shown,
                               expand=True, allow_expand=False)
             if self.record_key(shown) == selected_key:
                 selected_nodes["archive"] = node
