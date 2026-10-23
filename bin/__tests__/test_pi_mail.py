@@ -9,6 +9,9 @@ from unittest import mock
 
 pi_mail = runpy.run_path(str(Path(__file__).parents[1] / "pi-mail"))
 Index = pi_mail["Index"]
+OLD_SCHEMA = Index.SCHEMA.replace(
+    "subject_sid INTEGER NOT NULL REFERENCES strings(id)", "subject TEXT NOT NULL"
+).replace("user_version = 4", "user_version = 3")
 
 
 class ThreadIndexTest(unittest.TestCase):
@@ -28,7 +31,7 @@ class ThreadIndexTest(unittest.TestCase):
         self.addCleanup(index.db.close)
         return index
 
-    def index_mail(self, index, mails):
+    def index_mail(self, index, mails, subjects=None):
         blobs = {}
         entries = []
         for mid, parent, refs in mails:
@@ -38,7 +41,7 @@ class ThreadIndexTest(unittest.TestCase):
             if refs:
                 headers.append("References: " + " ".join(f"<{ref}>" for ref in refs))
             blobs[mid] = ("\n".join(headers) + "\n\nBody\n").encode()
-            entries.append((mid, "Author", 1, mid))
+            entries.append((mid, "Author", 1, subjects[mid] if subjects else mid))
         reader = mock.Mock()
         reader.read.side_effect = lambda _, commit: blobs[commit]
         with index.db:
@@ -94,7 +97,7 @@ class ThreadIndexTest(unittest.TestCase):
 
     def test_migration_runs_once_and_keeps_index_progress(self):
         db = sqlite3.connect(self.cache)
-        db.executescript(Index.SCHEMA.replace(
+        db.executescript(OLD_SCHEMA.replace(
             "CREATE INDEX messages_parent_sid ON messages(parent_sid);", ""
         ).replace("user_version = 3", "user_version = 2"))
         with db:
@@ -118,14 +121,15 @@ class ThreadIndexTest(unittest.TestCase):
         db.close()
         index = self.open_index()
         self.assertEqual(set(self.threads(index).values()), {"v1"})
-        self.assertEqual(index.db.execute("PRAGMA user_version").fetchone()[0], 3)
+        self.assertEqual(index.db.execute("PRAGMA user_version").fetchone()[0], 4)
         self.assertEqual(index.db.execute("SELECT tip_oid FROM epochs").fetchone()[0], "tip")
-        with mock.patch.object(Index, "_merge_threads", side_effect=AssertionError("reran")):
+        with mock.patch.object(Index, "_merge_threads", side_effect=AssertionError("reran")), \
+                mock.patch.object(Index, "_migrate_subjects", side_effect=AssertionError("reran")):
             self.open_index()
 
     def test_failed_migration_rolls_back_schema_and_version(self):
         db = sqlite3.connect(self.cache)
-        db.executescript(Index.SCHEMA.replace(
+        db.executescript(OLD_SCHEMA.replace(
             "CREATE INDEX messages_parent_sid ON messages(parent_sid);", ""
         ).replace("user_version = 3", "user_version = 2"))
         db.close()
@@ -146,6 +150,99 @@ class ThreadIndexTest(unittest.TestCase):
         index = self.open_index()
         self.index_mail(index, [("a", "b", ["b"]), ("b", "a", ["a"])])
         self.assertEqual(len(set(self.threads(index).values())), 1)
+
+    def test_subjects_are_shared_and_all_queries_resolve_them(self):
+        index = self.open_index()
+        subjects = {
+            "cover@example.com": "[PATCH v2 0/2] Cover",
+            "patch@example.com": "[PATCH v2 1/2] Title",
+            "duplicate@example.com": "[PATCH v2 1/2] Title",
+            "reply@example.com": "Re: [PATCH v2 1/2] Title",
+        }
+        self.index_mail(index, [
+            ("cover@example.com", None, []),
+            ("patch@example.com", "cover@example.com", ["cover@example.com"]),
+            ("duplicate@example.com", "cover@example.com", ["cover@example.com"]),
+            ("reply@example.com", "patch@example.com", ["patch@example.com"]),
+        ], subjects)
+        shared = index.db.execute(
+            "SELECT subject_sid FROM messages WHERE git_commit_oid IN (?, ?)",
+            ("patch@example.com", "duplicate@example.com")).fetchall()
+        self.assertEqual(shared[0], shared[1])
+        self.assertEqual({row[1]: row[4] for row in index.recent(100000)}, subjects)
+        _, thread = index.thread_target("cover@example.com")
+        self.assertEqual({row[0]: row[3] for row in index.thread_nodes(thread, 100000).values()}, subjects)
+        for records in (
+            index.related_messages("Author", "example.com"),
+            index.recent_messages(100000, "Author", "example.com"),
+            index.messages_for_commits(["patch@example.com"], "Author", "example.com"),
+        ):
+            self.assertEqual({row["commit"]: row["subject"] for row in records}, subjects)
+        _, _, contributors, reviewers = index.author_stats(100000)
+        self.assertEqual(contributors[0][2], 3)
+        self.assertEqual(reviewers, [])
+
+        patch = Path(self.temp.name) / "patch"
+        patch.write_text("Subject: [PATCH v3 1/2] Title\n\nBody\n")
+        args = mock.Mock(index=index, patches=[str(patch)])
+        output = io.StringIO()
+        with mock.patch.dict(pi_mail["cmd_prev_cover"].__globals__, {
+            "sendemail_identity": lambda: ("Author", "example.com"),
+        }), mock.patch("sys.stdout", output), mock.patch("sys.stderr", io.StringIO()):
+            pi_mail["cmd_prev_cover"](args)
+        self.assertEqual(output.getvalue(), "<cover@example.com>\n")
+
+    def test_subject_migration_preserves_rows_and_reuses_strings(self):
+        db = sqlite3.connect(self.cache)
+        db.executescript(OLD_SCHEMA)
+        with db:
+            db.execute("INSERT INTO epochs(id, path, tip_oid) VALUES (1, ?, 'tip')",
+                       (self.gitdir,))
+            db.executemany("INSERT INTO strings(id, value) VALUES (?, ?)",
+                           [(1, "a"), (2, "b"), (3, "Author")])
+            db.executemany(
+                "INSERT INTO messages VALUES (?, 1, ?, ?, NULL, ?, 1, 3, ?)",
+                [(10, "a", 1, 1, "Author"), (20, "b", 2, 2, "Author")])
+        before = db.execute("SELECT * FROM messages").fetchall()
+        indexes = db.execute(
+            "SELECT name, sql FROM sqlite_master WHERE type = 'index' AND tbl_name = 'messages'"
+        ).fetchall()
+        db.close()
+        index = self.open_index()
+        after = index.db.execute(
+            "SELECT m.id, m.epoch_id, m.git_commit_oid, m.message_sid, m.parent_sid, "
+            "m.thread_sid, m.commit_time, m.author_sid, s.value "
+            "FROM messages m JOIN strings s ON s.id = m.subject_sid").fetchall()
+        self.assertEqual(after, before)
+        self.assertEqual(index.db.execute("SELECT subject_sid FROM messages").fetchall(), [(3,), (3,)])
+        self.assertEqual(index.db.execute("PRAGMA foreign_key_check").fetchall(), [])
+        self.assertEqual(index.db.execute(
+            "SELECT name, sql FROM sqlite_master WHERE type = 'index' AND tbl_name = 'messages'"
+        ).fetchall(), indexes)
+        columns = {row[1]: row for row in index.db.execute("PRAGMA table_info(messages)")}
+        self.assertNotIn("subject", columns)
+        self.assertEqual(columns["subject_sid"][3], 1)  # NOT NULL
+
+    def test_failed_subject_migration_rolls_back(self):
+        db = sqlite3.connect(self.cache)
+        db.executescript(OLD_SCHEMA)
+        db.close()
+        index = Index.__new__(Index)
+        original = Index._migrate_subjects
+
+        def interrupted(index):
+            original(index)
+            raise RuntimeError("interrupted")
+
+        with mock.patch.object(Index, "_migrate_subjects", interrupted):
+            with self.assertRaises(RuntimeError):
+                index.__init__()
+        index.db.close()
+        db = sqlite3.connect(self.cache)
+        self.addCleanup(db.close)
+        self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0], 3)
+        self.assertIn("subject", {row[1] for row in db.execute("PRAGMA table_info(messages)")})
+        self.open_index()
 
 
 if __name__ == "__main__":

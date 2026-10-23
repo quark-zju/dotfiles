@@ -175,6 +175,19 @@ class Progress:
 
 
 class Index:
+    MESSAGES_SCHEMA = """
+        CREATE TABLE messages (
+            id INTEGER PRIMARY KEY,
+            epoch_id INTEGER NOT NULL REFERENCES epochs(id),
+            git_commit_oid TEXT NOT NULL UNIQUE,
+            message_sid INTEGER NOT NULL REFERENCES strings(id),
+            parent_sid INTEGER REFERENCES strings(id),
+            thread_sid INTEGER NOT NULL REFERENCES strings(id),
+            commit_time INTEGER NOT NULL,
+            author_sid INTEGER NOT NULL REFERENCES strings(id),
+            subject_sid INTEGER NOT NULL REFERENCES strings(id)
+        );
+    """
     SCHEMA = """
         CREATE TABLE epochs (
             id INTEGER PRIMARY KEY,
@@ -189,23 +202,13 @@ class Index:
             id INTEGER PRIMARY KEY,
             value TEXT NOT NULL UNIQUE
         );
-        CREATE TABLE messages (
-            id INTEGER PRIMARY KEY,
-            epoch_id INTEGER NOT NULL REFERENCES epochs(id),
-            git_commit_oid TEXT NOT NULL UNIQUE,
-            message_sid INTEGER NOT NULL REFERENCES strings(id),
-            parent_sid INTEGER REFERENCES strings(id),
-            thread_sid INTEGER NOT NULL REFERENCES strings(id),
-            commit_time INTEGER NOT NULL,
-            author_sid INTEGER NOT NULL REFERENCES strings(id),
-            subject TEXT NOT NULL
-        );
+    """ + MESSAGES_SCHEMA + """
         CREATE INDEX messages_message_sid ON messages(message_sid);
         CREATE INDEX messages_parent_sid ON messages(parent_sid);
         CREATE INDEX messages_thread_sid ON messages(thread_sid);
         CREATE INDEX messages_author_sid ON messages(author_sid);
         CREATE INDEX messages_commit_time ON messages(commit_time DESC);
-        PRAGMA user_version = 3;
+        PRAGMA user_version = 4;
     """
 
     def __init__(self):
@@ -216,17 +219,21 @@ class Index:
         version = self.db.execute("PRAGMA user_version").fetchone()[0]
         if version == 0:
             self.db.executescript(self.SCHEMA)
-        elif version == 2:
+        elif version in (2, 3):
             with self.db:
                 self.db.execute("BEGIN IMMEDIATE")
                 # Another pi-mail process may have migrated while we waited.
-                if self.db.execute("PRAGMA user_version").fetchone()[0] == 2:
+                version = self.db.execute("PRAGMA user_version").fetchone()[0]
+                if version == 2:
                     self.db.execute(
                         "CREATE INDEX IF NOT EXISTS messages_parent_sid ON messages(parent_sid)")
                     self._merge_threads(self.db.execute(
                         "SELECT message_sid, parent_sid, thread_sid FROM messages"))
-                    self.db.execute("PRAGMA user_version = 3")
-        elif version != 3:
+                    version = 3
+                if version == 3:
+                    self._migrate_subjects()
+                    self.db.execute("PRAGMA user_version = 4")
+        elif version != 4:
             sys.exit(f"unsupported index version {version}; remove {CACHE} to rebuild")
         self.gitdirs = [os.path.realpath(path) for path in epochs()]
         with self.db:
@@ -237,6 +244,22 @@ class Index:
             self.gitdirs).fetchall()
         ids = {path: epoch_id for epoch_id, path in rows}
         self.epoch_ids = [ids[path] for path in self.gitdirs]
+
+    def _migrate_subjects(self):
+        """Replace inline subjects while preserving message IDs and indexes."""
+        self.db.execute("INSERT OR IGNORE INTO strings(value) SELECT DISTINCT subject FROM messages")
+        self.db.execute(self.MESSAGES_SCHEMA.replace("CREATE TABLE messages", "CREATE TABLE messages_new"))
+        self.db.execute(
+            "INSERT INTO messages_new SELECT m.id, m.epoch_id, m.git_commit_oid, "
+            "m.message_sid, m.parent_sid, m.thread_sid, m.commit_time, m.author_sid, s.id "
+            "FROM messages m JOIN strings s ON s.value = m.subject")
+        indexes = self.db.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'index' "
+            "AND tbl_name = 'messages' AND sql IS NOT NULL").fetchall()
+        self.db.execute("DROP TABLE messages")
+        self.db.execute("ALTER TABLE messages_new RENAME TO messages")
+        for sql, in indexes:
+            self.db.execute(sql)
 
     @property
     def scope(self):
@@ -333,7 +356,7 @@ class Index:
             parent = (in_reply_to or [None])[0] or (refs or [None])[-1]
             thread = refs[0] if refs else parent or message_id
             rows.append((commit, message_id, parent, thread, timestamp, author, subject))
-            values.update((message_id, thread, author))
+            values.update((message_id, thread, author, subject))
             if parent:
                 values.add(parent)
             progress.update(timestamp)
@@ -350,10 +373,10 @@ class Index:
             string_ids.update((value, sid) for sid, value in found)
         self.db.executemany(
             "INSERT INTO messages(epoch_id, git_commit_oid, message_sid, parent_sid, "
-            "thread_sid, commit_time, author_sid, subject) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "thread_sid, commit_time, author_sid, subject_sid) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             ((epoch_id, commit, string_ids[message_id],
               string_ids[parent] if parent else None, string_ids[thread], timestamp,
-              string_ids[author], subject)
+              string_ids[author], string_ids[subject])
              for commit, message_id, parent, thread, timestamp, author, subject in rows))
 
         links = [(string_ids[message_id], string_ids[parent] if parent else None,
@@ -448,9 +471,10 @@ class Index:
     def recent(self, days):
         cutoff = int(time.time()) - days * 86400
         yield from self.db.execute(
-            f"SELECT e.path, m.git_commit_oid, a.value, m.commit_time, m.subject "
+            f"SELECT e.path, m.git_commit_oid, a.value, m.commit_time, s.value "
             f"FROM messages m JOIN epochs e ON e.id = m.epoch_id "
             f"JOIN strings a ON a.id = m.author_sid "
+            f"JOIN strings s ON s.id = m.subject_sid "
             f"WHERE m.epoch_id IN ({self.scope}) AND m.commit_time >= ? "
             f"ORDER BY m.commit_time DESC, m.id DESC",
             (*self.epoch_ids, cutoff))
@@ -458,8 +482,9 @@ class Index:
     def author_stats(self, days):
         cutoff = int(time.time()) - days * 86400
         recent = self.db.execute(
-            f"SELECT m.thread_sid, m.commit_time, a.value, m.subject "
+            f"SELECT m.thread_sid, m.commit_time, a.value, s.value "
             f"FROM messages m JOIN strings a ON a.id = m.author_sid "
+            f"JOIN strings s ON s.id = m.subject_sid "
             f"WHERE m.epoch_id IN ({self.scope}) AND m.commit_time >= ?",
             (*self.epoch_ids, cutoff)).fetchall()
 
@@ -499,8 +524,9 @@ class Index:
             chunk = review_threads[start:start + 500]
             placeholders = ",".join("?" * len(chunk))
             rows = self.db.execute(
-                f"SELECT m.thread_sid, a.value, m.subject FROM messages m "
+                f"SELECT m.thread_sid, a.value, s.value FROM messages m "
                 f"JOIN strings a ON a.id = m.author_sid "
+                f"JOIN strings s ON s.id = m.subject_sid "
                 f"WHERE m.epoch_id IN ({self.scope}) "
                 f"AND m.thread_sid IN ({placeholders})",
                 (*self.epoch_ids, *chunk))
@@ -607,8 +633,9 @@ class Index:
         cutoff = int(time.time()) - days * 86400
         rows = self.db.execute(
             f"SELECT m.message_sid, m.git_commit_oid, a.value, m.commit_time, "
-            f"m.subject, m.parent_sid FROM messages m "
+            f"s.value, m.parent_sid FROM messages m "
             f"JOIN strings a ON a.id = m.author_sid "
+            f"JOIN strings s ON s.id = m.subject_sid "
             f"WHERE m.epoch_id IN ({self.scope}) AND m.thread_sid = ? "
             f"AND m.commit_time >= ?",
             (*self.epoch_ids, thread_sid, cutoff))
@@ -629,7 +656,7 @@ class Index:
             f"  AND instr(lower(mid.value), lower(?)) > 0"
             f") "
             f"SELECT thread.value, mid.value, parent.value, e.path, "
-            f"m.git_commit_oid, a.value, m.commit_time, m.subject, "
+            f"m.git_commit_oid, a.value, m.commit_time, s.value, "
             f"(a.value = ? COLLATE NOCASE "
             f" AND instr(lower(mid.value), lower(?)) > 0) "
             f"FROM messages m "
@@ -639,6 +666,7 @@ class Index:
             f"JOIN strings mid ON mid.id = m.message_sid "
             f"LEFT JOIN strings parent ON parent.id = m.parent_sid "
             f"JOIN strings a ON a.id = m.author_sid "
+            f"JOIN strings s ON s.id = m.subject_sid "
             f"WHERE m.epoch_id IN ({self.scope}) "
             f"ORDER BY m.commit_time, m.id",
             (*self.epoch_ids, name, address, name, address, *self.epoch_ids))
@@ -656,7 +684,7 @@ class Index:
             f"  WHERE m.epoch_id IN ({self.scope}) AND m.commit_time >= ?"
             f") "
             f"SELECT thread.value, mid.value, parent.value, e.path, "
-            f"m.git_commit_oid, a.value, m.commit_time, m.subject, "
+            f"m.git_commit_oid, a.value, m.commit_time, s.value, "
             f"(a.value = ? COLLATE NOCASE "
             f" AND instr(lower(mid.value), lower(?)) > 0) "
             f"FROM messages m "
@@ -666,6 +694,7 @@ class Index:
             f"JOIN strings mid ON mid.id = m.message_sid "
             f"LEFT JOIN strings parent ON parent.id = m.parent_sid "
             f"JOIN strings a ON a.id = m.author_sid "
+            f"JOIN strings s ON s.id = m.subject_sid "
             f"WHERE m.epoch_id IN ({self.scope}) "
             f"ORDER BY m.commit_time, m.id",
             (*self.epoch_ids, cutoff, name, address, *self.epoch_ids))
@@ -691,7 +720,7 @@ class Index:
             chunk = thread_sids[start:start + 500]
             rows = self.db.execute(
                 f"SELECT thread.value, mid.value, parent.value, e.path, "
-                f"m.git_commit_oid, a.value, m.commit_time, m.subject, "
+                f"m.git_commit_oid, a.value, m.commit_time, s.value, "
                 f"(a.value = ? COLLATE NOCASE "
                 f" AND instr(lower(mid.value), lower(?)) > 0) "
                 f"FROM messages m "
@@ -700,6 +729,7 @@ class Index:
                 f"JOIN strings mid ON mid.id = m.message_sid "
                 f"LEFT JOIN strings parent ON parent.id = m.parent_sid "
                 f"JOIN strings a ON a.id = m.author_sid "
+                f"JOIN strings s ON s.id = m.subject_sid "
                 f"WHERE m.epoch_id IN ({self.scope}) AND m.thread_sid IN "
                 f"({','.join('?' * len(chunk))}) "
                 f"ORDER BY m.commit_time, m.id",
@@ -1003,8 +1033,9 @@ def cmd_prev_cover(args):
     index = args.index
     name, address = sendemail_identity()
     rows = index.db.execute(
-        f"SELECT mid.value, parent.value, m.subject, m.commit_time FROM messages m "
+        f"SELECT mid.value, parent.value, s.value, m.commit_time FROM messages m "
         f"JOIN strings a ON a.id = m.author_sid "
+        f"JOIN strings s ON s.id = m.subject_sid "
         f"JOIN strings mid ON mid.id = m.message_sid "
         f"LEFT JOIN strings parent ON parent.id = m.parent_sid "
         f"WHERE m.epoch_id IN ({index.scope}) AND a.value = ? COLLATE NOCASE "
@@ -1023,7 +1054,8 @@ def cmd_prev_cover(args):
     target = message_id
     if not is_cover and parent:
         row = index.db.execute(
-            f"SELECT m.subject FROM messages m JOIN strings mid ON mid.id = m.message_sid "
+            f"SELECT s.value FROM messages m JOIN strings mid ON mid.id = m.message_sid "
+            f"JOIN strings s ON s.id = m.subject_sid "
             f"WHERE m.epoch_id IN ({index.scope}) AND mid.value = ?",
             (*index.epoch_ids, parent)).fetchone()
         parsed = parse_patch_subject(row[0]) if row else None
