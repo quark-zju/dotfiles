@@ -1086,8 +1086,23 @@ def ensure_draft_repo():
         subprocess.run(["git", "init", "-q", DRAFT_DIR], check=True)
 
 
+def normalize_draft_line_endings(path):
+    with open(path, "rb") as source:
+        original = source.read()
+    # Editors may save .eml with CRLF line endings.
+    # send-email can encode CR as =0D, leaving literal CRs in the decoded body.
+    normalized = original.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+    if normalized == original:
+        return False
+    with open(path, "wb") as out:
+        out.write(normalized)
+    return True
+
+
 def record_draft_change(commit, message):
     path = draft_path(commit)
+    if os.path.isfile(path):
+        normalize_draft_line_endings(path)
     subprocess.run(["git", "-C", DRAFT_DIR, "add", "-A", "--", os.path.basename(path)],
                    check=True)
     changed = subprocess.run(["git", "-C", DRAFT_DIR, "diff", "--cached", "--quiet"])
@@ -1143,13 +1158,7 @@ def cmd_draft_send(args):
     path = draft_path(args.commit)
     if not os.path.isfile(path):
         sys.exit(f"draft does not exist: {path}")
-    with open(path, "rb") as source:
-        original = source.read()
-    # send-email can encode CR as =0D, leaving literal CRs in the decoded body.
-    normalized = original.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
-    if normalized != original:
-        with open(path, "wb") as out:
-            out.write(normalized)
+    if normalize_draft_line_endings(path):
         record_draft_change(args.commit, f"Normalize reply line endings for {args.commit[:12]}")
     try:
         result = subprocess.run(["git", "send-email", path])

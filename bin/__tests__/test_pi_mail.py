@@ -1,6 +1,7 @@
 import io
 import runpy
 import sqlite3
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -243,6 +244,41 @@ class ThreadIndexTest(unittest.TestCase):
         self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0], 3)
         self.assertIn("subject", {row[1] for row in db.execute("PRAGMA table_info(messages)")})
         self.open_index()
+
+
+class DraftHistoryTest(unittest.TestCase):
+    def test_records_lf_content_and_ignores_line_ending_only_edits(self):
+        record_change = pi_mail["record_draft_change"]
+        commit = "a" * 40
+        with tempfile.TemporaryDirectory() as temp:
+            def git(*args):
+                return subprocess.check_output([
+                    "git", "-C", temp, "-c", "user.name=Test", "-c",
+                    "user.email=test@example.com", *args,
+                ])
+
+            git("init", "-q")
+            git("config", "core.autocrlf", "false")
+            path = Path(temp) / (commit + ".eml")
+            expected = "Subject: Reply\n\n中文 reply\n> quoted line\n".encode()
+            path.write_bytes("Subject: Reply\r\n\r\n中文 reply\r> quoted line\n".encode())
+            with mock.patch.dict(record_change.__globals__, {"DRAFT_DIR": temp}), \
+                    mock.patch.dict("os.environ", {
+                        "GIT_AUTHOR_NAME": "Test", "GIT_AUTHOR_EMAIL": "test@example.com",
+                        "GIT_COMMITTER_NAME": "Test", "GIT_COMMITTER_EMAIL": "test@example.com",
+                    }):
+                record_change(commit, "Edit reply")
+                self.assertEqual(path.read_bytes(), expected)
+                self.assertEqual(git("show", "HEAD:" + path.name), expected)
+                revision = git("rev-parse", "HEAD")
+                path.write_bytes(expected.replace(b"\n", b"\r\n"))
+                record_change(commit, "Edit reply again")
+                self.assertEqual(path.read_bytes(), expected)
+                self.assertEqual(git("rev-parse", "HEAD"), revision)
+                path.unlink()
+                record_change(commit, "Delete reply")
+                self.assertEqual(git("ls-tree", "--name-only", "HEAD"), b"")
+                self.assertEqual(git("status", "--porcelain"), b"")
 
 
 class DraftSendTest(unittest.TestCase):
