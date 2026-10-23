@@ -1192,7 +1192,8 @@ def cmd_view_mail(args):
         text = message.as_string(unixfrom=False).rstrip("\n")
         _, _, body = text.partition("\n\n")
     else:
-        body = part.get_content().rstrip("\n")
+        body = part.get_content()
+    body = body.replace("\r\n", "\n").replace("\r", "\n").rstrip("\n")
     headers = []
     for name in ("From", "Subject", "Message-ID"):
         value = message[name]

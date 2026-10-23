@@ -1,3 +1,5 @@
+import email
+import email.policy
 import io
 import runpy
 import sqlite3
@@ -244,6 +246,42 @@ class ThreadIndexTest(unittest.TestCase):
         self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0], 3)
         self.assertIn("subject", {row[1] for row in db.execute("PRAGMA table_info(messages)")})
         self.open_index()
+
+
+class MailViewTest(unittest.TestCase):
+    def test_normalizes_decoded_body_before_opening_editor(self):
+        view = pi_mail["cmd_view_mail"]
+        for encoding, body in (
+            (b"8bit", b"Body\r\n> quoted\rAnother line\n"),
+            (b"quoted-printable", b"Body=0D\n> quoted=0DAnother line=0D\n"),
+        ):
+            with self.subTest(encoding=encoding):
+                raw = (b"From: Author <author@example.com>\r\nSubject: Reply\r\n"
+                       b"Message-ID: <reply@example.com>\r\n"
+                       b"Content-Type: text/plain; charset=UTF-8\r\n"
+                       b"Content-Transfer-Encoding: " + encoding + b"\r\n\r\n" + body)
+                message = email.message_from_bytes(raw, policy=email.policy.default)
+                opened = []
+
+                def editor(command, check):
+                    self.assertEqual(command[0], "editor")
+                    path = Path(command[1])
+                    opened.append(path)
+                    content = path.read_bytes()
+                    self.assertNotIn(b"\r", content)
+                    self.assertEqual(content.partition(b"\n\n")[2],
+                                     b"Body\n> quoted\nAnother line\n")
+
+                with mock.patch.dict(view.__globals__, {
+                    "load": lambda *args: message, "editor_command": lambda: ["editor"],
+                }), mock.patch("subprocess.run", side_effect=editor):
+                    index = mock.Mock()
+                    index.message_location.return_value = ("inbox", "a" * 40)
+                    view(mock.Mock(index=index, commit="a" * 40))
+                self.assertEqual(len(opened), 1)
+                self.assertFalse(opened[0].exists())
+                self.assertEqual(message.as_bytes(), email.message_from_bytes(
+                    raw, policy=email.policy.default).as_bytes())
 
 
 class DraftHistoryTest(unittest.TestCase):
