@@ -1141,6 +1141,7 @@ def cmd_tui(args):
             Binding("f", "fetch", "Fetch"),
             Binding("R", "all_read", "All read"),
             Binding("shift+r", "all_read", show=False),
+            Binding("t", "toggle_threaded", "Threaded/Flat"),
             Binding("/", "search", "Search"),
             Binding("escape", "clear_search", show=False),
             Binding("q", "quit", "Quit"),
@@ -1153,6 +1154,7 @@ def cmd_tui(args):
             self.table_rows = {"home": [], "recent": [], "archive": []}
             self.searches = {"home": "", "recent": "", "archive": ""}
             self.highlight_patterns = {}
+            self.threaded = True
             self.search_open = False
             self.fetch_process = None
             self.terminals = []
@@ -1228,7 +1230,10 @@ def cmd_tui(args):
                 return records
             matches, pattern = self.sel_matcher(sel)
             self.highlight_patterns[key] = pattern
-            threads = {record["thread"] for record in records if matches(record)}
+            matched = [record for record in records if matches(record)]
+            if not self.threaded:
+                return matched
+            threads = {record["thread"] for record in matched}
             return [record for record in records if record["thread"] in threads]
 
         def mail_cells(self, record, table_key, prefix="", inherited=False):
@@ -1356,6 +1361,20 @@ def cmd_tui(args):
             table.add_row(Text(), Text(), Text("[missing]", style="dim italic"))
             self.table_rows[table_key].append(None)
 
+        def add_flat(self, table, table_key, records, selected_key, selected_rows):
+            for record in sorted(records, key=lambda row: row["timestamp"], reverse=True):
+                shown = record
+                inherited = False
+                if table_key == "archive":
+                    shown = dict(record)
+                    inherited = not record["archived"]
+                    shown["archive_inherited"] = inherited
+                cells = self.mail_cells(record, table_key, inherited=inherited)
+                self.add_row(table, table_key, cells, shown, selected_key, selected_rows)
+                if record["has_draft"]:
+                    self.add_draft(table, record, table_key, (),
+                                   selected_key, selected_rows)
+
         def reload(self, requery=True):
             selected = self.selected() if self.is_mounted else None
             selected_key = self.record_key(selected) if selected else None
@@ -1388,33 +1407,33 @@ def cmd_tui(args):
             selected_rows = {}
 
             shown_home_rows = self.filter_threads(home_rows, "home")
-            home_threads = {}
-            for row in shown_home_rows:
-                home_threads.setdefault(row["thread"], []).append(row)
-            home_ordered = sorted(
-                home_threads.values(),
-                key=lambda records: max(r["timestamp"] for r in records),
-                reverse=True)
-            for records in home_ordered:
-                children = self.forest(records)
-                roots = children.get(None, [])
-                visible_roots = [record for record in roots if not record["archived"]]
-                orphan_roots = [record for record in visible_roots
-                                if record["parent"] is not None]
-                orphan_index = 0
-                missing = False
-                for record in visible_roots:
-                    if record["parent"] is not None:
-                        if not missing:
-                            self.add_missing(home, "home")
-                            missing = True
-                        orphan_index += 1
-                        lineage = (orphan_index == len(orphan_roots),)
-                    else:
-                        lineage = ()
-                    self.add_home(home, record, children, lineage,
-                                  selected_key, selected_rows)
-
+            if self.threaded:
+                home_threads = {}
+                for row in shown_home_rows:
+                    home_threads.setdefault(row["thread"], []).append(row)
+                home_ordered = sorted(
+                    home_threads.values(),
+                    key=lambda records: max(r["timestamp"] for r in records),
+                    reverse=True)
+                for records in home_ordered:
+                    children = self.forest(records)
+                    roots = children.get(None, [])
+                    visible_roots = [record for record in roots if not record["archived"]]
+                    orphan_roots = [record for record in visible_roots
+                                    if record["parent"] is not None]
+                    orphan_index = 0
+                    missing = False
+                    for record in visible_roots:
+                        if record["parent"] is not None:
+                            if not missing:
+                                self.add_missing(home, "home")
+                                missing = True
+                            orphan_index += 1
+                            lineage = (orphan_index == len(orphan_roots),)
+                        else:
+                            lineage = ()
+                        self.add_home(home, record, children, lineage,
+                                      selected_key, selected_rows)
             archive_threads = {}
             for row in archive_rows:
                 archive_threads.setdefault(row["thread"], []).append(row)
@@ -1425,6 +1444,7 @@ def cmd_tui(args):
             archived_commits = set()
             shown_archive_rows = self.filter_threads(archive_rows, "archive")
             shown_archive_threads = {row["thread"] for row in shown_archive_rows}
+            archive_forests = []
             for records in archive_ordered:
                 children = self.forest(records)
                 roots = children.get(None, [])
@@ -1441,52 +1461,70 @@ def cmd_tui(args):
 
                 for record in roots:
                     find_archived(record)
-                if records[0]["thread"] not in shown_archive_threads:
-                    continue
-                orphan_roots = [record for record in archived_roots
-                                if record["parent"] is not None]
-                orphan_index = 0
-                missing = False
-                for record in archived_roots:
-                    if record["parent"] is not None:
-                        if not missing:
-                            self.add_missing(archive, "archive")
-                            missing = True
-                        orphan_index += 1
-                        lineage = (orphan_index == len(orphan_roots),)
-                    else:
-                        lineage = ()
-                    self.add_archive(archive, record, children, False, lineage,
-                                     selected_key, selected_rows)
+                archive_forests.append((records, children, archived_roots))
+
+            shown_archive_records = [
+                row for row in shown_archive_rows if row["commit"] in archived_commits]
+            shown_home_records = [
+                row for row in shown_home_rows if row["commit"] not in archived_commits]
+            if not self.threaded:
+                self.add_flat(home, "home", shown_home_records,
+                              selected_key, selected_rows)
+            if self.threaded:
+                for records, children, archived_roots in archive_forests:
+                    if records[0]["thread"] not in shown_archive_threads:
+                        continue
+                    orphan_roots = [record for record in archived_roots
+                                    if record["parent"] is not None]
+                    orphan_index = 0
+                    missing = False
+                    for record in archived_roots:
+                        if record["parent"] is not None:
+                            if not missing:
+                                self.add_missing(archive, "archive")
+                                missing = True
+                            orphan_index += 1
+                            lineage = (orphan_index == len(orphan_roots),)
+                        else:
+                            lineage = ()
+                        self.add_archive(archive, record, children, False, lineage,
+                                         selected_key, selected_rows)
+            else:
+                self.add_flat(archive, "archive", shown_archive_records,
+                              selected_key, selected_rows)
 
             recent_rows = [row for row in recent_rows
                            if row["commit"] not in archived_commits]
             shown_recent_rows = self.filter_threads(recent_rows, "recent")
-            recent_threads = {}
-            for row in shown_recent_rows:
-                recent_threads.setdefault(row["thread"], []).append(row)
-            recent_ordered = sorted(
-                recent_threads.values(),
-                key=lambda records: max(r["timestamp"] for r in records),
-                reverse=True)
-            for records in recent_ordered:
-                children = self.forest(records)
-                roots = children.get(None, [])
-                orphan_roots = [record for record in roots
-                                if record["parent"] is not None]
-                orphan_index = 0
-                missing = False
-                for record in roots:
-                    if record["parent"] is not None:
-                        if not missing:
-                            self.add_missing(recent, "recent")
-                            missing = True
-                        orphan_index += 1
-                        lineage = (orphan_index == len(orphan_roots),)
-                    else:
-                        lineage = ()
-                    self.add_recent(recent, record, children, lineage,
-                                    selected_key, selected_rows)
+            if self.threaded:
+                recent_threads = {}
+                for row in shown_recent_rows:
+                    recent_threads.setdefault(row["thread"], []).append(row)
+                recent_ordered = sorted(
+                    recent_threads.values(),
+                    key=lambda records: max(r["timestamp"] for r in records),
+                    reverse=True)
+                for records in recent_ordered:
+                    children = self.forest(records)
+                    roots = children.get(None, [])
+                    orphan_roots = [record for record in roots
+                                    if record["parent"] is not None]
+                    orphan_index = 0
+                    missing = False
+                    for record in roots:
+                        if record["parent"] is not None:
+                            if not missing:
+                                self.add_missing(recent, "recent")
+                                missing = True
+                            orphan_index += 1
+                            lineage = (orphan_index == len(orphan_roots),)
+                        else:
+                            lineage = ()
+                        self.add_recent(recent, record, children, lineage,
+                                        selected_key, selected_rows)
+            else:
+                self.add_flat(recent, "recent", shown_recent_rows,
+                              selected_key, selected_rows)
 
             visible = {
                 row["commit"]: row for row in
@@ -1496,10 +1534,9 @@ def cmd_tui(args):
             }
             self.records = list(visible.values())
             self.tab_records = {
-                "home": [row for row in shown_home_rows if not row["archived"]],
+                "home": shown_home_records,
                 "recent": shown_recent_rows,
-                "archive": [row for row in shown_archive_rows
-                            if row["commit"] in archived_commits],
+                "archive": shown_archive_records,
             }
 
             pane = self.query_one("#tabs", TabbedContent).active
@@ -1521,11 +1558,17 @@ def cmd_tui(args):
             unread = sum(not row["read"] for row in self.records)
             drafts = sum(row["has_draft"] for row in self.records)
             threads = len({row["thread"] for row in self.records})
-            message = (f"{threads} threads, {unread} unread, {drafts} drafts  "
+            view = "threaded" if self.threaded else "flat"
+            count = (f"{threads} threads" if self.threaded
+                     else f"{len(self.records)} messages")
+            message = (f"{view}  {count}, {unread} unread, {drafts} drafts  "
                        "[A] explicit archive  [a] inherited archive")
             key = self.active_key()
             if self.searches[key]:
-                matched = len({row["thread"] for row in self.tab_records[key]})
+                if self.threaded:
+                    matched = len({row["thread"] for row in self.tab_records[key]})
+                else:
+                    matched = len(self.tab_records[key])
                 message += f"  /{self.searches[key]}: {matched} matches"
             self.set_status(message)
 
@@ -1612,6 +1655,10 @@ def cmd_tui(args):
 
         def action_previous_mail(self):
             self.active_table().action_cursor_up()
+
+        def action_toggle_threaded(self):
+            self.threaded = not self.threaded
+            self.reload(requery=False)
 
         def action_search(self):
             search = self.query_one("#search", Input)
