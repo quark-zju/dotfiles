@@ -245,5 +245,52 @@ class ThreadIndexTest(unittest.TestCase):
         self.open_index()
 
 
+class DraftSendTest(unittest.TestCase):
+    def test_normalizes_line_endings_before_send(self):
+        send = pi_mail["cmd_draft_send"]
+        commit = "a" * 40
+        for endings in (b"\n", b"\r\n", b"\r", None):
+            with self.subTest(endings=endings), tempfile.TemporaryDirectory() as temp:
+                path = Path(temp) / (commit + ".eml")
+                lines = [b"Subject: Reply", b"Content-Transfer-Encoding: 8bit", b"",
+                         "中文 reply".encode(), b"> quoted line", b""]
+                expected = b"\n".join(lines)
+                original = (endings.join(lines) if endings is not None else
+                            b"Subject: Reply\r\nContent-Transfer-Encoding: 8bit\n\n" +
+                            "中文 reply".encode() + b"\r> quoted line\r\n")
+                path.write_bytes(original)
+
+                def send_email(command):
+                    self.assertEqual(command, ["git", "send-email", str(path)])
+                    self.assertEqual(path.read_bytes(), expected)
+                    return mock.Mock(returncode=0)
+
+                record_change = mock.Mock()
+                with mock.patch.dict(send.__globals__, {
+                    "DRAFT_DIR": temp, "record_draft_change": record_change,
+                }), mock.patch("subprocess.run", side_effect=send_email):
+                    send(mock.Mock(commit=commit))
+                    messages = [call.args[1] for call in
+                                record_change.call_args_list]
+                self.assertFalse(path.exists())
+                self.assertEqual(messages[-1], f"Send reply to {commit[:12]}")
+                self.assertEqual(len(messages), 1 if original == expected else 2)
+
+    def test_failed_send_keeps_normalized_draft(self):
+        send = pi_mail["cmd_draft_send"]
+        commit = "a" * 40
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / (commit + ".eml")
+            path.write_bytes(b"Subject: Reply\r\n\r\nBody\r\n")
+            with mock.patch.dict(send.__globals__, {
+                "DRAFT_DIR": temp, "record_draft_change": mock.Mock(),
+            }), mock.patch("subprocess.run", return_value=mock.Mock(returncode=1)), \
+                    mock.patch("builtins.input", return_value=""):
+                with self.assertRaises(SystemExit) as caught:
+                    send(mock.Mock(commit=commit))
+            self.assertEqual(caught.exception.code, 1)
+            self.assertEqual(path.read_bytes(), b"Subject: Reply\n\nBody\n")
+
+
 if __name__ == "__main__":
     unittest.main()
