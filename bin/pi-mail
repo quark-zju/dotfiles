@@ -1092,15 +1092,13 @@ def cmd_view_mail(args):
 def cmd_tui(args):
     # Keep Textual and Rich out of the startup path for every CLI command.
     try:
-        from rich.segment import Segment
         from rich.text import Text
         from textual.app import App, ComposeResult
         from textual.binding import Binding
         from textual.containers import Grid
         from textual.css.query import NoMatches
-        from textual.strip import Strip
-        from textual.widgets import (Button, Footer, Header, Input, Static, TabbedContent,
-                                     TabPane, Tree)
+        from textual.widgets import (Button, DataTable, Footer, Header, Input, Static,
+                                     TabbedContent, TabPane)
     except ImportError:
         sys.exit("pi-mail tui requires Textual (pip install textual)")
 
@@ -1108,32 +1106,24 @@ def cmd_tui(args):
     state = MailState()
     program = os.path.realpath(__file__)
 
-    class MailTree(Tree):
-        GUIDE_DEPTH = 2
+    class MailTable(DataTable):
         BINDINGS = [Binding("enter", "open_mail", show=False)]
 
-        def on_mount(self):
-            self.guide_depth = self.GUIDE_DEPTH
-
-        def render_line(self, y):
-            line = super().render_line(y)
-            if y == self.cursor_line:
-                style = self.get_component_rich_style("tree--cursor")
-                return Strip(Segment.apply_style(line, post_style=style), line.cell_length)
-            return line
+        def __init__(self, **kwargs):
+            super().__init__(cursor_type="row", show_row_labels=False, **kwargs)
+            self.add_column("Date", width=11)
+            self.add_column("Author", width=20)
+            self.add_column("Subject")
 
         def action_open_mail(self):
-            if self.cursor_node and self.cursor_node.data:
+            if self.app.selected():
                 self.app.action_view()
 
     class PiMailApp(App):
         TITLE = "pi-mail"
-        AUTHOR_COLUMN = 22  # Align through five levels of tree indentation.
         CSS = """
         TabbedContent { height: 1fr; }
-        Tree { height: 1fr; }
-        Tree > .tree--highlight-line { background: transparent; }
-        Tree > .tree--highlight { background: $surface-lighten-1; }
+        DataTable { height: 1fr; }
         #actions { height: 2; grid-size: 4 2; }
         #actions Button { min-width: 12; }
         #status { height: 1; padding: 0 1; }
@@ -1160,6 +1150,7 @@ def cmd_tui(args):
             super().__init__()
             self.records = []
             self.tab_records = {}
+            self.table_rows = {"home": [], "recent": [], "archive": []}
             self.searches = {"home": "", "recent": "", "archive": ""}
             self.highlight_patterns = {}
             self.search_open = False
@@ -1176,11 +1167,11 @@ def cmd_tui(args):
             yield Header()
             with TabbedContent(initial="home-pane", id="tabs"):
                 with TabPane("Home", id="home-pane"):
-                    yield MailTree("Home", id="home-tree")
+                    yield MailTable(id="home-table")
                 with TabPane("Recent", id="recent-pane"):
-                    yield MailTree("Recent", id="recent-tree")
+                    yield MailTable(id="recent-table")
                 with TabPane("Archive", id="archive-pane"):
-                    yield MailTree("Archive", id="archive-tree")
+                    yield MailTable(id="archive-table")
             with Grid(id="actions"):
                 yield Button("View", id="view", compact=True)
                 yield Button("Reply", id="reply", compact=True)
@@ -1190,34 +1181,33 @@ def cmd_tui(args):
                 yield Button("Delete", id="delete", compact=True)
                 yield Button("Fetch", id="fetch", compact=True)
                 yield Button("All Read", id="all-read", compact=True)
-            yield Input(placeholder="SEL (hash, Message-ID, lore URL, or subject regex)",
+            yield Input(placeholder="SEL (hash, Message-ID, lore URL, author or subject regex)",
                         id="search", compact=True)
             yield Static("", id="status")
             yield Footer()
 
         def on_mount(self):
-            self.query_one("#home-tree", Tree).show_root = False
-            self.query_one("#recent-tree", Tree).show_root = False
-            self.query_one("#archive-tree", Tree).show_root = False
             self.query_one("#search", Input).display = False
-            self.active_tree().focus()
+            self.active_table().focus()
             self.reload()
             self.set_interval(0.5, self.check_processes)
 
         def selected(self):
             try:
-                node = self.active_tree().cursor_node
+                key = self.active_key()
+                row = self.active_table().cursor_row
             except NoMatches:
                 return None
-            return node.data if node and node.data else None
+            rows = self.table_rows[key]
+            return rows[row] if 0 <= row < len(rows) else None
 
         def active_key(self):
             pane = self.query_one("#tabs", TabbedContent).active
             return {"home-pane": "home", "recent-pane": "recent",
                     "archive-pane": "archive"}[pane]
 
-        def active_tree(self):
-            return self.query_one(f"#{self.active_key()}-tree", Tree)
+        def active_table(self):
+            return self.query_one(f"#{self.active_key()}-table", DataTable)
 
         @staticmethod
         def sel_matcher(sel):
@@ -1241,43 +1231,48 @@ def cmd_tui(args):
             threads = {record["thread"] for record in records if matches(record)}
             return [record for record in records if record["thread"] in threads]
 
-        def label(self, record, parent, tree_key, inherited=False):
+        def mail_cells(self, record, table_key, prefix="", inherited=False):
             flags = []
             if record["archived"]:
                 flags.append("A")
             elif inherited:
                 flags.append("a")
             suffix = f" [{' '.join(flags)}]" if flags else ""
-            date = local_time(record["timestamp"])
-            depth = 0
-            ancestor = parent
-            while ancestor.parent is not None:
-                depth += 1
-                ancestor = ancestor.parent
-            gap = " " * max(1, self.AUTHOR_COLUMN - depth * MailTree.GUIDE_DEPTH
-                            - len(date))
-            author = record["author"][:20]
-            prefix = f"{date}{gap}"
-            label = Text(f"{prefix}{author:20} {record['subject']}{suffix}")
+            date = Text(local_time(record["timestamp"]))
+            author = Text(record["author"])
+            subject = Text(f"{prefix}{record['subject']}{suffix}")
             if not record["read"]:
-                label.stylize("bold cyan")
+                style = "bold cyan"
             elif record["own"]:
-                label.stylize("dim")
-            pattern = self.highlight_patterns[tree_key]
+                style = "dim"
+            else:
+                style = None
+            if style:
+                for cell in (date, author, subject):
+                    cell.stylize(style)
+            pattern = self.highlight_patterns[table_key]
             if pattern is not None:
-                fields = ((author, len(prefix)),
-                          (record["subject"], len(prefix) + 21))
-                for value, offset in fields:
+                fields = ((record["author"], author, 0),
+                          (record["subject"], subject, len(prefix)))
+                for value, cell, offset in fields:
                     for match in pattern.finditer(value):
                         if match.start() != match.end():
-                            label.stylize("bold #000000 on #ffff00",
-                                          offset + match.start(), offset + match.end())
-            return label
+                            cell.stylize("bold #000000 on #ffff00",
+                                         offset + match.start(), offset + match.end())
+            return date, author, subject
 
         @staticmethod
-        def draft_label(record):
+        def tree_prefix(lineage):
+            if not lineage:
+                return ""
+            guides = "".join("  " if last else "│ " for last in lineage[:-1])
+            return guides + ("└─ " if lineage[-1] else "├─ ")
+
+        @staticmethod
+        def draft_cells(record, prefix):
             subject = re.sub(r"^(re:\s*)+", "", record["subject"], flags=re.I)
-            return Text(f"  ✎ Draft: Re: {subject}", style="italic yellow")
+            return Text(), Text(), Text(
+                f"{prefix}✎ Draft: Re: {subject}", style="italic yellow")
 
         @staticmethod
         def record_key(record):
@@ -1294,49 +1289,72 @@ def cmd_tui(args):
                 values.sort(key=lambda record: record["timestamp"])
             return children
 
-        def add_draft(self, parent, record, tree_key, selected_key, selected_nodes):
-            draft = {"kind": "draft", "commit": record["commit"]}
-            node = parent.add_leaf(self.draft_label(record), data=draft)
-            if self.record_key(draft) == selected_key:
-                selected_nodes[tree_key] = node
+        def add_row(self, table, table_key, cells, record,
+                    selected_key, selected_rows):
+            row = len(self.table_rows[table_key])
+            table.add_row(*cells)
+            self.table_rows[table_key].append(record)
+            if record and self.record_key(record) == selected_key:
+                selected_rows[table_key] = row
 
-        def add_home(self, parent, record, children, selected_key, selected_nodes):
+        def add_draft(self, table, record, table_key, lineage,
+                      selected_key, selected_rows):
+            draft = {"kind": "draft", "commit": record["commit"]}
+            prefix = self.tree_prefix(lineage)
+            self.add_row(table, table_key, self.draft_cells(record, prefix), draft,
+                         selected_key, selected_rows)
+
+        def add_home(self, table, record, children, lineage,
+                     selected_key, selected_rows):
             if record["archived"]:
                 return
-            node = parent.add(self.label(record, parent, "home"), data=record,
-                              expand=True, allow_expand=False)
-            if self.record_key(record) == selected_key:
-                selected_nodes["home"] = node
+            prefix = self.tree_prefix(lineage)
+            self.add_row(table, "home", self.mail_cells(record, "home", prefix), record,
+                         selected_key, selected_rows)
+            mail_children = [child for child in children.get(record["message_id"], [])
+                             if not child["archived"]]
             if record["has_draft"]:
-                self.add_draft(node, record, "home", selected_key, selected_nodes)
-            for child in children.get(record["message_id"], []):
-                self.add_home(node, child, children, selected_key, selected_nodes)
+                self.add_draft(table, record, "home", lineage + (not mail_children,),
+                               selected_key, selected_rows)
+            for index, child in enumerate(mail_children):
+                self.add_home(table, child, children,
+                              lineage + (index == len(mail_children) - 1,),
+                              selected_key, selected_rows)
 
-        def add_recent(self, parent, record, children, selected_key, selected_nodes):
-            node = parent.add(self.label(record, parent, "recent",
-                                         record["archive_inherited"]),
-                              data=record,
-                              expand=True, allow_expand=False)
-            if self.record_key(record) == selected_key:
-                selected_nodes["recent"] = node
+        def add_recent(self, table, record, children, lineage,
+                       selected_key, selected_rows):
+            prefix = self.tree_prefix(lineage)
+            cells = self.mail_cells(
+                record, "recent", prefix, record["archive_inherited"])
+            self.add_row(table, "recent", cells, record, selected_key, selected_rows)
+            mail_children = children.get(record["message_id"], [])
             if record["has_draft"]:
-                self.add_draft(node, record, "recent", selected_key, selected_nodes)
-            for child in children.get(record["message_id"], []):
-                self.add_recent(node, child, children, selected_key, selected_nodes)
+                self.add_draft(table, record, "recent", lineage + (not mail_children,),
+                               selected_key, selected_rows)
+            for index, child in enumerate(mail_children):
+                self.add_recent(table, child, children,
+                                lineage + (index == len(mail_children) - 1,),
+                                selected_key, selected_rows)
 
-        def add_archive(self, parent, record, children, inherited,
-                        selected_key, selected_nodes):
+        def add_archive(self, table, record, children, inherited, lineage,
+                        selected_key, selected_rows):
             shown = dict(record)
             shown["archive_inherited"] = inherited and not record["archived"]
-            node = parent.add(self.label(record, parent, "archive", inherited), data=shown,
-                              expand=True, allow_expand=False)
-            if self.record_key(shown) == selected_key:
-                selected_nodes["archive"] = node
+            prefix = self.tree_prefix(lineage)
+            cells = self.mail_cells(record, "archive", prefix, inherited)
+            self.add_row(table, "archive", cells, shown, selected_key, selected_rows)
+            mail_children = children.get(record["message_id"], [])
             if record["has_draft"]:
-                self.add_draft(node, record, "archive", selected_key, selected_nodes)
-            for child in children.get(record["message_id"], []):
-                self.add_archive(node, child, children, True,
-                                 selected_key, selected_nodes)
+                self.add_draft(table, record, "archive", lineage + (not mail_children,),
+                               selected_key, selected_rows)
+            for index, child in enumerate(mail_children):
+                self.add_archive(table, child, children, True,
+                                 lineage + (index == len(mail_children) - 1,),
+                                 selected_key, selected_rows)
+
+        def add_missing(self, table, table_key):
+            table.add_row(Text(), Text(), Text("[missing]", style="dim italic"))
+            self.table_rows[table_key].append(None)
 
         def reload(self, requery=True):
             selected = self.selected() if self.is_mounted else None
@@ -1360,19 +1378,14 @@ def cmd_tui(args):
             else:
                 home_rows, recent_rows, archive_rows = self.loaded_rows
 
-            home = self.query_one("#home-tree", Tree)
-            recent = self.query_one("#recent-tree", Tree)
-            archive = self.query_one("#archive-tree", Tree)
-            home.reset("Home")
-            recent.reset("Recent")
-            archive.reset("Archive")
-            home.root.expand()
-            home.root.allow_expand = False
-            recent.root.expand()
-            recent.root.allow_expand = False
-            archive.root.expand()
-            archive.root.allow_expand = False
-            selected_nodes = {}
+            home = self.query_one("#home-table", DataTable)
+            recent = self.query_one("#recent-table", DataTable)
+            archive = self.query_one("#archive-table", DataTable)
+            home.clear()
+            recent.clear()
+            archive.clear()
+            self.table_rows = {"home": [], "recent": [], "archive": []}
+            selected_rows = {}
 
             shown_home_rows = self.filter_threads(home_rows, "home")
             home_threads = {}
@@ -1386,16 +1399,21 @@ def cmd_tui(args):
                 children = self.forest(records)
                 roots = children.get(None, [])
                 visible_roots = [record for record in roots if not record["archived"]]
-                missing = None
+                orphan_roots = [record for record in visible_roots
+                                if record["parent"] is not None]
+                orphan_index = 0
+                missing = False
                 for record in visible_roots:
-                    parent = home.root
                     if record["parent"] is not None:
-                        if missing is None:
-                            missing = home.root.add(
-                                Text("[missing]", style="dim italic"),
-                                expand=True, allow_expand=False)
-                        parent = missing
-                    self.add_home(parent, record, children, selected_key, selected_nodes)
+                        if not missing:
+                            self.add_missing(home, "home")
+                            missing = True
+                        orphan_index += 1
+                        lineage = (orphan_index == len(orphan_roots),)
+                    else:
+                        lineage = ()
+                    self.add_home(home, record, children, lineage,
+                                  selected_key, selected_rows)
 
             archive_threads = {}
             for row in archive_rows:
@@ -1425,17 +1443,21 @@ def cmd_tui(args):
                     find_archived(record)
                 if records[0]["thread"] not in shown_archive_threads:
                     continue
-                missing = None
+                orphan_roots = [record for record in archived_roots
+                                if record["parent"] is not None]
+                orphan_index = 0
+                missing = False
                 for record in archived_roots:
-                    parent = archive.root
                     if record["parent"] is not None:
-                        if missing is None:
-                            missing = archive.root.add(
-                                Text("[missing]", style="dim italic"),
-                                expand=True, allow_expand=False)
-                        parent = missing
-                    self.add_archive(parent, record, children, False,
-                                     selected_key, selected_nodes)
+                        if not missing:
+                            self.add_missing(archive, "archive")
+                            missing = True
+                        orphan_index += 1
+                        lineage = (orphan_index == len(orphan_roots),)
+                    else:
+                        lineage = ()
+                    self.add_archive(archive, record, children, False, lineage,
+                                     selected_key, selected_rows)
 
             recent_rows = [row for row in recent_rows
                            if row["commit"] not in archived_commits]
@@ -1449,17 +1471,22 @@ def cmd_tui(args):
                 reverse=True)
             for records in recent_ordered:
                 children = self.forest(records)
-                missing = None
-                for record in children.get(None, []):
-                    parent = recent.root
+                roots = children.get(None, [])
+                orphan_roots = [record for record in roots
+                                if record["parent"] is not None]
+                orphan_index = 0
+                missing = False
+                for record in roots:
                     if record["parent"] is not None:
-                        if missing is None:
-                            missing = recent.root.add(
-                                Text("[missing]", style="dim italic"),
-                                expand=True, allow_expand=False)
-                        parent = missing
-                    self.add_recent(parent, record, children,
-                                    selected_key, selected_nodes)
+                        if not missing:
+                            self.add_missing(recent, "recent")
+                            missing = True
+                        orphan_index += 1
+                        lineage = (orphan_index == len(orphan_roots),)
+                    else:
+                        lineage = ()
+                    self.add_recent(recent, record, children, lineage,
+                                    selected_key, selected_rows)
 
             visible = {
                 row["commit"]: row for row in
@@ -1481,9 +1508,9 @@ def cmd_tui(args):
                 "recent-pane": "recent",
                 "archive-pane": "archive",
             }[pane]
-            if key in selected_nodes:
-                tree = {"home": home, "recent": recent, "archive": archive}[key]
-                self.call_after_refresh(tree.move_cursor, selected_nodes[key])
+            if key in selected_rows:
+                table = {"home": home, "recent": recent, "archive": archive}[key]
+                self.call_after_refresh(table.move_cursor, row=selected_rows[key])
             self.update_status()
             self.update_buttons()
 
@@ -1523,7 +1550,7 @@ def cmd_tui(args):
                 archive_label = "Inherited"
             self.query_one("#archive", Button).label = archive_label
 
-        def on_tree_node_highlighted(self, event: Tree.NodeHighlighted):
+        def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted):
             self.update_buttons()
 
         def on_tabbed_content_tab_activated(self, event: TabbedContent.TabActivated):
@@ -1546,7 +1573,7 @@ def cmd_tui(args):
             self.searches[self.active_key()] = sel
             self.search_open = False
             event.input.display = False
-            self.active_tree().focus()
+            self.active_table().focus()
             self.reload(requery=False)
 
         def on_button_pressed(self, event: Button.Pressed):
@@ -1581,10 +1608,10 @@ def cmd_tui(args):
             return record
 
         def action_next_mail(self):
-            self.active_tree().action_cursor_down()
+            self.active_table().action_cursor_down()
 
         def action_previous_mail(self):
-            self.active_tree().action_cursor_up()
+            self.active_table().action_cursor_up()
 
         def action_search(self):
             search = self.query_one("#search", Input)
@@ -1599,7 +1626,7 @@ def cmd_tui(args):
             if search.display:
                 self.search_open = False
                 search.display = False
-                self.active_tree().focus()
+                self.active_table().focus()
                 return
             key = self.active_key()
             if self.searches[key]:
