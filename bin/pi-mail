@@ -201,10 +201,11 @@ class Index:
             subject TEXT NOT NULL
         );
         CREATE INDEX messages_message_sid ON messages(message_sid);
+        CREATE INDEX messages_parent_sid ON messages(parent_sid);
         CREATE INDEX messages_thread_sid ON messages(thread_sid);
         CREATE INDEX messages_author_sid ON messages(author_sid);
         CREATE INDEX messages_commit_time ON messages(commit_time DESC);
-        PRAGMA user_version = 2;
+        PRAGMA user_version = 3;
     """
 
     def __init__(self):
@@ -215,7 +216,17 @@ class Index:
         version = self.db.execute("PRAGMA user_version").fetchone()[0]
         if version == 0:
             self.db.executescript(self.SCHEMA)
-        elif version != 2:
+        elif version == 2:
+            with self.db:
+                self.db.execute("BEGIN IMMEDIATE")
+                # Another pi-mail process may have migrated while we waited.
+                if self.db.execute("PRAGMA user_version").fetchone()[0] == 2:
+                    self.db.execute(
+                        "CREATE INDEX IF NOT EXISTS messages_parent_sid ON messages(parent_sid)")
+                    self._merge_threads(self.db.execute(
+                        "SELECT message_sid, parent_sid, thread_sid FROM messages"))
+                    self.db.execute("PRAGMA user_version = 3")
+        elif version != 3:
             sys.exit(f"unsupported index version {version}; remove {CACHE} to rebuild")
         self.gitdirs = [os.path.realpath(path) for path in epochs()]
         with self.db:
@@ -266,6 +277,51 @@ class Index:
             existing.update(row[0] for row in rows)
         return [entry for entry in entries if entry[0] not in existing]
 
+    def _merge_threads(self, rows):
+        """Unify Message-ID, parent and reference-root components in one transaction."""
+        roots, sizes, nonroots, threads = {}, {}, set(), set()
+
+        def find(sid):
+            if sid not in roots:
+                roots[sid] = sid
+                sizes[sid] = 1
+            root = sid
+            while roots[root] != root:
+                root = roots[root]
+            while roots[sid] != sid:
+                parent = roots[sid]
+                roots[sid] = root
+                sid = parent
+            return root
+
+        for mid, parent, thread in rows:
+            threads.add(thread)
+            if parent is not None or thread != mid:
+                nonroots.add(mid)
+            for sid in (thread, parent):
+                if sid is None:
+                    continue
+                left, right = find(mid), find(sid)
+                if left == right:
+                    continue
+                if sizes[left] < sizes[right]:
+                    left, right = right, left
+                roots[right] = left
+                sizes[left] += sizes[right]
+
+        # Prefer a real or missing ancestor over a reply. The tie-break also
+        # gives malformed cycles a stable identity without walking forever.
+        canonical = {}
+        for sid in roots:
+            root = find(sid)
+            previous = canonical.get(root)
+            if previous is None or (sid in nonroots, sid) < (previous in nonroots, previous):
+                canonical[root] = sid
+        self.db.executemany(
+            "UPDATE messages SET thread_sid = ? WHERE thread_sid = ?",
+            ((canonical[find(sid)], sid) for sid in threads
+             if canonical[find(sid)] != sid))
+
     def _index_entries(self, gitdir, epoch_id, entries, blobs, progress):
         rows = []
         values = set()
@@ -275,7 +331,7 @@ class Index:
             # index under an internal identity so it does not block the batch.
             message_id = (message_ids or [f"oid:{commit}"])[0]
             parent = (in_reply_to or [None])[0] or (refs or [None])[-1]
-            thread = refs[0] if refs else message_id
+            thread = refs[0] if refs else parent or message_id
             rows.append((commit, message_id, parent, thread, timestamp, author, subject))
             values.update((message_id, thread, author))
             if parent:
@@ -299,6 +355,24 @@ class Index:
               string_ids[parent] if parent else None, string_ids[thread], timestamp,
               string_ids[author], subject)
              for commit, message_id, parent, thread, timestamp, author, subject in rows))
+
+        links = [(string_ids[message_id], string_ids[parent] if parent else None,
+                  string_ids[thread])
+                 for _, message_id, parent, thread, _, _, _ in rows]
+        # Stored threads are already unified. Include known ancestors and any
+        # threads waiting for these Message-IDs, including children that arrived
+        # before their parent or were indexed before we expanded the date range.
+        mids = [link[0] for link in links]
+        related_sids = {sid for link in links for sid in link if sid is not None}
+        for column, sids in (("message_sid", list(related_sids)),
+                             ("thread_sid", mids), ("parent_sid", mids)):
+            for start in range(0, len(sids), 500):
+                chunk = sids[start:start + 500]
+                parent_column = "parent_sid" if column == "parent_sid" else "NULL"
+                links.extend(self.db.execute(
+                    f"SELECT message_sid, {parent_column}, thread_sid FROM messages "
+                    f"WHERE {column} IN ({','.join('?' * len(chunk))})", chunk))
+        self._merge_threads(links)
 
     def sync(self, days):
         started = time.perf_counter()
