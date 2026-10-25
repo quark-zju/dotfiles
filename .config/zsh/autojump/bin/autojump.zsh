@@ -34,10 +34,11 @@ fi
 
 # change pwd hook
 autojump_chpwd() {
+    # Ignore user-defined pwd functions that abbreviate paths (e.g. with ~).
     if [[ -f "${AUTOJUMP_ERROR_PATH}" ]]; then
-        autojump --add "$(pwd)" >/dev/null 2>>${AUTOJUMP_ERROR_PATH} &!
+        autojump --add "$(builtin pwd)" >/dev/null 2>>${AUTOJUMP_ERROR_PATH} &!
     else
-        autojump --add "$(pwd)" >/dev/null &!
+        autojump --add "$(builtin pwd)" >/dev/null &!
     fi
 }
 
