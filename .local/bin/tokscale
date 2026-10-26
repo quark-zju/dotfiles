@@ -1070,12 +1070,17 @@ class _WebHandler(BaseHTTPRequestHandler):
 
 def run_web() -> int:
     remote = os.environ.get("TOKSCALE_REMOTE", "").strip()
-    if not remote:
-        warn("web mode requires TOKSCALE_REMOTE")
-        return 1
-    repo = prepare_repo(remote)
-    if repo is None:
-        return 1
+    if remote:
+        repo = prepare_repo(remote)
+        if repo is None:
+            return 1
+    else:
+        repo = REPO_DIR
+        if not (repo / "devices").is_dir():
+            warn(
+                f"web mode requires TOKSCALE_REMOTE or an existing local cache at {repo}"
+            )
+            return 1
     handler = type("WebHandler", (_WebHandler,), {"repo": repo})
     host = os.environ.get("TOKSCALE_WEB_HOST", "127.0.0.1")
     try:
