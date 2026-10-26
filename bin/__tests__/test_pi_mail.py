@@ -249,6 +249,33 @@ class ThreadIndexTest(unittest.TestCase):
 
 
 class MailViewTest(unittest.TestCase):
+    def test_raw_view_preserves_headers_and_mime_content(self):
+        view = pi_mail["cmd_view_mail"]
+        raw = (b"Received: from example.com\r\n\tby archive.example.com\r\n"
+               b"Subject: =?UTF-8?Q?raw_mail?=\r\n"
+               b"Content-Type: text/plain; charset=UTF-8\r\n"
+               b"Content-Transfer-Encoding: quoted-printable\r\n\r\n"
+               b"Body=0D=0A\r\n")
+        opened = []
+
+        def editor(command, check):
+            self.assertEqual(command[0], "editor")
+            path = Path(command[1])
+            opened.append(path)
+            self.assertEqual(path.read_bytes(), raw)
+
+        blobs = mock.Mock()
+        blobs.read.return_value = raw
+        index = mock.Mock()
+        index.message_location.return_value = ("inbox", "a" * 40)
+        with mock.patch.dict(view.__globals__, {
+            "Blobs": lambda: blobs, "editor_command": lambda: ["editor"],
+        }), mock.patch("subprocess.run", side_effect=editor):
+            view(mock.Mock(index=index, commit="a" * 40), raw=True)
+        blobs.read.assert_called_once_with("inbox", "a" * 40)
+        self.assertEqual(len(opened), 1)
+        self.assertFalse(opened[0].exists())
+
     def test_normalizes_decoded_body_before_opening_editor(self):
         view = pi_mail["cmd_view_mail"]
         for encoding, body in (

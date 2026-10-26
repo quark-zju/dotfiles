@@ -824,6 +824,14 @@ def cmd_author_stats(args):
     print_table("Reviewers", reviewers, "REPLIES")
 
 
+def format_headers(message, names):
+    headers = []
+    for name in names:
+        value = message[name]
+        headers.append(value.fold(policy=POLICY).rstrip("\n") if value else f"{name}:")
+    return "\n".join(headers)
+
+
 def cmd_show(args):
     for gitdir, commit in resolve_many(args.index, args.sels, args.days):
         if args.verbose:
@@ -832,13 +840,7 @@ def cmd_show(args):
         text = message.as_string(unixfrom=False).rstrip("\n")
         headers, separator, body = text.partition("\n\n")
         if not args.verbose:
-            shown = []
-            for name in ("From", "Subject"):
-                value = message[name]
-                shown.append(
-                    value.fold(policy=POLICY).rstrip("\n") if value else f"{name}:"
-                )
-            headers = "\n".join(shown)
+            headers = format_headers(message, ("From", "Subject"))
         if sys.stdout.isatty():
             body = re.sub(r"(?m)^>.*$", "\x1b[36m\\g<0>\x1b[0m", body)
         sys.stdout.write(headers + separator + body + "\n\n")
@@ -1185,25 +1187,28 @@ def delete_draft(commit):
     record_draft_change(commit, f"Delete reply to {commit[:12]}")
 
 
-def cmd_view_mail(args):
-    message = load(*args.index.message_location(args.commit))
-    part = message.get_body(preferencelist=("plain", "html"))
-    if part is None:
-        text = message.as_string(unixfrom=False).rstrip("\n")
-        _, _, body = text.partition("\n\n")
+def cmd_view_mail(args, raw=False):
+    location = args.index.message_location(args.commit)
+    if raw:
+        content = Blobs().read(*location)
     else:
-        body = part.get_content()
-    body = body.replace("\r\n", "\n").replace("\r", "\n").rstrip("\n")
-    headers = []
-    for name in ("From", "Subject", "Message-ID"):
-        value = message[name]
-        headers.append(value.fold(policy=POLICY).rstrip("\n") if value else f"{name}:")
+        message = load(*location)
+        part = message.get_body(preferencelist=("plain", "html"))
+        if part is None:
+            text = message.as_string(unixfrom=False).rstrip("\n")
+            _, _, body = text.partition("\n\n")
+        else:
+            body = part.get_content()
+        body = body.replace("\r\n", "\n").replace("\r", "\n").rstrip("\n")
+        headers = format_headers(message, ("From", "Subject", "Message-ID"))
+        content = headers + "\n\n" + body + "\n"
     path = None
     try:
         with tempfile.NamedTemporaryFile(
-                "w", suffix=".eml", prefix=f"pi-mail-{args.commit[:10]}-", delete=False) as out:
+                "wb" if raw else "w", suffix=".eml",
+                prefix=f"pi-mail-{args.commit[:10]}-", delete=False) as out:
             path = out.name
-            out.write("\n".join(headers) + "\n\n" + body + "\n")
+            out.write(content)
         subprocess.run([*editor_command(), path], check=False)
     finally:
         if path:
@@ -1256,6 +1261,9 @@ def cmd_tui(args):
             Binding("j", "next_mail", "Next"),
             Binding("k", "previous_mail", "Previous"),
             Binding("o", "view", "Open"),
+            Binding("O", "view(True)", "Raw mail"),
+            Binding("shift+o", "view(True)", show=False),
+            Binding("shift+enter", "view(True)", show=False),
             Binding("r", "reply", "Reply"),
             Binding("I", "toggle_read", "Read/Unread"),
             Binding("shift+i", "toggle_read", show=False),
@@ -1804,7 +1812,7 @@ def cmd_tui(args):
                 self.searches[key] = ""
                 self.reload(requery=False)
 
-        def action_view(self):
+        def action_view(self, raw=False):
             record = self.require_selected()
             if not record:
                 return
@@ -1813,7 +1821,8 @@ def cmd_tui(args):
                 return
             if not record["own"]:
                 state.set(record["commit"], "read")
-            self.launch_terminal("--internal-view-mail", record["commit"], "view mail")
+            action = "--internal-view-raw-mail" if raw else "--internal-view-mail"
+            self.launch_terminal(action, record["commit"], "view raw mail" if raw else "view mail")
             self.reload()
 
         def action_reply(self):
@@ -1967,14 +1976,15 @@ def main():
         "--internal-draft-reply": cmd_draft_edit,
         "--internal-draft-send": cmd_draft_send,
         "--internal-view-mail": cmd_view_mail,
+        "--internal-view-raw-mail": cmd_view_mail,
     }
     if len(sys.argv) == 3 and sys.argv[1] in internal:
         args = argparse.Namespace(commit=sys.argv[2])
         args.discard_unchanged = sys.argv[1] == "--internal-draft-reply"
-        if sys.argv[1] == "--internal-view-mail":
+        if sys.argv[1] in ("--internal-view-mail", "--internal-view-raw-mail"):
             args.index = Index()
             try:
-                internal[sys.argv[1]](args)
+                internal[sys.argv[1]](args, raw=sys.argv[1] == "--internal-view-raw-mail")
             finally:
                 args.index.db.close()
         else:
