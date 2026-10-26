@@ -70,6 +70,7 @@ bindsym $mod+x exec swaylock -f -c 111111
 bindsym $mod+p exec $menu
 bindsym Print exec grim
 bindsym $alt+Print exec grim -g "$(slurp)"
+bindsym --release Shift+Print exec geometry=$(slurp) && grim -g "$geometry" - | wl-copy --type image/png
 
 # Audio controls. Keep volume changes available while the session is locked.
 bindsym --locked XF86AudioRaiseVolume exec wpctl set-volume -l 1.0 @DEFAULT_AUDIO_SINK@ 5%+
