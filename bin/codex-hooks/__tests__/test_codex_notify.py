@@ -171,6 +171,23 @@ class RuntimeDir(unittest.TestCase):
                 self.assertIsNone(codex_notify.runtime_dir())
 
 
+class RemoteFunctions(unittest.TestCase):
+    def test_desktop_functions_can_be_uploaded(self):
+        try:
+            import ssh_sync
+        except ModuleNotFoundError:
+            self.skipTest("ssh_sync is not installed")
+
+        for name in (
+            "show_notify",
+            "mark_process_workspace_running",
+            "write_workspace_highlights",
+            "clear_session_workspace_highlights",
+        ):
+            with self.subTest(function=name):
+                ssh_sync._function_spec(getattr(codex_notify, name))
+
+
 class Swaysock(unittest.TestCase):
     def test_env_socket_kept(self):
         with mock.patch.dict(os.environ, {"SWAYSOCK": "/run/user/1000/sway-ipc.sock"}):

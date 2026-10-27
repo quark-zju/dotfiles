@@ -114,6 +114,9 @@ def agent_process(agent: str) -> tuple[int, int] | None:
 
 
 def runtime_dir() -> str | None:
+    # ssh_sync uploads this helper with the desktop functions.
+    import os
+
     path = os.environ.get("XDG_RUNTIME_DIR")
     if path and os.path.isabs(path):
         return path
