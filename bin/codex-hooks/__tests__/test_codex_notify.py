@@ -75,6 +75,88 @@ class AgentProcess(unittest.TestCase):
             with mock.patch.object(codex_notify, "process_name", return_value="bash"):
                 self.assertIsNone(codex_notify.agent_process("Muse"))
 
+    def test_shared_server_uses_session_client(self):
+        for client in ((123, 456), None):
+            with self.subTest(client=client):
+                with (
+                    mock.patch.object(
+                        codex_notify, "ancestors", return_value=iter([30])
+                    ),
+                    mock.patch.object(
+                        codex_notify, "process_name", return_value="codex"
+                    ),
+                    mock.patch.object(
+                        codex_notify, "process_stat", return_value=(1, 99)
+                    ),
+                    mock.patch.object(
+                        Path, "read_bytes", return_value=b"codex\0app-server\0"
+                    ),
+                    mock.patch.object(
+                        codex_notify, "codex_client_process", return_value=client
+                    ) as resolve,
+                ):
+                    self.assertEqual(codex_notify.agent_process("Codex", "s"), client)
+                    resolve.assert_called_once_with("s")
+
+    def test_local_codex_keeps_ancestor(self):
+        with (
+            mock.patch.object(codex_notify, "ancestors", return_value=iter([30])),
+            mock.patch.object(codex_notify, "process_name", return_value="codex"),
+            mock.patch.object(codex_notify, "process_stat", return_value=(1, 99)),
+            mock.patch.object(Path, "read_bytes", return_value=b"codex\0"),
+            mock.patch.object(codex_notify, "codex_client_process") as resolve,
+        ):
+            self.assertEqual(codex_notify.agent_process("Codex", "s"), (30, 99))
+            resolve.assert_not_called()
+
+
+class CodexClientProcess(unittest.TestCase):
+    def find_client(self, commands, stats):
+        def read_cmdline(path):
+            value = commands[int(path.parent.name)]
+            if isinstance(value, OSError):
+                raise value
+            return value
+
+        with (
+            mock.patch(
+                "subprocess.check_output", return_value="\n".join(map(str, commands))
+            ),
+            mock.patch.object(
+                Path, "read_bytes", autospec=True, side_effect=read_cmdline
+            ),
+            mock.patch.object(codex_notify, "process_stat", side_effect=stats.get),
+            mock.patch.object(codex_notify, "log_event"),
+        ):
+            return codex_notify.codex_client_process("session")
+
+    def test_matches_exact_session_on_remote_client(self):
+        commands = {
+            10: b"codex\0resume\0--remote\0unix:///socket\0session\0",
+            20: b"codex\0resume\0--remote\0unix:///socket\0session-other\0",
+            30: b"codex\0resume\0session\0",
+        }
+        self.assertEqual(
+            self.find_client(commands, {10: (1, 100), 20: (1, 200), 30: (1, 300)}),
+            (10, 100),
+        )
+
+    def test_newest_attachment_wins(self):
+        command = b"codex\0resume\0--remote=unix:///socket\0session\0"
+        self.assertEqual(
+            self.find_client(
+                {10: command, 20: command}, {10: (1, 200), 20: (1, 100)}
+            ),
+            (10, 200),
+        )
+
+    def test_disappeared_client_is_skipped(self):
+        commands = {
+            10: FileNotFoundError(),
+            20: b"codex\0resume\0--remote\0unix:///socket\0session\0",
+        }
+        self.assertIsNone(self.find_client(commands, {20: None}))
+
 
 class SavePrompt(unittest.TestCase):
     def test_stores_explicit_agent(self):

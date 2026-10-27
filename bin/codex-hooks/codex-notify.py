@@ -103,12 +103,62 @@ def detect_harness() -> str | None:
     return None
 
 
-def agent_process(agent: str) -> tuple[int, int] | None:
-    """Return the nearest ancestor agent process's PID and start time."""
+def codex_client_process(session_id: str) -> tuple[int, int] | None:
+    """Find a remote resume client by its explicit session ID argument.
+
+    This assumes the client stays on its initial session. If several clients
+    are attached, use the most recently started one.
+    """
+    import subprocess
+
+    try:
+        output = subprocess.check_output(
+            ["ps", "-C", "codex", "-o", "pid="],
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    session_arg = session_id.encode()
+    process = None
+    for value in output.split():
+        pid = int(value)
+        try:
+            args = Path(f"/proc/{pid}/cmdline").read_bytes().split(b"\0")
+        except OSError:
+            continue
+        if (
+            b"resume" not in args
+            or not any(
+                arg == b"--remote" or arg.startswith(b"--remote=") for arg in args
+            )
+            or session_arg not in args
+        ):
+            continue
+        stat = process_stat(pid)
+        if stat is not None and (process is None or stat[1] > process[1]):
+            process = pid, stat[1]
+    log_event("client_process_resolved", session_id=session_id, process=process)
+    return process
+
+
+def agent_process(agent: str, session_id: str | None = None) -> tuple[int, int] | None:
+    """Return the nearest ancestor agent process's PID and start time.
+
+    A shared Codex app-server runs hooks for multiple terminals; find the
+    session's client instead of using the server's terminal ancestry.
+    """
     for pid in ancestors(os.getppid()):
         if process_name(pid) in AGENT_PROCESS_NAMES[agent]:
             stat = process_stat(pid)
             if stat is not None:
+                if agent == "Codex" and session_id is not None:
+                    try:
+                        args = Path(f"/proc/{pid}/cmdline").read_bytes().split(b"\0")
+                    except OSError:
+                        return None
+                    if b"app-server" in args:
+                        return codex_client_process(session_id)
                 return pid, stat[1]
     return None
 
@@ -152,7 +202,7 @@ def save_prompt(payload: dict[str, Any], agent: str) -> dict[str, object] | None
     if prompt.startswith((TITLE_PROMPT_PREFIX, RECAP_PROMPT_PREFIX)):
         log_event("prompt_skipped", session_id=session_id, reason="internal_prompt")
         return
-    process = agent_process(agent)
+    process = agent_process(agent, session_id)
     if process is None:
         log_event(
             "prompt_skipped",
