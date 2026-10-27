@@ -1,11 +1,13 @@
 import os
 import io
+import json as json_alias
 import subprocess
 import sys
 import tempfile
 import threading
 import time
 import unittest
+import xml.etree.ElementTree as element_tree
 from pathlib import Path
 from unittest import mock
 
@@ -265,6 +267,66 @@ def slow_values():
     time.sleep(60)
 
 
+def stdlib_basename(path):
+    return os.path.basename(path)
+
+
+def stdlib_globals(path):
+    return (
+        stdlib_basename(path),
+        json_alias.dumps({"value": 1}),
+        element_tree.fromstring("<root/>").tag,
+    )
+
+
+def stdlib_values():
+    yield stdlib_globals("/a/b")
+    return sys.version_info.major
+
+
+def named_global():
+    return os
+
+
+class FunctionGlobalsTest(unittest.TestCase):
+    def run_function(self, function, *args):
+        request = {
+            "request_id": "test",
+            "function": ssh_sync._function_spec(function),
+            "args": args,
+            "kwargs": {},
+            "timeout": 5,
+        }
+        response = ssh_sync._run_worker(
+            request, [sys.executable, ssh_sync.__file__, "_remote_worker"]
+        )
+        self.assertTrue(response["ok"], response)
+        return response["value"]
+
+    def test_reimports_stdlib_globals_aliases_and_submodules(self):
+        self.assertEqual(
+            self.run_function(stdlib_globals, "/a/b"),
+            ("b", '{"value": 1}', "root"),
+        )
+
+    def test_stdlib_name_with_ordinary_value_is_captured(self):
+        with mock.patch.dict(globals(), {"os": "ordinary value"}):
+            self.assertEqual(self.run_function(named_global), "ordinary value")
+
+    def test_rejects_non_stdlib_module_and_imported_class(self):
+        for value in (ssh_sync, Path):
+            with self.subTest(value=value):
+                with mock.patch.dict(globals(), {"os": value}):
+                    with self.assertRaisesRegex(TypeError, "non-builtin globals: os"):
+                        ssh_sync._function_spec(named_global)
+
+    def test_undefined_stdlib_name_is_rejected(self):
+        with mock.patch.dict(globals()):
+            del globals()["os"]
+            with self.assertRaisesRegex(TypeError, "non-builtin globals: os"):
+                ssh_sync._function_spec(named_global)
+
+
 class IteratorWorkerTest(unittest.TestCase):
     def request(self, function, *args, timeout=5):
         return {
@@ -298,6 +360,13 @@ class IteratorWorkerTest(unittest.TestCase):
         self.assertEqual(responses[-1]["value"], "finished")
         self.assertEqual(responses[-1]["stdout"], b"stdout text\n")
         self.assertEqual(responses[-1]["stderr"], b"stderr text\n")
+
+    def test_reimports_stdlib_globals_in_iterator(self):
+        responses = list(self.run_iterator(self.request(stdlib_values)))
+
+        self.assertEqual(responses[0]["value"], ("b", '{"value": 1}', "root"))
+        self.assertTrue(responses[-1]["ok"], responses[-1])
+        self.assertEqual(responses[-1]["value"], sys.version_info.major)
 
     def test_cancel_terminates_worker(self):
         control = Control()

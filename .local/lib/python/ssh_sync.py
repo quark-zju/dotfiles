@@ -658,6 +658,7 @@ def _function_spec(script):
     module_globals = script.__globals__
     sources = []
     captured_globals = {}
+    module_imports = {}
     visited = set()
     unresolved = set()
 
@@ -675,6 +676,11 @@ def _function_spec(script):
                 and value.__name__ == name
             ):
                 add_function(value)
+            elif (
+                inspect.ismodule(value)
+                and value.__name__.partition(".")[0] in sys.stdlib_module_names
+            ):
+                module_imports[name] = value.__name__
             elif name in module_globals:
                 try:
                     _encode_value(value)
@@ -694,7 +700,13 @@ def _function_spec(script):
         )
     return {
         "kind": "call",
-        "source": "\n".join(sources),
+        "source": "\n".join(
+            [
+                "import %s as %s" % (module_name, name)
+                for name, module_name in sorted(module_imports.items())
+            ]
+            + sources
+        ),
         "name": script.__name__,
         "globals": captured_globals,
     }
@@ -838,13 +850,15 @@ def call_remote(host, script, *args, call_timeout=None, **kwargs):
 
     Pass a top-level ``def``. Other top-level functions from the same module
     are included recursively. Referenced globals containing standard supported
-    values are snapshotted; imports used by these functions should be inside
-    them. Lambdas and closures are not supported::
+    values are snapshotted. Standard-library module globals, including aliases
+    and submodules, are re-imported remotely; their local state is not copied.
+    Other imports used by these functions should be inside them. Lambdas and
+    closures are not supported::
 
+        import os
         import ssh_sync
 
         def disk_usage(path):
-            import os
             stat = os.statvfs(path)
             return {"available": stat.f_bavail * stat.f_frsize}
 
