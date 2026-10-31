@@ -21,5 +21,8 @@ For algorithmic optimization, don't take shortcuts that only fit the visible tes
 To understand a 3rd-party project, `git clone` to `~/src/3p/` and read locally.
 For large repos (>2GB or >10 min), use `--filter=blob:none`, never `--depth`.
 
+## Waiting for sub-agents
+When sub-agents are running, continue independent necessary; otherwise use `wait_agent`. Avoid short polling and invented busywork.
+
 ## Linux (external sandbox)
 `leash` may hide/deny file access by process+path; notably `.git` is only fully visible/writable by the `git` process.
