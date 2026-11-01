@@ -5,6 +5,7 @@ Run `ssh-pair serve` on A, then `ssh-pair join` on B. Compare the entire
 verification code on both screens before typing yes on each. Discovery and
 key exchange are plaintext: only public information is sent. The verification
 code binds both fresh nonces and all exchanged data, detecting substitution.
+Unsupported or invalid individual keys are warned about and skipped.
 Run as your normal login user, not with sudo. Requires Python 3 and ssh-keygen.
 """
 
@@ -91,7 +92,8 @@ def read_keys(paths):
         except FileNotFoundError:
             continue
         except ValueError as exc:
-            raise ValueError(f"Local public key {path}: {exc}") from exc
+            print(f"Warning: skipping local public key {path}: {exc}", file=sys.stderr)
+            continue
         except PermissionError:
             print(f"Skipping unreadable public key: {path}", file=sys.stderr)
             continue
@@ -129,13 +131,27 @@ def validate(peer):
         keys = peer.get(field)
         if not isinstance(keys, list) or len(keys) > 12:
             raise ValueError("Invalid key list")
-        for index, key in enumerate(keys, 1):
+        if any(not isinstance(key, str) or len(key) > 16384 for key in keys):
+            raise ValueError("Invalid public key entry")
+    return peer
+
+
+def usable_peer(peer):
+    """Filter for local import without changing the authenticated transcript."""
+    usable = dict(peer)
+    for field in ("keys", "host_keys"):
+        usable[field] = []
+        for index, key in enumerate(peer[field], 1):
             try:
                 if public_key(key) != key:
                     raise ValueError("Peer must send bare public keys")
             except ValueError as exc:
-                raise ValueError(f"Peer {field}[{index}]: {exc}") from exc
-    return peer
+                print(
+                    f"Warning: skipping peer {field}[{index}]: {exc}", file=sys.stderr
+                )
+                continue
+            usable[field].append(key)
+    return usable
 
 
 def send(sock, value):
@@ -284,9 +300,13 @@ def pair(sock, local):
     peer = validate(receive(sock))
     if peer["nonce"] == local["nonce"]:
         raise ValueError("Reflected session")
+    usable = usable_peer(peer)
+    skipped = sum(
+        len(peer[field]) - len(usable[field]) for field in ("keys", "host_keys")
+    )
     print(f"\nRequest from {peer['user']}@{peer['hostname']} ({address})")
     print(
-        f"Import: {len(peer['keys'])} user key(s), {len(peer['host_keys'])} host key(s)"
+        f"Import: {len(usable['keys'])} user key(s), {len(usable['host_keys'])} host key(s); skipped {skipped}"
     )
     print(f"\nVerification code: {verification_code(local, peer)}", flush=True)
     print("Compare the ENTIRE code on both machines. Do not approve a mismatch.")
@@ -303,16 +323,32 @@ def pair(sock, local):
         return
     error = None
     try:
-        install(peer, address)
+        install(usable, address)
     except (OSError, ValueError, subprocess.SubprocessError) as exc:
         error = str(exc)
-    send(sock, {"installed": error is None, "error": error})
+    send(
+        sock,
+        {
+            "installed": error is None,
+            "error": error,
+            "accepted_user_keys": len(usable["keys"]),
+            "accepted_host_keys": len(usable["host_keys"]),
+            "skipped_keys": skipped,
+        },
+    )
     result = receive(sock)
     if error:
         raise ValueError(f"Local import failed: {error}")
     if not isinstance(result, dict) or result.get("installed") is not True:
         raise ValueError(
             "Peer import failed; local keys were imported. Check the other screen."
+        )
+    if "accepted_user_keys" in result:
+        print(
+            "Peer accepted: "
+            f"{result.get('accepted_user_keys')!r} user key(s), "
+            f"{result.get('accepted_host_keys')!r} host key(s); "
+            f"skipped {result.get('skipped_keys')!r}"
         )
     print("\nPairing complete. SSH services were not started.")
     print(f"When sshd is enabled on the peer: ssh -l {peer['user']} {address}")

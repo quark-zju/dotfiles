@@ -3,6 +3,7 @@
 import base64
 import contextlib
 import importlib.machinery
+import io
 import importlib.util
 import os
 from pathlib import Path
@@ -84,17 +85,50 @@ class PairTests(unittest.TestCase):
                 key = pair.public_key(path.with_suffix(".pub").read_text().strip())
                 self.assertEqual(pair.public_key(key), key)
 
-    def test_rejected_peer_key_reports_type_source_and_keygen_error(self):
+    def test_rejected_key_is_warned_skipped_and_transcript_preserved(self):
         kind, data = self.keys[0].split()
         truncated = base64.b64encode(base64.b64decode(data)[:-1]).decode()
-        peer = self.peer()
-        peer["host_keys"] = [kind + " " + truncated]
-        with self.assertRaisesRegex(
-            ValueError,
-            r"Peer host_keys\[1\]: ssh-keygen rejected key type 'ssh-ed25519'.*exit",
-        ) as error:
-            pair.validate(peer)
-        self.assertIn("<public-key>", str(error.exception))
+        peer = self.peer(host_keys=[self.keys[1], kind + " " + truncated])
+        before = pair.encode(peer)
+        code = pair.verification_code(self.peer(1), peer)
+        warnings = io.StringIO()
+        with contextlib.redirect_stderr(warnings):
+            usable = pair.usable_peer(pair.validate(peer))
+        self.assertEqual(usable["keys"], peer["keys"])
+        self.assertEqual(usable["host_keys"], [self.keys[1]])
+        self.assertEqual(pair.encode(peer), before)
+        self.assertEqual(pair.verification_code(self.peer(1), peer), code)
+        self.assertIn("host_keys[2]", warnings.getvalue())
+        self.assertIn("ssh-ed25519", warnings.getvalue())
+        self.assertIn("<public-key>", warnings.getvalue())
+
+    def test_unrecognized_algorithm_does_not_block_other_keys(self):
+        kind = b"ssh-unsupported-test"
+        blob = len(kind).to_bytes(4, "big") + kind + b"unknown-key-data"
+        unknown = kind.decode() + " " + base64.b64encode(blob).decode()
+        peer = self.peer(host_keys=[unknown, self.keys[1]])
+        with contextlib.redirect_stderr(io.StringIO()):
+            usable = pair.usable_peer(pair.validate(peer))
+        self.assertEqual(usable["host_keys"], [self.keys[1]])
+        self.assertEqual(usable["keys"], [self.keys[0]])
+        with tempfile.TemporaryDirectory() as home, patch.object(
+            Path, "home", return_value=Path(home)
+        ):
+            pair.install(usable, "127.0.0.1")
+            self.assertIn(
+                self.keys[0], (Path(home) / ".ssh/authorized_keys").read_text()
+            )
+            hosts = (Path(home) / ".ssh/known_hosts").read_text()
+            self.assertIn(self.keys[1], hosts)
+            self.assertNotIn(unknown, hosts)
+
+    def test_rejected_local_key_does_not_block_existing_valid_key(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            bad, good = Path(scratch) / "bad.pub", Path(scratch) / "good.pub"
+            bad.write_text("broken")
+            good.write_text(self.keys[0])
+            with contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(pair.read_keys([bad, good]), [self.keys[0]])
 
     def test_append_dedup_preserve_restrictions(self):
         with tempfile.TemporaryDirectory() as home, patch.object(
