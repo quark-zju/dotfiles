@@ -1,15 +1,23 @@
 # Sway configuration migrated from ~/.config/i3/config.
 #
+# Arch Linux packages installed for this setup:
+#   sudo pacman -Syu --needed \
+#       sway waybar foot wmenu swaylock swayidle kanshi swaync dex \
+#       wl-clipboard grim slurp xorg-xwayland \
+#       polkit-gnome zenity \
+#       xdg-desktop-portal-wlr xdg-desktop-portal-gtk
+# Arch polkit agent (can be started from config.local):
+#   exec /usr/lib/polkit-gnome/polkit-gnome-authentication-agent-1
+#
 # Fedora dependencies used directly by this file:
 #   sudo dnf install sway waybar foot wmenu swaylock swayidle kanshi SwayNotificationCenter \
 #       network-manager-applet blueman xfce-polkit wl-clipboard grim slurp \
-#       xorg-x11-server-Xwayland i3
+#       xorg-x11-server-Xwayland
 # Additional window switcher: github.com/quark-zju/i3-selwin
 #
 # foot runs one process per window when invoked directly. Do not replace it
 # with footclient if window PID -> shell PID mapping is desired.
-# XWayland and the i3 package are transitional dependencies for legacy apps,
-# class-based window rules, and the i3-input mark/goto prompt.
+# XWayland is a transitional dependency for legacy apps and class-based rules.
 
 font pango:Noto Sans CJK 10
 
@@ -77,10 +85,9 @@ bindsym --locked XF86AudioRaiseVolume exec wpctl set-volume -l 1.0 @DEFAULT_AUDI
 bindsym --locked XF86AudioLowerVolume exec wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%-
 bindsym --locked --no-repeat XF86AudioMute exec wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle
 
-# i3-input uses XWayland for its UI, but its IPC commands work with Sway.
+# Window switcher (installed separately from the packages listed above).
 bindsym $mod+comma exec i3-selwin
-bindsym $mod+m exec i3-input -F 'mark %s' -l 1 -P 'Mark: '
-bindsym $mod+g exec i3-input -F '[con_mark="%s"] focus' -l 1 -P 'Goto: '
+bindsym $mod+m exec i3-selwin
 
 # Focus.
 bindsym $mod+$left focus left
