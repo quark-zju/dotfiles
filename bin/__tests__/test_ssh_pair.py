@@ -1,5 +1,6 @@
 """Exercise pairing using isolated homes; never change the real SSH configuration."""
 
+import base64
 import contextlib
 import importlib.machinery
 import importlib.util
@@ -71,6 +72,29 @@ class PairTests(unittest.TestCase):
         ]:
             with self.assertRaises(ValueError):
                 pair.public_key(key)
+
+    def test_rsa_and_ecdsa_public_keys_round_trip(self):
+        for kind in ("rsa", "ecdsa"):
+            with self.subTest(kind=kind), tempfile.TemporaryDirectory() as scratch:
+                path = Path(scratch) / "key"
+                subprocess.run(
+                    ["ssh-keygen", "-q", "-t", kind, "-N", "", "-f", str(path)],
+                    check=True,
+                )
+                key = pair.public_key(path.with_suffix(".pub").read_text().strip())
+                self.assertEqual(pair.public_key(key), key)
+
+    def test_rejected_peer_key_reports_type_source_and_keygen_error(self):
+        kind, data = self.keys[0].split()
+        truncated = base64.b64encode(base64.b64decode(data)[:-1]).decode()
+        peer = self.peer()
+        peer["host_keys"] = [kind + " " + truncated]
+        with self.assertRaisesRegex(
+            ValueError,
+            r"Peer host_keys\[1\]: ssh-keygen rejected key type 'ssh-ed25519'.*exit",
+        ) as error:
+            pair.validate(peer)
+        self.assertIn("<public-key>", str(error.exception))
 
     def test_append_dedup_preserve_restrictions(self):
         with tempfile.TemporaryDirectory() as home, patch.object(

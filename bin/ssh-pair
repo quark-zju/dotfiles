@@ -26,6 +26,7 @@ import stat
 import struct
 import subprocess
 import sys
+import tempfile
 import time
 
 GROUP = "239.255.77.77"
@@ -61,15 +62,24 @@ def public_key(text):
     if raw[4 : 4 + size] != kind.encode("ascii"):
         raise ValueError("Public key type does not match its blob")
     key = f"{kind} {data}"
-    result = subprocess.run(
-        ["ssh-keygen", "-l", "-f", "-"],
-        input=key + "\n",
-        text=True,
-        capture_output=True,
-        timeout=5,
-    )
-    if result.returncode:
-        raise ValueError("ssh-keygen rejected a public key")
+    # A regular file avoids differences in ssh-keygen's stdin handling.
+    with tempfile.NamedTemporaryFile(mode="w+", suffix=".pub") as file:
+        file.write(key + "\n")
+        file.flush()
+        result = subprocess.run(
+            ["ssh-keygen", "-l", "-f", file.name],
+            stdin=subprocess.DEVNULL,
+            text=True,
+            capture_output=True,
+            timeout=5,
+        )
+        if result.returncode:
+            detail = (result.stderr or result.stdout).strip()
+            detail = detail.replace(file.name, "<public-key>")[:1000]
+            raise ValueError(
+                f"ssh-keygen rejected key type {kind!r} "
+                f"(exit {result.returncode}): {detail!r}"
+            )
     return key
 
 
@@ -80,6 +90,8 @@ def read_keys(paths):
             key = public_key(path.read_text().strip())
         except FileNotFoundError:
             continue
+        except ValueError as exc:
+            raise ValueError(f"Local public key {path}: {exc}") from exc
         except PermissionError:
             print(f"Skipping unreadable public key: {path}", file=sys.stderr)
             continue
@@ -117,9 +129,12 @@ def validate(peer):
         keys = peer.get(field)
         if not isinstance(keys, list) or len(keys) > 12:
             raise ValueError("Invalid key list")
-        for key in keys:
-            if public_key(key) != key:
-                raise ValueError("Peer must send bare public keys")
+        for index, key in enumerate(keys, 1):
+            try:
+                if public_key(key) != key:
+                    raise ValueError("Peer must send bare public keys")
+            except ValueError as exc:
+                raise ValueError(f"Peer {field}[{index}]: {exc}") from exc
     return peer
 
 
