@@ -1,0 +1,141 @@
+#!/usr/bin/env python3
+"""Link dotfiles entries into HOME without replacing existing destinations.
+
+Bare relative paths are tried relative to the dotfiles root, then the current
+working directory, then HOME. ./ and ../ explicitly select the current working
+directory. Absolute and ~/ paths under HOME or the repo are also accepted.
+New links use relative targets; missing parent directories are created.
+Conflicts and errors are reported per item, processing continues, and the exit
+status is 1 if any item conflicts or fails (otherwise 0).
+"""
+
+import argparse
+import errno
+import os
+from pathlib import Path
+import stat
+
+
+def under(path, base):
+    try:
+        return path.relative_to(base)
+    except ValueError:
+        return None
+
+
+def resolve_argument(argument, root, home, cwd):
+    """Map a logical HOME or repository path to a repository-relative entry."""
+    value = os.path.expanduser(argument)
+    if os.path.isabs(value):
+        candidates = [Path(value)]
+    elif value in (".", "..") or value.startswith(("./", "../")):
+        candidates = [cwd / value]
+    else:
+        candidates = [root / value, cwd / value, home / value]
+    mapped = False
+    for candidate in candidates:
+        candidate = Path(os.path.abspath(candidate))
+        # Canonicalize HOME itself, preserving child symlinks so a conflicting
+        # HOME link cannot redirect which repository entry is selected.
+        home_relative = under(candidate, home)
+        if home_relative is not None:
+            candidate = home.resolve() / home_relative
+        relative = under(candidate, root)
+        if relative is None:
+            relative = under(candidate, home.resolve())
+        if relative is None:
+            # Accept aliases of the repository outside HOME as well.
+            relative = under(candidate.resolve(), root)
+        if relative is None:
+            continue
+        mapped = True
+        if relative == Path("."):
+            raise OSError(errno.EINVAL, "Cannot link the repository or HOME root")
+        source = root / relative
+        try:
+            source.lstat()
+        except (FileNotFoundError, NotADirectoryError):
+            continue
+        return relative
+    code = errno.ENOENT if mapped else errno.EINVAL
+    raise OSError(code, "No matching dotfiles entry")
+
+
+def existing_result(destination, resolved_source):
+    try:
+        info = destination.lstat()
+    except FileNotFoundError:
+        return None
+    try:
+        if destination.resolve() == resolved_source:
+            return "already symlinked"
+    except RuntimeError:
+        # Older Python versions raise RuntimeError for symlink loops.
+        pass
+    except OSError as error:
+        if error.errno != errno.ELOOP:
+            raise
+    if stat.S_ISLNK(info.st_mode):
+        kind = f"symlinked to {os.readlink(destination)}"
+    elif stat.S_ISDIR(info.st_mode):
+        kind = "regular directory"
+    elif stat.S_ISREG(info.st_mode):
+        kind = "regular file"
+    else:
+        kind = "special file"
+    return f"conflict ({kind})"
+
+
+def link_entry(relative, root, home):
+    source = root / relative
+    destination = home / relative
+    resolved_source = source.resolve(strict=True)
+    result = existing_result(destination, resolved_source)
+    if result is not None:
+        return result
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    # The containing directory may itself be a symlink to another location.
+    target = os.path.relpath(source, destination.parent.resolve())
+    try:
+        os.symlink(target, destination)
+    except FileExistsError:
+        # Do not overwrite a destination created after the initial check.
+        result = existing_result(destination, resolved_source)
+        if result is None:
+            raise
+        return result
+    return "symlinked"
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    parser.add_argument("paths", nargs="+", help="dotfiles entries to link into HOME")
+    args = parser.parse_args(argv)
+    root = Path(__file__).resolve().parent
+    home = Path(os.path.abspath(Path.home()))
+    cwd = Path.cwd()
+    failed = False
+    for argument in args.paths:
+        label = argument
+        try:
+            relative = resolve_argument(argument, root, home, cwd)
+            label = relative.as_posix()
+            result = link_entry(relative, root, home)
+            failed |= result.startswith("conflict (")
+        except OSError as error:
+            result = errno.errorcode.get(error.errno, "EIO")
+            failed = True
+        except RuntimeError:
+            result = "ELOOP"
+            failed = True
+        except ValueError:
+            result = "EINVAL"
+            failed = True
+        print(f"{label} -> {result}")
+    return int(failed)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
