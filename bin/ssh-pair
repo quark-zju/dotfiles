@@ -1,0 +1,464 @@
+#!/usr/bin/env python3
+"""Pair existing SSH public keys over a LAN; never start sshd or create keys.
+
+Run `ssh-pair serve` on A, then `ssh-pair join` on B. Compare the entire
+verification code on both screens before typing yes on each. Discovery and
+key exchange are plaintext: only public information is sent. The verification
+code binds both fresh nonces and all exchanged data, detecting substitution.
+Run as your normal login user, not with sudo. Requires Python 3 and ssh-keygen.
+"""
+
+import argparse
+import base64
+import contextlib
+import fcntl
+import getpass
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import secrets
+import select
+import shutil
+import socket
+import stat
+import struct
+import subprocess
+import sys
+import time
+
+GROUP = "239.255.77.77"
+PORT = 45872
+PROTOCOL = "ssh-pair-v1"
+LIMIT = 65536
+DEFAULT_KEYS = (
+    "id_ed25519",
+    "id_ecdsa",
+    "id_rsa",
+    "id_ed25519_sk",
+    "id_ecdsa_sk",
+    "id_mldsa44_ed25519",
+)
+
+
+def encode(value):
+    return json.dumps(value, sort_keys=True, separators=(",", ":")).encode("ascii")
+
+
+def public_key(text):
+    """Accept one bare public key, never authorized_keys options or comments."""
+    if not isinstance(text, str) or len(text) > 16384 or "\n" in text or "\r" in text:
+        raise ValueError("Invalid public key")
+    fields = text.split()
+    if len(fields) < 2:
+        raise ValueError("Invalid public key")
+    kind, data = fields[:2]
+    raw = base64.b64decode(data, validate=True)
+    if len(raw) < 4:
+        raise ValueError("Invalid public key blob")
+    size = struct.unpack("!I", raw[:4])[0]
+    if raw[4 : 4 + size] != kind.encode("ascii"):
+        raise ValueError("Public key type does not match its blob")
+    key = f"{kind} {data}"
+    result = subprocess.run(
+        ["ssh-keygen", "-l", "-f", "-"],
+        input=key + "\n",
+        text=True,
+        capture_output=True,
+        timeout=5,
+    )
+    if result.returncode:
+        raise ValueError("ssh-keygen rejected a public key")
+    return key
+
+
+def read_keys(paths):
+    keys = []
+    for path in paths:
+        try:
+            key = public_key(path.read_text().strip())
+        except FileNotFoundError:
+            continue
+        except PermissionError:
+            print(f"Skipping unreadable public key: {path}", file=sys.stderr)
+            continue
+        if key not in keys:
+            keys.append(key)
+    return keys
+
+
+def identity():
+    home = Path.home()
+    return {
+        "protocol": PROTOCOL,
+        "nonce": secrets.token_hex(32),
+        "user": getpass.getuser(),
+        "hostname": socket.gethostname(),
+        "keys": read_keys([home / ".ssh" / (name + ".pub") for name in DEFAULT_KEYS]),
+        "host_keys": read_keys(sorted(Path("/etc/ssh").glob("ssh_host_*_key.pub"))),
+    }
+
+
+def validate(peer):
+    if not isinstance(peer, dict) or peer.get("protocol") != PROTOCOL:
+        raise ValueError("Incompatible peer")
+    if not isinstance(peer.get("nonce"), str) or not re.fullmatch(
+        r"[0-9a-f]{64}", peer["nonce"]
+    ):
+        raise ValueError("Invalid session nonce")
+    for field in ("user", "hostname"):
+        value = peer.get(field)
+        if not isinstance(value, str) or not re.fullmatch(
+            r"[A-Za-z0-9_.@-]{1,253}", value
+        ):
+            raise ValueError(f"Invalid peer {field}")
+    for field in ("keys", "host_keys"):
+        keys = peer.get(field)
+        if not isinstance(keys, list) or len(keys) > 12:
+            raise ValueError("Invalid key list")
+        for key in keys:
+            if public_key(key) != key:
+                raise ValueError("Peer must send bare public keys")
+    return peer
+
+
+def send(sock, value):
+    payload = encode(value)
+    if len(payload) > LIMIT:
+        raise ValueError("Message too large")
+    sock.sendall(struct.pack("!I", len(payload)) + payload)
+
+
+def receive(sock):
+    def exact(size):
+        data = bytearray()
+        while len(data) < size:
+            chunk = sock.recv(size - len(data))
+            if not chunk:
+                raise ConnectionError("Peer disconnected")
+            data.extend(chunk)
+        return bytes(data)
+
+    size = struct.unpack("!I", exact(4))[0]
+    if size > LIMIT:
+        raise ValueError("Message too large")
+    return json.loads(exact(size))
+
+
+def verification_code(a, b):
+    digest = hashlib.sha256(
+        encode(sorted([a, b], key=lambda x: x["nonce"]))
+    ).hexdigest()[:32]
+    return "-".join(digest[i : i + 4] for i in range(0, len(digest), 4))
+
+
+@contextlib.contextmanager
+def locked_file(path):
+    flags = os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK
+    fd = os.open(path, flags, 0o600)
+    with os.fdopen(fd, "r+", encoding="utf-8") as file:
+        info = os.fstat(file.fileno())
+        if (
+            not stat.S_ISREG(info.st_mode)
+            or info.st_uid != os.getuid()
+            or info.st_mode & 0o022
+        ):
+            raise ValueError(
+                f"Expected a regular, owned, non-group/world-writable file: {path}"
+            )
+        fcntl.flock(file, fcntl.LOCK_EX)
+        yield file
+
+
+def append_lines(file, lines):
+    if not lines:
+        return
+    file.seek(0)
+    old = file.read()
+    file.seek(0, os.SEEK_END)
+    if old and not old.endswith("\n"):
+        file.write("\n")
+    file.write("\n".join(lines) + "\n")
+    file.flush()
+    os.fsync(file.fileno())
+
+
+def install(peer, address):
+    """Append only; preserve restrictions and refuse conflicting known host keys."""
+    directory = Path.home() / ".ssh"
+    if not peer["keys"] and not peer["host_keys"]:
+        print("Peer has no public keys to import; no files changed.")
+        return
+    directory.mkdir(mode=0o700, exist_ok=True)
+    if directory.stat().st_uid != os.getuid() or directory.stat().st_mode & 0o022:
+        raise ValueError("~/.ssh must be owned by you and not group/world writable")
+    with contextlib.ExitStack() as stack:
+        updates = []
+        if peer["host_keys"]:
+            path = directory / "known_hosts"
+            file = stack.enter_context(locked_file(path))
+            matches = subprocess.run(
+                ["ssh-keygen", "-F", address, "-f", str(path)],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if matches.returncode not in (0, 1):
+                raise ValueError("Cannot inspect known_hosts")
+            existing = []
+            for line in matches.stdout.splitlines():
+                if line.startswith("#"):
+                    continue
+                fields = line.split()
+                if fields and fields[0].startswith("@"):
+                    raise ValueError(
+                        f"Special known_hosts entry for {address}; review it manually"
+                    )
+                if len(fields) >= 3:
+                    existing.append(" ".join(fields[1:3]))
+            for key in peer["host_keys"]:
+                kind = key.split()[0]
+                if any(old.split()[0] == kind and old != key for old in existing):
+                    raise ValueError(
+                        f"Host key conflict for {address}; no keys imported"
+                    )
+            updates.append(
+                (
+                    file,
+                    [
+                        f"{address} {key}"
+                        for key in peer["host_keys"]
+                        if key not in existing
+                    ],
+                )
+            )
+        if peer["keys"]:
+            file = stack.enter_context(locked_file(directory / "authorized_keys"))
+            old = file.read().splitlines()
+            # Also recognize keys with options: never add an unrestricted duplicate.
+            existing_blobs = {
+                part
+                for line in old
+                if not line.lstrip().startswith("#")
+                for part in line.split()
+            }
+            updates.append(
+                (
+                    file,
+                    [
+                        key + " ssh-pair"
+                        for key in peer["keys"]
+                        if key.split()[1] not in existing_blobs
+                    ],
+                )
+            )
+        for file, lines in updates:
+            append_lines(file, lines)
+            print(f"Added {len(lines)} key(s).")
+    if not peer["keys"]:
+        print("Peer has no default user public key; authorized_keys unchanged.")
+    if not peer["host_keys"]:
+        print("Peer has no readable SSH host public key; known_hosts unchanged.")
+
+
+def pair(sock, local):
+    address = sock.getpeername()[0]
+    sock.settimeout(10)
+    send(sock, local)
+    peer = validate(receive(sock))
+    if peer["nonce"] == local["nonce"]:
+        raise ValueError("Reflected session")
+    print(f"\nRequest from {peer['user']}@{peer['hostname']} ({address})")
+    print(
+        f"Import: {len(peer['keys'])} user key(s), {len(peer['host_keys'])} host key(s)"
+    )
+    print(f"\nVerification code: {verification_code(local, peer)}", flush=True)
+    print("Compare the ENTIRE code on both machines. Do not approve a mismatch.")
+    approved = (
+        input("Trust this peer's keys for future SSH logins? Type yes: ").strip()
+        == "yes"
+    )
+    sock.settimeout(300)
+    send(sock, {"approved": approved})
+    print("Waiting for the other machine's confirmation...", flush=True)
+    decision = receive(sock)
+    if not approved or decision != {"approved": True}:
+        print("Pairing declined; no keys imported.")
+        return
+    error = None
+    try:
+        install(peer, address)
+    except (OSError, ValueError, subprocess.SubprocessError) as exc:
+        error = str(exc)
+    send(sock, {"installed": error is None, "error": error})
+    result = receive(sock)
+    if error:
+        raise ValueError(f"Local import failed: {error}")
+    if not isinstance(result, dict) or result.get("installed") is not True:
+        raise ValueError(
+            "Peer import failed; local keys were imported. Check the other screen."
+        )
+    print("\nPairing complete. SSH services were not started.")
+    print(f"When sshd is enabled on the peer: ssh -l {peer['user']} {address}")
+
+
+def serve(args, local):
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as tcp, socket.socket(
+        socket.AF_INET, socket.SOCK_DGRAM
+    ) as udp:
+        tcp.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        tcp.bind((args.bind, args.port))
+        tcp.listen(4)
+        udp.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        udp.bind(("", args.port))
+        membership = socket.inet_aton(GROUP) + socket.inet_aton(args.bind)
+        try:
+            udp.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, membership)
+        except OSError as exc:
+            print(
+                f"Multicast unavailable ({exc}); broadcast/direct IP still available.",
+                file=sys.stderr,
+            )
+        print(f"Waiting as {local['user']}@{local['hostname']} on TCP/UDP {args.port}.")
+        print("On the other machine: ssh-pair join (Ctrl-C to stop)", flush=True)
+        while True:
+            ready, _, _ = select.select([tcp, udp], [], [])
+            if udp in ready:
+                data, address = udp.recvfrom(1024)
+                if data == PROTOCOL.encode():
+                    udp.sendto(
+                        encode(
+                            {
+                                "protocol": PROTOCOL,
+                                "hostname": local["hostname"],
+                                "user": local["user"],
+                                "session": local["nonce"],
+                            }
+                        ),
+                        address,
+                    )
+            if tcp in ready:
+                sock, _ = tcp.accept()
+                with sock:
+                    try:
+                        pair(sock, local)
+                        return
+                    except (
+                        OSError,
+                        ValueError,
+                        EOFError,
+                        subprocess.SubprocessError,
+                    ) as exc:
+                        print(f"Pairing failed: {exc}", file=sys.stderr)
+                        # Exit: never reuse a transcript nonce for another request.
+                        raise
+
+
+def discover(args):
+    peers = {}
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp:
+        udp.bind((args.bind, 0))
+        udp.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        udp.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 1)
+        if args.bind != "0.0.0.0":
+            udp.setsockopt(
+                socket.IPPROTO_IP, socket.IP_MULTICAST_IF, socket.inet_aton(args.bind)
+            )
+        deadline = time.monotonic() + args.timeout
+        next_query = 0
+        while time.monotonic() < deadline:
+            if time.monotonic() >= next_query:
+                for destination in (GROUP, "255.255.255.255", "127.0.0.1"):
+                    try:
+                        udp.sendto(PROTOCOL.encode(), (destination, args.port))
+                    except OSError:
+                        pass
+                next_query = time.monotonic() + 1
+            udp.settimeout(min(0.25, max(0.001, deadline - time.monotonic())))
+            try:
+                data, address = udp.recvfrom(2048)
+                offer = json.loads(data)
+                if (
+                    isinstance(offer, dict)
+                    and offer.get("protocol") == PROTOCOL
+                    and isinstance(offer.get("session"), str)
+                    and re.fullmatch(r"[0-9a-f]{64}", offer["session"])
+                ):
+                    previous = peers.get(offer["session"])
+                    if previous is None or previous[0].startswith("127."):
+                        peers[offer["session"]] = (address[0], offer)
+            except (socket.timeout, ValueError, UnicodeError):
+                continue
+    if not peers:
+        raise ValueError(
+            "No peers found. Check LAN/firewall, or use: ssh-pair join <IPv4>"
+        )
+    items = sorted(peers.values())
+    for index, (address, offer) in enumerate(items, 1):
+        print(
+            f"{index}. {address} {ascii(offer.get('user'))}@{ascii(offer.get('hostname'))}"
+        )
+    if len(items) == 1:
+        return items[0][0]
+    selection = int(input("Choose peer number: "))
+    if not 1 <= selection <= len(items):
+        raise ValueError("Invalid peer number")
+    return items[selection - 1][0]
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    parser.add_argument("mode", choices=("serve", "join"))
+    parser.add_argument(
+        "host", nargs="?", help="peer IPv4 address, bypassing discovery"
+    )
+    parser.add_argument(
+        "--port", type=int, default=PORT, help=f"TCP/UDP pairing port (default {PORT})"
+    )
+    parser.add_argument(
+        "--bind",
+        default="0.0.0.0",
+        help="local IPv4 interface (default all/default route)",
+    )
+    parser.add_argument(
+        "--timeout", type=float, default=4, help="discovery duration in seconds"
+    )
+    args = parser.parse_args()
+    if not 1 <= args.port <= 65535 or not 0 < args.timeout <= 60:
+        parser.error("Invalid port or timeout (must be 0 < timeout <= 60)")
+    socket.inet_aton(args.bind)
+    if args.host:
+        socket.inet_aton(args.host)
+    if args.mode == "serve" and args.host:
+        parser.error("serve does not take a peer address")
+    if os.getuid() == 0:
+        parser.error("Run as your normal login user, without sudo")
+    if not shutil.which("ssh-keygen"):
+        parser.error("Install OpenSSH (ssh-keygen) first")
+    local = identity()
+    if not local["keys"]:
+        print(
+            "No default user public key; skipping user-key export (no key generated)."
+        )
+    if args.mode == "serve":
+        serve(args, local)
+    else:
+        host = args.host or discover(args)
+        with socket.create_connection(
+            (host, args.port), timeout=10, source_address=(args.bind, 0)
+        ) as sock:
+            pair(sock, local)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("\nCancelled.", file=sys.stderr)
+        sys.exit(130)
+    except (OSError, ValueError, EOFError, subprocess.SubprocessError) as error:
+        print(f"ssh-pair: {error}", file=sys.stderr)
+        sys.exit(1)
