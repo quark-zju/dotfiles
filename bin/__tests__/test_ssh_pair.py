@@ -130,6 +130,44 @@ class PairTests(unittest.TestCase):
             with contextlib.redirect_stderr(io.StringIO()):
                 self.assertEqual(pair.read_keys([bad, good]), [self.keys[0]])
 
+    def test_old_protocol_is_rejected_before_import(self):
+        peer = self.peer()
+        peer["protocol"] = "ssh-pair-v1"
+        with self.assertRaisesRegex(ValueError, "Incompatible peer"):
+            pair.validate(peer)
+
+    def test_peer_disconnect_does_not_undo_local_import(self):
+        with tempfile.TemporaryDirectory() as home, patch.object(
+            Path, "home", return_value=Path(home)
+        ), socket.socket() as listener:
+            listener.bind(("127.0.0.1", 0))
+            listener.listen(1)
+
+            def disconnecting_peer():
+                connection, _ = listener.accept()
+                with connection:
+                    pair.receive(connection)
+                    pair.send(connection, self.peer(1))
+
+            thread = threading.Thread(target=disconnecting_peer, daemon=True)
+            thread.start()
+            warnings = io.StringIO()
+            with socket.create_connection(listener.getsockname(), timeout=5) as sock:
+                with patch(
+                    "builtins.input", return_value="yes"
+                ), contextlib.redirect_stdout(
+                    io.StringIO()
+                ), contextlib.redirect_stderr(
+                    warnings
+                ):
+                    pair.pair(sock, self.peer(0))
+            thread.join(timeout=5)
+            self.assertFalse(thread.is_alive())
+            self.assertIn(
+                self.keys[1], (Path(home) / ".ssh/authorized_keys").read_text()
+            )
+            self.assertIn("local decision remains applied", warnings.getvalue())
+
     def test_append_dedup_preserve_restrictions(self):
         with tempfile.TemporaryDirectory() as home, patch.object(
             Path, "home", return_value=Path(home)
@@ -177,7 +215,7 @@ class PairTests(unittest.TestCase):
                 pair.install(self.peer(), "127.0.0.1")
             self.assertEqual(target.read_text(), "unchanged")
 
-    def integration(self, approve=True, missing=False):
+    def integration(self, approvals=(True, True), missing=False, check_early=False):
         with tempfile.TemporaryDirectory() as scratch, contextlib.ExitStack() as stack:
             homes = [Path(scratch) / str(index) for index in range(2)]
             for index, home in enumerate(homes):
@@ -194,6 +232,7 @@ class PairTests(unittest.TestCase):
             logs = [[], []]
             ready = threading.Event()
             verified = [threading.Event(), threading.Event()]
+            applied = [threading.Event(), threading.Event()]
             for index, mode in enumerate(["serve", "join"]):
                 if index:
                     self.assertTrue(ready.wait(5), logs)
@@ -219,26 +258,40 @@ class PairTests(unittest.TestCase):
                         logs[i].append(line)
                         if "Waiting as" in line:
                             ready.set()
-                        if "Verification code:" in line:
+                        if "Compare ALL 4 groups" in line:
                             verified[i].set()
+                        if "Waiting for peer's import result" in line:
+                            applied[i].set()
 
                 threading.Thread(target=reader, daemon=True).start()
             for event in verified:
                 self.assertTrue(event.wait(8), logs)
             codes = [
-                re.search(r"Verification code: ([a-f0-9-]+)", "".join(log)).group(1)
+                re.findall(r"\[([1-4])\] ([a-f0-9]{4}-[a-f0-9]{4})", "".join(log))
                 for log in logs
             ]
+            self.assertEqual(len(codes[0]), 4)
             self.assertEqual(codes[0], codes[1])
-            procs[0].stdin.write("yes\n")
+            for index, log in enumerate(logs):
+                text = "".join(log)
+                local_label = re.search(r"Local:.*session ([a-f0-9-]+)", text).group(1)
+                other_label = re.search(
+                    r"Peer:.*session ([a-f0-9-]+)", "".join(logs[1 - index])
+                ).group(1)
+                self.assertEqual(local_label, other_label)
+            procs[0].stdin.write("yes\n" if approvals[0] else "no\n")
             procs[0].stdin.flush()
-            procs[1].stdin.write("yes\n" if approve else "no\n")
+            if check_early:
+                self.assertTrue(applied[0].wait(5), logs)
+                self.assertTrue((homes[0] / ".ssh/authorized_keys").exists(), logs)
+                self.assertIsNone(procs[1].poll())
+            procs[1].stdin.write("yes\n" if approvals[1] else "no\n")
             procs[1].stdin.flush()
             for proc in procs:
                 self.assertEqual(proc.wait(timeout=10), 0, logs)
             for index, home in enumerate(homes):
                 path = home / ".ssh" / "authorized_keys"
-                expected = approve and not (missing and index == 0)
+                expected = approvals[index] and not (missing and index == 0)
                 self.assertEqual(path.exists(), expected, logs)
                 if expected:
                     self.assertIn(self.keys[1 - index], path.read_text())
@@ -247,7 +300,13 @@ class PairTests(unittest.TestCase):
         self.integration()
 
     def test_decline_writes_no_authorized_keys(self):
-        self.integration(approve=False)
+        self.integration(approvals=(False, False))
+
+    def test_server_can_import_before_client_decides_and_client_can_decline(self):
+        self.integration(approvals=(True, False), check_early=True)
+
+    def test_client_can_import_when_server_declines(self):
+        self.integration(approvals=(False, True))
 
     def test_missing_default_key_is_skipped(self):
         self.integration(missing=True)

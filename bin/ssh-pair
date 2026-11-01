@@ -2,8 +2,10 @@
 """Pair existing SSH public keys over a LAN; never start sshd or create keys.
 
 Run `ssh-pair serve` on A, then `ssh-pair join` on B. Compare the entire
-verification code on both screens before typing yes on each. Discovery and
-key exchange are plaintext: only public information is sent. The verification
+verification code on both screens, then choose independently whether to import
+the peer's keys. A yes imports locally without waiting for the peer's choice.
+Discovery and key exchange are plaintext: only public information is sent.
+The verification
 code binds both fresh nonces and all exchanged data, detecting substitution.
 Unsupported or invalid individual keys are warned about and skipped.
 Run as your normal login user, not with sudo. Requires Python 3 and ssh-keygen.
@@ -32,7 +34,7 @@ import time
 
 GROUP = "239.255.77.77"
 PORT = 45872
-PROTOCOL = "ssh-pair-v1"
+PROTOCOL = "ssh-pair-v2"
 LIMIT = 65536
 DEFAULT_KEYS = (
     "id_ed25519",
@@ -298,6 +300,10 @@ def install(peer, address):
         print("Peer has no readable SSH host public key; known_hosts unchanged.")
 
 
+def session_label(info):
+    return "-".join(info["nonce"][i : i + 4] for i in range(0, 12, 4))
+
+
 def pair(sock, local):
     address = sock.getpeername()[0]
     sock.settimeout(10)
@@ -309,54 +315,79 @@ def pair(sock, local):
     skipped = sum(
         len(peer[field]) - len(usable[field]) for field in ("keys", "host_keys")
     )
-    print(f"\nRequest from {peer['user']}@{peer['hostname']} ({address})")
     print(
-        f"Import: {len(usable['keys'])} user key(s), {len(usable['host_keys'])} host key(s); skipped {skipped}"
+        f"\nLocal: {local['user']}@{local['hostname']} | session {session_label(local)}"
     )
-    print(f"\nVerification code: {verification_code(local, peer)}", flush=True)
-    print("Compare the ENTIRE code on both machines. Do not approve a mismatch.")
+    print(
+        f"Peer:  {peer['user']}@{peer['hostname']} ({address}) | session {session_label(peer)}"
+    )
+    print("Session labels identify this attempt; verify the full code below.")
+    print(
+        f"Available to import: {len(usable['keys'])} user key(s), "
+        f"{len(usable['host_keys'])} host key(s); skipped {skipped}"
+    )
+    code = verification_code(local, peer).split("-")
+    print("\nVerification code:")
+    for index in range(4):
+        print(f"  [{index + 1}] {code[index * 2]}-{code[index * 2 + 1]}")
+    print(
+        "Compare ALL 4 groups on both screens. Do not approve a mismatch.", flush=True
+    )
+    print("Importing user keys allows the peer to log in here when sshd is enabled.")
     approved = (
-        input("Trust this peer's keys for future SSH logins? Type yes: ").strip()
+        input(
+            "Import this peer's user and host keys on THIS machine? [yes/no, default no]: "
+        ).strip()
         == "yes"
     )
-    sock.settimeout(300)
-    send(sock, {"approved": approved})
-    print("Waiting for the other machine's confirmation...", flush=True)
-    decision = receive(sock)
-    if not approved or decision != {"approved": True}:
-        print("Pairing declined; no keys imported.")
-        return
     error = None
+    if approved:
+        try:
+            install(usable, address)
+        except (OSError, ValueError, subprocess.SubprocessError) as exc:
+            error = str(exc)
+    else:
+        print("Local import skipped; local SSH files unchanged.")
+    sock.settimeout(300)
+    result_message = {
+        "approved": approved,
+        "installed": approved and error is None,
+        "error": error,
+        "accepted_user_keys": len(usable["keys"]) if approved and not error else 0,
+        "accepted_host_keys": len(usable["host_keys"]) if approved and not error else 0,
+        "skipped_keys": skipped,
+    }
     try:
-        install(usable, address)
-    except (OSError, ValueError, subprocess.SubprocessError) as exc:
-        error = str(exc)
-    send(
-        sock,
-        {
-            "installed": error is None,
-            "error": error,
-            "accepted_user_keys": len(usable["keys"]),
-            "accepted_host_keys": len(usable["host_keys"]),
-            "skipped_keys": skipped,
-        },
-    )
-    result = receive(sock)
+        send(sock, result_message)
+        print(
+            "Waiting for peer's import result; the local decision is already applied.",
+            flush=True,
+        )
+        result = receive(sock)
+        if not isinstance(result, dict) or type(result.get("approved")) is not bool:
+            raise ValueError("Invalid peer import result")
+        if not result["approved"]:
+            print("Peer skipped importing this machine's keys.")
+        elif result.get("installed") is not True:
+            print(
+                f"Warning: peer import failed: {result.get('error')!r}", file=sys.stderr
+            )
+        else:
+            print(
+                "Peer accepted: "
+                f"{result.get('accepted_user_keys')!r} user key(s), "
+                f"{result.get('accepted_host_keys')!r} host key(s); "
+                f"skipped {result.get('skipped_keys')!r}"
+            )
+    except (OSError, ValueError) as exc:
+        print(
+            f"Warning: peer result unavailable ({exc}); the local decision remains applied.",
+            file=sys.stderr,
+        )
     if error:
         raise ValueError(f"Local import failed: {error}")
-    if not isinstance(result, dict) or result.get("installed") is not True:
-        raise ValueError(
-            "Peer import failed; local keys were imported. Check the other screen."
-        )
-    if "accepted_user_keys" in result:
-        print(
-            "Peer accepted: "
-            f"{result.get('accepted_user_keys')!r} user key(s), "
-            f"{result.get('accepted_host_keys')!r} host key(s); "
-            f"skipped {result.get('skipped_keys')!r}"
-        )
-    print("\nPairing complete. SSH services were not started.")
-    print(f"When sshd is enabled on the peer: ssh -l {peer['user']} {address}")
+    print("\nPairing finished. SSH services were not started.")
+    print(f"Peer SSH address: ssh -l {peer['user']} {address}")
 
 
 def serve(args, local):
@@ -377,6 +408,7 @@ def serve(args, local):
                 file=sys.stderr,
             )
         print(f"Waiting as {local['user']}@{local['hostname']} on TCP/UDP {args.port}.")
+        print(f"Local session label: {session_label(local)}")
         print("On the other machine: ssh-pair join (Ctrl-C to stop)", flush=True)
         while True:
             ready, _, _ = select.select([tcp, udp], [], [])
@@ -448,7 +480,7 @@ def discover(args):
                 continue
     if not peers:
         raise ValueError(
-            "No peers found. Check LAN/firewall, or use: ssh-pair join <IPv4>"
+            "No v2 peers found. Update both scripts, check LAN/firewall, or use: ssh-pair join <IPv4>"
         )
     items = sorted(peers.values())
     for index, (address, offer) in enumerate(items, 1):
