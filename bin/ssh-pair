@@ -125,13 +125,13 @@ def detect_ssh_port():
             listen_ports = []
             for line in result.stdout.splitlines():
                 fields = line.split()
-                if len(fields) == 2 and fields[0] == "port":
+                if len(fields) == 2 and fields[0].lower() == "port":
                     port = int(fields[1])
                     if not valid_port(port):
                         raise ValueError("sshd returned an invalid port")
                     if port not in ports:
                         ports.append(port)
-                elif len(fields) == 2 and fields[0] == "listenaddress":
+                elif len(fields) == 2 and fields[0].lower() == "listenaddress":
                     port = int(fields[1].rsplit(":", 1)[1])
                     if not valid_port(port):
                         raise ValueError("sshd returned an invalid listen port")

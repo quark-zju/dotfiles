@@ -173,13 +173,12 @@ class PairTests(unittest.TestCase):
             self.assertEqual(warnings.getvalue(), "")
 
     def test_ssh_port_detection_and_override(self):
-        result = subprocess.CompletedProcess(
-            [], 0, "port 2222\nlistenaddress 0.0.0.0:2222\n", ""
-        )
-        with patch.object(
-            pair.shutil, "which", return_value="/usr/sbin/sshd"
-        ), patch.object(pair.subprocess, "run", return_value=result):
-            self.assertEqual(pair.detect_ssh_port(), 2222)
+        for keyword in ("port", "Port", "PORT", "pOrT"):
+            result = subprocess.CompletedProcess([], 0, f"{keyword} 2222\n", "")
+            with self.subTest(keyword=keyword), patch.object(
+                pair.shutil, "which", return_value="/usr/sbin/sshd"
+            ), patch.object(pair.subprocess, "run", return_value=result):
+                self.assertEqual(pair.detect_ssh_port(), 2222)
         with patch.object(
             pair,
             "detect_ssh_port",
@@ -188,13 +187,14 @@ class PairTests(unittest.TestCase):
             self.assertEqual(pair.identity(2200)["ssh_port"], 2200)
 
     def test_listenaddress_port_overrides_default_port(self):
-        result = subprocess.CompletedProcess(
-            [], 0, "port 22\nlistenaddress 0.0.0.0:2222\nlistenaddress [::]:2222\n", ""
-        )
-        with patch.object(pair.shutil, "which", return_value="sshd"), patch.object(
-            pair.subprocess, "run", return_value=result
-        ):
-            self.assertEqual(pair.detect_ssh_port(), 2222)
+        for keyword in ("listenaddress", "ListenAddress", "LISTENADDRESS"):
+            result = subprocess.CompletedProcess(
+                [], 0, f"Port 22\n{keyword} 0.0.0.0:2222\n{keyword} [::]:2222\n", ""
+            )
+            with self.subTest(keyword=keyword), patch.object(
+                pair.shutil, "which", return_value="sshd"
+            ), patch.object(pair.subprocess, "run", return_value=result):
+                self.assertEqual(pair.detect_ssh_port(), 2222)
 
     def test_ssh_port_fallback_and_multiple_ports(self):
         with patch.object(
