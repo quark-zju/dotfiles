@@ -3,7 +3,7 @@
 
 Run `ssh-pair serve` on A, then `ssh-pair join` on B. Compare the entire
 verification code on both screens, then choose independently whether to import
-the peer's keys. A yes imports locally without waiting for the peer's choice.
+the peer's keys. After applying the local choice, exit without exchanging results.
 Discovery and key exchange are plaintext: only public information is sent.
 The verification
 code binds both fresh nonces and all exchanged data, detecting substitution.
@@ -34,7 +34,7 @@ import time
 
 GROUP = "239.255.77.77"
 PORT = 45872
-PROTOCOL = "ssh-pair-v2"
+PROTOCOL = "ssh-pair-v3"
 LIMIT = 65536
 DEFAULT_KEYS = (
     "id_ed25519",
@@ -340,52 +340,10 @@ def pair(sock, local):
         ).strip()
         == "yes"
     )
-    error = None
     if approved:
-        try:
-            install(usable, address)
-        except (OSError, ValueError, subprocess.SubprocessError) as exc:
-            error = str(exc)
+        install(usable, address)
     else:
         print("Local import skipped; local SSH files unchanged.")
-    sock.settimeout(300)
-    result_message = {
-        "approved": approved,
-        "installed": approved and error is None,
-        "error": error,
-        "accepted_user_keys": len(usable["keys"]) if approved and not error else 0,
-        "accepted_host_keys": len(usable["host_keys"]) if approved and not error else 0,
-        "skipped_keys": skipped,
-    }
-    try:
-        send(sock, result_message)
-        print(
-            "Waiting for peer's import result; the local decision is already applied.",
-            flush=True,
-        )
-        result = receive(sock)
-        if not isinstance(result, dict) or type(result.get("approved")) is not bool:
-            raise ValueError("Invalid peer import result")
-        if not result["approved"]:
-            print("Peer skipped importing this machine's keys.")
-        elif result.get("installed") is not True:
-            print(
-                f"Warning: peer import failed: {result.get('error')!r}", file=sys.stderr
-            )
-        else:
-            print(
-                "Peer accepted: "
-                f"{result.get('accepted_user_keys')!r} user key(s), "
-                f"{result.get('accepted_host_keys')!r} host key(s); "
-                f"skipped {result.get('skipped_keys')!r}"
-            )
-    except (OSError, ValueError) as exc:
-        print(
-            f"Warning: peer result unavailable ({exc}); the local decision remains applied.",
-            file=sys.stderr,
-        )
-    if error:
-        raise ValueError(f"Local import failed: {error}")
     print("\nPairing finished. SSH services were not started.")
     print(f"Peer SSH address: ssh -l {peer['user']} {address}")
 
@@ -480,7 +438,7 @@ def discover(args):
                 continue
     if not peers:
         raise ValueError(
-            "No v2 peers found. Update both scripts, check LAN/firewall, or use: ssh-pair join <IPv4>"
+            "No v3 peers found. Update both scripts, check LAN/firewall, or use: ssh-pair join <IPv4>"
         )
     items = sorted(peers.values())
     for index, (address, offer) in enumerate(items, 1):

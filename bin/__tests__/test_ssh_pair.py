@@ -131,12 +131,15 @@ class PairTests(unittest.TestCase):
                 self.assertEqual(pair.read_keys([bad, good]), [self.keys[0]])
 
     def test_old_protocol_is_rejected_before_import(self):
-        peer = self.peer()
-        peer["protocol"] = "ssh-pair-v1"
-        with self.assertRaisesRegex(ValueError, "Incompatible peer"):
-            pair.validate(peer)
+        for version in ("ssh-pair-v1", "ssh-pair-v2"):
+            peer = self.peer()
+            peer["protocol"] = version
+            with self.subTest(version=version), self.assertRaisesRegex(
+                ValueError, "Incompatible peer"
+            ):
+                pair.validate(peer)
 
-    def test_peer_disconnect_does_not_undo_local_import(self):
+    def test_peer_disconnect_after_key_exchange_needs_no_result(self):
         with tempfile.TemporaryDirectory() as home, patch.object(
             Path, "home", return_value=Path(home)
         ), socket.socket() as listener:
@@ -166,7 +169,7 @@ class PairTests(unittest.TestCase):
             self.assertIn(
                 self.keys[1], (Path(home) / ".ssh/authorized_keys").read_text()
             )
-            self.assertIn("local decision remains applied", warnings.getvalue())
+            self.assertEqual(warnings.getvalue(), "")
 
     def test_append_dedup_preserve_restrictions(self):
         with tempfile.TemporaryDirectory() as home, patch.object(
@@ -260,7 +263,7 @@ class PairTests(unittest.TestCase):
                             ready.set()
                         if "Compare ALL 4 groups" in line:
                             verified[i].set()
-                        if "Waiting for peer's import result" in line:
+                        if "Pairing finished." in line:
                             applied[i].set()
 
                 threading.Thread(target=reader, daemon=True).start()
@@ -283,6 +286,7 @@ class PairTests(unittest.TestCase):
             procs[0].stdin.flush()
             if check_early:
                 self.assertTrue(applied[0].wait(5), logs)
+                self.assertEqual(procs[0].wait(timeout=3), 0, logs)
                 self.assertTrue((homes[0] / ".ssh/authorized_keys").exists(), logs)
                 self.assertIsNone(procs[1].poll())
             procs[1].stdin.write("yes\n" if approvals[1] else "no\n")
