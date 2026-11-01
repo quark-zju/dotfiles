@@ -119,7 +119,7 @@ class PairTests(unittest.TestCase):
                 self.keys[0], (Path(home) / ".ssh/authorized_keys").read_text()
             )
             hosts = (Path(home) / ".ssh/known_hosts").read_text()
-            self.assertIn(self.keys[1], hosts)
+            self.assertIn(self.keys[1] + " ssh-pair user@test", hosts)
             self.assertNotIn(unknown, hosts)
 
     def test_rejected_local_key_does_not_block_existing_valid_key(self):
@@ -144,7 +144,7 @@ class PairTests(unittest.TestCase):
             pair.install(self.peer(1), "127.0.0.1")
             pair.install(self.peer(1), "127.0.0.1")
             self.assertEqual(
-                path.read_text(), old + "\n" + self.keys[1] + " ssh-pair\n"
+                path.read_text(), old + "\n" + self.keys[1] + " ssh-pair user@test\n"
             )
 
     def test_host_key_conflict_including_hashed_entries(self):

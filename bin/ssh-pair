@@ -224,6 +224,7 @@ def install(peer, address):
     directory.mkdir(mode=0o700, exist_ok=True)
     if directory.stat().st_uid != os.getuid() or directory.stat().st_mode & 0o022:
         raise ValueError("~/.ssh must be owned by you and not group/world writable")
+    comment = f"ssh-pair {peer['user']}@{peer['hostname']}"
     with contextlib.ExitStack() as stack:
         updates = []
         if peer["host_keys"]:
@@ -257,8 +258,9 @@ def install(peer, address):
             updates.append(
                 (
                     file,
+                    "known_hosts",
                     [
-                        f"{address} {key}"
+                        f"{address} {key} {comment}"
                         for key in peer["host_keys"]
                         if key not in existing
                     ],
@@ -277,16 +279,19 @@ def install(peer, address):
             updates.append(
                 (
                     file,
+                    "authorized_keys",
                     [
-                        key + " ssh-pair"
+                        f"{key} {comment}"
                         for key in peer["keys"]
                         if key.split()[1] not in existing_blobs
                     ],
                 )
             )
-        for file, lines in updates:
+        for file, name, lines in updates:
             append_lines(file, lines)
-            print(f"Added {len(lines)} key(s).")
+            print(
+                f"~/.ssh/{name}: added {len(lines)} key(s) from {peer['user']}@{peer['hostname']}."
+            )
     if not peer["keys"]:
         print("Peer has no default user public key; authorized_keys unchanged.")
     if not peer["host_keys"]:
