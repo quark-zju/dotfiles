@@ -5,8 +5,7 @@ Run `ssh-pair serve` on A, then `ssh-pair join` on B. Compare the entire
 verification code on both screens, then choose independently whether to import
 the peer's keys. After applying the local choice, exit without exchanging results.
 Discovery and key exchange are plaintext: only public information is sent.
-The verification
-code binds both fresh nonces and all exchanged data, detecting substitution.
+The verification code binds both fresh nonces and all exchanged data, detecting substitution.
 Unsupported or invalid individual keys are warned about and skipped.
 Run as your normal login user, not with sudo. Requires Python 3 and ssh-keygen.
 """
@@ -104,13 +103,70 @@ def read_keys(paths):
     return keys
 
 
-def identity():
+def valid_port(value):
+    return type(value) is int and 1 <= value <= 65535
+
+
+def detect_ssh_port():
+    """Read configured ports without starting sshd; runtime overrides need --ssh-port."""
+    daemon = shutil.which("sshd")
+    if daemon:
+        try:
+            result = subprocess.run(
+                [daemon, "-G"],
+                stdin=subprocess.DEVNULL,
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if result.returncode:
+                raise ValueError(f"sshd -G failed: {result.stderr.strip()[:300]!r}")
+            ports = []
+            listen_ports = []
+            for line in result.stdout.splitlines():
+                fields = line.split()
+                if len(fields) == 2 and fields[0] == "port":
+                    port = int(fields[1])
+                    if not valid_port(port):
+                        raise ValueError("sshd returned an invalid port")
+                    if port not in ports:
+                        ports.append(port)
+                elif len(fields) == 2 and fields[0] == "listenaddress":
+                    port = int(fields[1].rsplit(":", 1)[1])
+                    if not valid_port(port):
+                        raise ValueError("sshd returned an invalid listen port")
+                    if port not in listen_ports:
+                        listen_ports.append(port)
+            ports = listen_ports or ports
+            if not ports:
+                raise ValueError("sshd -G returned no ports")
+            if len(ports) > 1:
+                print(
+                    f"Warning: sshd config lists ports {ports}; advertising {ports[0]}. "
+                    "Use --ssh-port to select another port.",
+                    file=sys.stderr,
+                )
+            return ports[0]
+        except (OSError, ValueError, subprocess.SubprocessError) as exc:
+            reason = str(exc)
+    else:
+        reason = "sshd is not on PATH"
+    print(
+        f"Warning: cannot detect SSH port ({reason}); assuming 22. "
+        "Use --ssh-port PORT to override.",
+        file=sys.stderr,
+    )
+    return 22
+
+
+def identity(ssh_port=None):
     home = Path.home()
     return {
         "protocol": PROTOCOL,
         "nonce": secrets.token_hex(32),
         "user": getpass.getuser(),
         "hostname": socket.gethostname(),
+        "ssh_port": detect_ssh_port() if ssh_port is None else ssh_port,
         "keys": read_keys([home / ".ssh" / (name + ".pub") for name in DEFAULT_KEYS]),
         "host_keys": read_keys(sorted(Path("/etc/ssh").glob("ssh_host_*_key.pub"))),
     }
@@ -129,6 +185,8 @@ def validate(peer):
             r"[A-Za-z0-9_.@-]{1,253}", value
         ):
             raise ValueError(f"Invalid peer {field}")
+    if not valid_port(peer.get("ssh_port", 22)):
+        raise ValueError("Invalid peer SSH port")
     for field in ("keys", "host_keys"):
         keys = peer.get(field)
         if not isinstance(keys, list) or len(keys) > 12:
@@ -226,6 +284,8 @@ def install(peer, address):
     directory.mkdir(mode=0o700, exist_ok=True)
     if directory.stat().st_uid != os.getuid() or directory.stat().st_mode & 0o022:
         raise ValueError("~/.ssh must be owned by you and not group/world writable")
+    ssh_port = peer.get("ssh_port", 22)
+    host_address = address if ssh_port == 22 else f"[{address}]:{ssh_port}"
     comment = f"ssh-pair {peer['user']}@{peer['hostname']}"
     with contextlib.ExitStack() as stack:
         updates = []
@@ -233,7 +293,7 @@ def install(peer, address):
             path = directory / "known_hosts"
             file = stack.enter_context(locked_file(path))
             matches = subprocess.run(
-                ["ssh-keygen", "-F", address, "-f", str(path)],
+                ["ssh-keygen", "-F", host_address, "-f", str(path)],
                 capture_output=True,
                 text=True,
                 timeout=5,
@@ -247,7 +307,7 @@ def install(peer, address):
                 fields = line.split()
                 if fields and fields[0].startswith("@"):
                     raise ValueError(
-                        f"Special known_hosts entry for {address}; review it manually"
+                        f"Special known_hosts entry for {host_address}; review it manually"
                     )
                 if len(fields) >= 3:
                     existing.append(" ".join(fields[1:3]))
@@ -255,14 +315,14 @@ def install(peer, address):
                 kind = key.split()[0]
                 if any(old.split()[0] == kind and old != key for old in existing):
                     raise ValueError(
-                        f"Host key conflict for {address}; no keys imported"
+                        f"Host key conflict for {host_address}; no keys imported"
                     )
             updates.append(
                 (
                     file,
                     "known_hosts",
                     [
-                        f"{address} {key} {comment}"
+                        f"{host_address} {key} {comment}"
                         for key in peer["host_keys"]
                         if key not in existing
                     ],
@@ -311,6 +371,11 @@ def pair(sock, local):
     peer = validate(receive(sock))
     if peer["nonce"] == local["nonce"]:
         raise ValueError("Reflected session")
+    if "ssh_port" not in peer:
+        print(
+            "Warning: peer did not advertise its SSH port; assuming 22. Update the peer script if needed.",
+            file=sys.stderr,
+        )
     usable = usable_peer(peer)
     skipped = sum(
         len(peer[field]) - len(usable[field]) for field in ("keys", "host_keys")
@@ -319,7 +384,7 @@ def pair(sock, local):
         f"\nLocal: {local['user']}@{local['hostname']} | session {session_label(local)}"
     )
     print(
-        f"Peer:  {peer['user']}@{peer['hostname']} ({address}) | session {session_label(peer)}"
+        f"Peer:  {peer['user']}@{peer['hostname']} ({address}, SSH port {peer.get('ssh_port', 22)}) | session {session_label(peer)}"
     )
     print("Session labels identify this attempt; verify the full code below.")
     print(
@@ -345,7 +410,9 @@ def pair(sock, local):
     else:
         print("Local import skipped; local SSH files unchanged.")
     print("\nPairing finished. SSH services were not started.")
-    print(f"Peer SSH address: ssh -l {peer['user']} {address}")
+    print(
+        f"Peer SSH address: ssh -p {peer.get('ssh_port', 22)} -l {peer['user']} {address}"
+    )
 
 
 def serve(args, local):
@@ -465,6 +532,11 @@ def main():
         "--port", type=int, default=PORT, help=f"TCP/UDP pairing port (default {PORT})"
     )
     parser.add_argument(
+        "--ssh-port",
+        type=int,
+        help="local SSH port to advertise (default: sshd -G configuration, or 22)",
+    )
+    parser.add_argument(
         "--bind",
         default="0.0.0.0",
         help="local IPv4 interface (default all/default route)",
@@ -475,6 +547,8 @@ def main():
     args = parser.parse_args()
     if not 1 <= args.port <= 65535 or not 0 < args.timeout <= 60:
         parser.error("Invalid port or timeout (must be 0 < timeout <= 60)")
+    if args.ssh_port is not None and not valid_port(args.ssh_port):
+        parser.error("SSH port must be between 1 and 65535")
     socket.inet_aton(args.bind)
     if args.host:
         socket.inet_aton(args.host)
@@ -484,7 +558,8 @@ def main():
         parser.error("Run as your normal login user, without sudo")
     if not shutil.which("ssh-keygen"):
         parser.error("Install OpenSSH (ssh-keygen) first")
-    local = identity()
+    local = identity(args.ssh_port)
+    print(f"Advertising local SSH port: {local['ssh_port']}")
     if not local["keys"]:
         print(
             "No default user public key; skipping user-key export (no key generated)."

@@ -53,6 +53,7 @@ class PairTests(unittest.TestCase):
             nonce=str(index) * 64,
             user="user",
             hostname="test",
+            ssh_port=22,
             keys=[self.keys[index]],
             host_keys=host_keys or [],
         )
@@ -171,6 +172,78 @@ class PairTests(unittest.TestCase):
             )
             self.assertEqual(warnings.getvalue(), "")
 
+    def test_ssh_port_detection_and_override(self):
+        result = subprocess.CompletedProcess(
+            [], 0, "port 2222\nlistenaddress 0.0.0.0:2222\n", ""
+        )
+        with patch.object(
+            pair.shutil, "which", return_value="/usr/sbin/sshd"
+        ), patch.object(pair.subprocess, "run", return_value=result):
+            self.assertEqual(pair.detect_ssh_port(), 2222)
+        with patch.object(
+            pair,
+            "detect_ssh_port",
+            side_effect=AssertionError("override must bypass detection"),
+        ), patch.object(pair, "read_keys", return_value=[]):
+            self.assertEqual(pair.identity(2200)["ssh_port"], 2200)
+
+    def test_listenaddress_port_overrides_default_port(self):
+        result = subprocess.CompletedProcess(
+            [], 0, "port 22\nlistenaddress 0.0.0.0:2222\nlistenaddress [::]:2222\n", ""
+        )
+        with patch.object(pair.shutil, "which", return_value="sshd"), patch.object(
+            pair.subprocess, "run", return_value=result
+        ):
+            self.assertEqual(pair.detect_ssh_port(), 2222)
+
+    def test_ssh_port_fallback_and_multiple_ports(self):
+        with patch.object(
+            pair.shutil, "which", return_value=None
+        ), contextlib.redirect_stderr(io.StringIO()) as warning:
+            self.assertEqual(pair.detect_ssh_port(), 22)
+        self.assertIn("assuming 22", warning.getvalue())
+        result = subprocess.CompletedProcess([], 0, "port 2200\nport 2222\n", "")
+        with patch.object(pair.shutil, "which", return_value="sshd"), patch.object(
+            pair.subprocess, "run", return_value=result
+        ), contextlib.redirect_stderr(io.StringIO()) as warning:
+            self.assertEqual(pair.detect_ssh_port(), 2200)
+        self.assertIn("--ssh-port", warning.getvalue())
+
+    def test_peer_port_validation_and_transcript_binding(self):
+        for value in (0, 65536, True, "2222", None):
+            peer = self.peer()
+            peer["ssh_port"] = value
+            with self.subTest(value=value), self.assertRaisesRegex(
+                ValueError, "Invalid peer SSH port"
+            ):
+                pair.validate(peer)
+        peer = self.peer()
+        before = pair.verification_code(self.peer(1), peer)
+        peer["ssh_port"] = 2222
+        self.assertNotEqual(before, pair.verification_code(self.peer(1), peer))
+        del peer["ssh_port"]
+        original = pair.encode(peer)
+        pair.validate(peer)
+        self.assertEqual(pair.encode(peer), original)
+
+    def test_nondefault_port_known_hosts_and_conflicts(self):
+        peer = self.peer(host_keys=[self.keys[0]])
+        peer["ssh_port"] = 2222
+        with tempfile.TemporaryDirectory() as home, patch.object(
+            Path, "home", return_value=Path(home)
+        ):
+            pair.install(peer, "127.0.0.1")
+            hosts = Path(home) / ".ssh/known_hosts"
+            self.assertIn("[127.0.0.1]:2222 " + self.keys[0], hosts.read_text())
+            subprocess.run(
+                ["ssh-keygen", "-H", "-f", str(hosts)], capture_output=True, check=True
+            )
+            pair.install(peer, "127.0.0.1")
+            self.assertEqual(len(hosts.read_text().splitlines()), 1)
+            peer["host_keys"] = [self.keys[1]]
+            with self.assertRaisesRegex(ValueError, "conflict"):
+                pair.install(peer, "127.0.0.1")
+
     def test_append_dedup_preserve_restrictions(self):
         with tempfile.TemporaryDirectory() as home, patch.object(
             Path, "home", return_value=Path(home)
@@ -239,7 +312,15 @@ class PairTests(unittest.TestCase):
             for index, mode in enumerate(["serve", "join"]):
                 if index:
                     self.assertTrue(ready.wait(5), logs)
-                args = [sys.executable, str(SCRIPT), mode, "--port", port]
+                args = [
+                    sys.executable,
+                    str(SCRIPT),
+                    mode,
+                    "--port",
+                    port,
+                    "--ssh-port",
+                    str(2201 + index),
+                ]
                 if index:
                     args += ["--timeout", "1"]
                 proc = subprocess.Popen(
@@ -294,6 +375,10 @@ class PairTests(unittest.TestCase):
             for proc in procs:
                 self.assertEqual(proc.wait(timeout=10), 0, logs)
             for index, home in enumerate(homes):
+                self.assertIn(
+                    f"Peer SSH address: ssh -p {2201 + 1 - index} -l",
+                    "".join(logs[index]),
+                )
                 path = home / ".ssh" / "authorized_keys"
                 expected = approvals[index] and not (missing and index == 0)
                 self.assertEqual(path.exists(), expected, logs)
