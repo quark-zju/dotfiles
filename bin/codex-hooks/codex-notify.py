@@ -1,5 +1,15 @@
 #!/usr/bin/env python3
-"""Notify when a local coding-agent turn completes and focus it on demand."""
+"""Track coding-agent turns and update their desktop workspaces.
+
+handle_event owns the lifecycle, using one run ID for prompts and highlights:
+  UserPromptSubmit: save the prompt and mark the turn running.
+  Stop: consume the prompt, clear the turn, and notify.
+  Interrupt: consume the prompt and clear the turn.
+  SessionEnd: discard all prompts and highlights for the session.
+
+dispatch_desktop selects local execution or ssh_sync; apply_desktop_event runs
+the same desktop operations in either location.
+"""
 
 from __future__ import annotations
 
@@ -196,20 +206,31 @@ def runtime_dir() -> str | None:
     return None
 
 
-def state_path(session_id: str) -> Path | None:
+def session_state_dir(session_id: str) -> Path | None:
     directory_base = runtime_dir()
     if directory_base is None:
         return None
-    directory = Path(directory_base, "codex-notify")
+    directory = Path(
+        directory_base, "codex-notify", hashlib.sha256(session_id.encode()).hexdigest()
+    )
     try:
-        directory.mkdir(mode=0o700, exist_ok=True)
+        directory.mkdir(mode=0o700, parents=True, exist_ok=True)
     except OSError:
         return None
-    name = hashlib.sha256(session_id.encode()).hexdigest() + ".json"
+    return directory
+
+
+def state_path(session_id: str, run_id: str) -> Path | None:
+    directory = session_state_dir(session_id)
+    if directory is None:
+        return None
+    name = hashlib.sha256(run_id.encode()).hexdigest() + ".json"
     return directory / name
 
 
-def save_prompt(payload: dict[str, Any], agent: str) -> dict[str, object] | None:
+def save_prompt(
+    payload: dict[str, Any], agent: str, run_id: str
+) -> dict[str, object] | None:
     session_id = payload.get("session_id")
     prompt = payload.get("prompt")
     if not isinstance(session_id, str):
@@ -235,13 +256,14 @@ def save_prompt(payload: dict[str, Any], agent: str) -> dict[str, object] | None
             ],
         )
         return
-    path = state_path(session_id)
+    path = state_path(session_id, run_id)
     if path is None:
         log_event("prompt_skipped", session_id=session_id, reason="no_state_path")
         return
     pid, start_time = process
     try:
         state = {
+            "run_id": run_id,
             "agent_name": agent,
             "prompt": prompt,
             "pid": pid,
@@ -259,6 +281,7 @@ def save_prompt(payload: dict[str, Any], agent: str) -> dict[str, object] | None
     log_event(
         "prompt_saved",
         session_id=session_id,
+        run_id=run_id,
         agent_name=agent,
         pid=pid,
         path=str(path),
@@ -266,8 +289,8 @@ def save_prompt(payload: dict[str, Any], agent: str) -> dict[str, object] | None
     return state
 
 
-def load_prompt(session_id: str) -> dict[str, Any] | None:
-    path = state_path(session_id)
+def load_prompt(session_id: str, run_id: str) -> dict[str, Any] | None:
+    path = state_path(session_id, run_id)
     if path is None:
         log_event("prompt_load_failed", session_id=session_id, reason="no_state_path")
         return None
@@ -302,6 +325,13 @@ def load_prompt(session_id: str) -> dict[str, Any] | None:
         return None
     log_event("prompt_loaded", session_id=session_id, path=str(path))
     return value
+
+
+def clear_session_prompts(session_id: str) -> None:
+    directory = session_state_dir(session_id)
+    if directory is not None:
+        for path in directory.glob("*.json"):
+            path.unlink()
 
 
 def load_thread_title(session_id: str) -> str | None:
@@ -617,74 +647,82 @@ def focus_process(pid: object, expected_start_time: object) -> None:
         )
 
 
-def update_running_workspace(
-    payload: dict[str, Any],
-    saved: dict[str, object] | None,
-    clear_session: bool = False,
+def apply_desktop_event(
+    event: str,
+    session_id: str,
+    run_id: str,
+    saved: dict[str, Any] | None,
+    remote: bool = False,
 ) -> None:
-    session_id = payload.get("session_id")
-    if not isinstance(session_id, str):
-        return
-    turn_id = payload.get("turn_id")
-    run_id = f"{session_id}:{turn_id}" if isinstance(turn_id, str) else session_id
-    ssh_client_pid = os.environ.get("SSH_CLIENT_PID")
-    if ssh_client_pid is not None:
-        try:
-            pid = int(ssh_client_pid)
-            if pid <= 0:
-                raise ValueError("non-positive SSH_CLIENT_PID")
-            import ssh_sync
+    """Apply an event accepted by handle_event, locally or via ssh_sync.
 
-            hosts = ssh_sync.list_hosts()
-            if not hosts:
-                log_event(
-                    "workspace_highlight_failed",
-                    session_id=session_id,
-                    reason="remote_no_hosts",
-                )
-                return
-            if saved is None:
-                if clear_session:
-                    ssh_sync.call_remote(
-                        hosts[0],
-                        clear_session_workspace_highlights,
-                        session_id,
-                        call_timeout=20,
-                    )
-                else:
-                    ssh_sync.call_remote(
-                        hosts[0],
-                        write_workspace_highlights,
-                        run_id,
-                        None,
-                        call_timeout=20,
-                    )
-            else:
-                ssh_sync.call_remote(
-                    hosts[0],
-                    mark_process_workspace_running,
-                    run_id,
-                    pid,
-                    None,
-                    True,
-                    call_timeout=20,
-                )
-        except Exception as error:
-            log_event(
-                "workspace_highlight_failed",
-                session_id=session_id,
-                reason="remote_dispatch_failed",
-                error=repr(error),
+    For remote execution, saved contains the desktop's SSH client PID; its
+    start time is resolved here. Stop always clears the run, even without a
+    saved prompt. SessionEnd clears every run belonging to the session.
+    """
+    if event == "SessionEnd":
+        clear_session_workspace_highlights(session_id)
+    elif event == "UserPromptSubmit":
+        if saved is not None:
+            mark_process_workspace_running(
+                run_id, saved.get("pid"), saved.get("process_start_time"), remote
             )
-        return
-    if saved is None:
-        if clear_session:
-            clear_session_workspace_highlights(session_id)
-        else:
-            write_workspace_highlights(run_id, None)
     else:
-        mark_process_workspace_running(
-            run_id, saved.get("pid"), saved.get("process_start_time")
+        write_workspace_highlights(run_id, None)
+        if event == "Stop" and saved is not None:
+            show_notify(
+                saved["agent_name"],
+                saved["title"],
+                saved["message"],
+                saved.get("pid"),
+                saved.get("process_start_time"),
+            )
+
+
+def dispatch_desktop(
+    event: str, session_id: str, run_id: str, saved: dict[str, Any] | None
+) -> None:
+    """Select the desktop host and process once for all of a hook's effects."""
+    ssh_client_pid = os.environ.get("SSH_CLIENT_PID")
+    if ssh_client_pid is None:
+        apply_desktop_event(event, session_id, run_id, saved)
+        return
+
+    try:
+        pid = int(ssh_client_pid)
+        if pid <= 0:
+            raise ValueError("non-positive SSH_CLIENT_PID")
+        import ssh_sync
+
+        hosts = ssh_sync.list_hosts()
+        if not hosts:
+            log_event("remote_no_hosts", run_id=run_id, client_pid=pid)
+            return
+        if saved is not None:
+            saved = {**saved, "pid": pid, "process_start_time": None}
+        log_event(
+            "remote_dispatch",
+            run_id=run_id,
+            client_pid=pid,
+            selected_host=hosts[0],
+            available_hosts=hosts,
+        )
+        ssh_sync.call_remote(
+            hosts[0],
+            apply_desktop_event,
+            event,
+            session_id,
+            run_id,
+            saved,
+            True,
+            call_timeout=20,
+        )
+    except Exception as error:
+        log_event(
+            "remote_dispatch_failed",
+            run_id=run_id,
+            client_pid=ssh_client_pid,
+            error=repr(error),
         )
 
 
@@ -788,15 +826,11 @@ def show_notify(
         os._exit(0)
 
 
-def notify(payload: dict[str, Any]) -> None:
+def prepare_notification(
+    payload: dict[str, Any], saved: dict[str, Any]
+) -> dict[str, Any] | None:
+    """Build notification content without changing state or contacting a desktop."""
     session_id = payload.get("session_id")
-    if not isinstance(session_id, str):
-        log_event("notification_skipped", reason="invalid_session_id")
-        return
-    saved = load_prompt(session_id)
-    if saved is None:
-        log_event("notification_skipped", session_id=session_id, reason="no_prompt")
-        return
     if not isinstance(saved.get("prompt"), str):
         log_event(
             "notification_skipped", session_id=session_id, reason="invalid_prompt"
@@ -817,56 +851,51 @@ def notify(payload: dict[str, Any]) -> None:
         if summary:
             prompt += f"\n\n{summary}"
     title = load_thread_title(session_id) if agent_name == "Codex" else None
-    ssh_client_pid = os.environ.get("SSH_CLIENT_PID")
-    if ssh_client_pid is not None:
-        try:
-            pid = int(ssh_client_pid)
-            if pid <= 0:
-                log_event("remote_invalid_client_pid", client_pid=ssh_client_pid)
-                return
-            import ssh_sync
+    return {**saved, "agent_name": agent_name, "title": title, "message": prompt}
 
-            hosts = ssh_sync.list_hosts()
-            if not hosts:
-                log_event("remote_no_hosts", client_pid=pid)
-                return
-            host = hosts[0]
-            log_event(
-                "remote_dispatch",
-                client_pid=pid,
-                selected_host=host,
-                available_hosts=hosts,
-            )
-            ssh_sync.call_remote(
-                host,
-                show_notify,
-                agent_name,
-                title,
-                prompt,
-                pid,
-                call_timeout=20,
-            )
-        except Exception as error:
-            log_event(
-                "remote_dispatch_failed",
-                client_pid=ssh_client_pid,
-                error=repr(error),
-            )
-            return
+
+def handle_event(payload: dict[str, Any], agent: str) -> None:
+    """Own the prompt lifecycle and dispatch the matching desktop event."""
+    event = payload.get("hook_event_name")
+    session_id = payload.get("session_id")
+    if not isinstance(session_id, str):
+        log_event("hook_skipped", reason="invalid_session_id")
         return
+    # Claude and older harnesses have no turn ID; use their session as the run.
+    turn_id = payload.get("turn_id")
+    run_id = f"{session_id}:{turn_id}" if isinstance(turn_id, str) else session_id
     log_event(
-        "local_dispatch",
-        agent_name=agent_name,
-        pid=saved.get("pid"),
+        "hook_received",
+        hook_event=event,
         session_id=session_id,
+        run_id=run_id,
+        parent_pid=os.getppid(),
+        has_swaysock=bool(os.environ.get("SWAYSOCK")),
+        has_ssh_client_pid="SSH_CLIENT_PID" in os.environ,
+        agent=agent,
     )
-    show_notify(
-        agent_name,
-        title,
-        prompt,
-        saved.get("pid"),
-        saved.get("process_start_time"),
-    )
+    if resolve_swaysock() is None and "SSH_CLIENT_PID" not in os.environ:
+        log_event("hook_skipped", run_id=run_id, reason="no_display_route")
+        return
+
+    saved = None
+    if event == "UserPromptSubmit":
+        saved = save_prompt(payload, agent, run_id)
+        if saved is None:
+            return
+    elif event in ("Stop", "Interrupt"):
+        saved = load_prompt(session_id, run_id)
+        if event == "Stop":
+            if saved is not None:
+                saved = prepare_notification(payload, saved)
+            else:
+                log_event("notification_skipped", run_id=run_id, reason="no_prompt")
+    elif event == "SessionEnd":
+        clear_session_prompts(session_id)
+    else:
+        log_event("hook_skipped", run_id=run_id, reason="unsupported_event")
+        return
+    dispatch_desktop(event, session_id, run_id, saved)
 
 
 def main() -> None:
@@ -903,43 +932,7 @@ def main() -> None:
         if not isinstance(payload, dict):
             log_event("hook_skipped", reason="invalid_payload")
             return
-        event = payload.get("hook_event_name")
-        session_id = payload.get("session_id")
-        log_event(
-            "hook_received",
-            hook_event=event,
-            session_id=session_id,
-            parent_pid=os.getppid(),
-            has_swaysock=bool(os.environ.get("SWAYSOCK")),
-            has_ssh_client_pid="SSH_CLIENT_PID" in os.environ,
-            agent=agent,
-        )
-        sway_socket = resolve_swaysock()
-        if sway_socket is None and "SSH_CLIENT_PID" not in os.environ:
-            log_event(
-                "hook_skipped",
-                hook_event=event,
-                session_id=session_id,
-                reason="no_display_route",
-            )
-            return
-        if event == "UserPromptSubmit":
-            saved = save_prompt(payload, agent)
-            if saved is not None:
-                update_running_workspace(payload, saved)
-        elif event in ("Stop", "Interrupt"):
-            update_running_workspace(payload, None)
-            if event == "Stop":
-                notify(payload)
-        elif event == "SessionEnd":
-            update_running_workspace(payload, None, clear_session=True)
-        else:
-            log_event(
-                "hook_skipped",
-                hook_event=event,
-                session_id=session_id,
-                reason="unsupported_event",
-            )
+        handle_event(payload, agent)
     except (OSError, ValueError, json.JSONDecodeError) as error:
         log_event("hook_failed", error=repr(error))
     finally:

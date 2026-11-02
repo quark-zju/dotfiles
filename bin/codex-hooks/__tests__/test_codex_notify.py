@@ -5,7 +5,9 @@ import json
 import os
 import sys
 import tempfile
+import types
 import unittest
+from contextlib import contextmanager
 from pathlib import Path
 from unittest import mock
 
@@ -175,9 +177,7 @@ class CodexClientProcess(unittest.TestCase):
     def test_newest_attachment_wins(self):
         command = b"codex\0resume\0--remote=unix:///socket\0session\0"
         self.assertEqual(
-            self.find_client(
-                {10: command, 20: command}, {10: (1, 200), 20: (1, 100)}
-            ),
+            self.find_client({10: command, 20: command}, {10: (1, 200), 20: (1, 100)}),
             (10, 200),
         )
 
@@ -199,7 +199,7 @@ class SavePrompt(unittest.TestCase):
                     codex_notify, "state_path", return_value=Path(tmp) / "s.json"
                 ):
                     state = codex_notify.save_prompt(
-                        {"session_id": "s", "prompt": "hi"}, "Muse"
+                        {"session_id": "s", "prompt": "hi"}, "Muse", "s"
                     )
         self.assertEqual(state["agent_name"], "Muse")
         self.assertEqual(state["pid"], 123)
@@ -231,7 +231,7 @@ class MainHarnessArg(unittest.TestCase):
                 ) as save_mock:
                     out, _ = self.run_main(["codex-notify.py"], payload)
         self.assertEqual(out, "{}\n")
-        save_mock.assert_called_once_with(payload, "Codex")
+        save_mock.assert_called_once_with(payload, "Codex", "s")
 
     def test_missing_flag_and_no_detect_skips(self):
         with mock.patch.object(codex_notify, "detect_harness", return_value=None):
@@ -255,7 +255,7 @@ class MainHarnessArg(unittest.TestCase):
                     ["codex-notify.py", "--harness", "muse"], payload
                 )
         self.assertEqual(out, "{}\n")
-        save_mock.assert_called_once_with(payload, "Muse")
+        save_mock.assert_called_once_with(payload, "Muse", "s")
 
     def test_unknown_harness_skips(self):
         out, log_mock = self.run_main(["codex-notify.py", "--harness", "mybot"])
@@ -284,6 +284,214 @@ class RuntimeDir(unittest.TestCase):
                 self.assertIsNone(codex_notify.runtime_dir())
 
 
+class HookLifecycle(unittest.TestCase):
+    @contextmanager
+    def desktop(self, remote):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            local_css = root / "local.css"
+            local_state = root / "local.json"
+            local_css.touch()
+            self.css = root / "remote.css" if remote else local_css
+            self.state = root / "remote.json" if remote else local_state
+            self.css.touch()
+            self.notifications = mock.Mock()
+            self.remote_calls = mock.Mock()
+            environment = {"XDG_RUNTIME_DIR": str(root / "runtime")}
+            if remote:
+                try:
+                    import ssh_sync
+                except ModuleNotFoundError:
+                    self.skipTest("ssh_sync is not installed")
+                # Execute the actual uploaded functions in a separate namespace,
+                # with their own desktop state and no sender's module globals.
+                spec = ssh_sync._function_spec(codex_notify.apply_desktop_event)
+                namespace = dict(spec["globals"])
+                exec(spec["source"], namespace)
+                namespace.update(
+                    WORKSPACE_HIGHLIGHT_PATH=str(self.css),
+                    WORKSPACE_HIGHLIGHT_STATE_PATH=str(self.state),
+                    process_stat=lambda pid: (1, 456),
+                    process_sway_state=mock.Mock(
+                        return_value=(166, "4: renderdag", False, False)
+                    ),
+                    show_notify=self.notifications,
+                    log_event=mock.Mock(),
+                )
+
+                def call_remote(host, function, *args, call_timeout=None):
+                    self.assertEqual(host, "desktop")
+                    self.assertEqual(call_timeout, 20)
+                    self.assertIs(function, codex_notify.apply_desktop_event)
+                    self.remote_calls(*args)
+                    return namespace[function.__name__](*args)
+
+                transport = types.ModuleType("ssh_sync")
+                transport.list_hosts = mock.Mock(return_value=["desktop"])
+                transport.call_remote = call_remote
+                environment["SSH_CLIENT_PID"] = "789"
+                modules = {"ssh_sync": transport}
+            else:
+                modules = {}
+
+            with (
+                mock.patch.dict(os.environ, environment, clear=True),
+                mock.patch.dict(sys.modules, modules),
+                mock.patch.object(
+                    codex_notify, "WORKSPACE_HIGHLIGHT_PATH", str(local_css)
+                ),
+                mock.patch.object(
+                    codex_notify, "WORKSPACE_HIGHLIGHT_STATE_PATH", str(local_state)
+                ),
+                mock.patch.object(
+                    codex_notify, "agent_process", return_value=(123, 456)
+                ),
+                mock.patch.object(codex_notify, "process_stat", return_value=(1, 456)),
+                mock.patch.object(
+                    codex_notify,
+                    "process_sway_state",
+                    return_value=(166, "4: renderdag", False, False),
+                ),
+                mock.patch.object(
+                    codex_notify, "resolve_swaysock", return_value="/socket"
+                ),
+                mock.patch.object(
+                    codex_notify, "load_thread_title", return_value="Task"
+                ),
+                mock.patch.object(codex_notify, "show_notify", self.notifications),
+                mock.patch.object(codex_notify, "log_event"),
+                mock.patch.object(
+                    sys, "argv", ["codex-notify.py", "--harness", "codex"]
+                ),
+                mock.patch.object(sys, "stdout", io.StringIO()),
+            ):
+                yield
+                if remote:
+                    self.assertFalse(local_state.exists())
+                    self.assertEqual(local_css.read_text(), "")
+
+    def event(self, name, session="s", turn="a", **fields):
+        payload = {
+            "hook_event_name": name,
+            "session_id": session,
+            "prompt": f"prompt {turn}",
+            **fields,
+        }
+        if turn is not None:
+            payload["turn_id"] = turn
+        with mock.patch.object(sys, "stdin", io.StringIO(json.dumps(payload))):
+            codex_notify.main()
+
+    def running(self):
+        return json.loads(self.state.read_text())
+
+    def test_start_stop_clears_prompt_and_css(self):
+        for remote in (False, True):
+            with self.subTest(remote=remote), self.desktop(remote):
+                self.event("UserPromptSubmit")
+                entry = self.running()["s:a"]
+                self.assertEqual(entry["pid"], 789 if remote else 123)
+                self.assertEqual(entry["remote"], remote)
+                path = codex_notify.state_path("s", "s:a")
+                self.assertEqual(json.loads(path.read_text())["run_id"], "s:a")
+                self.assertIn(
+                    "sway-workspace-4\\3a \\20 renderdag", self.css.read_text()
+                )
+                self.event("Stop", last_assistant_message="Finished")
+                self.event("Stop", last_assistant_message="Finished")
+                self.assertFalse(path.exists())
+                self.assertEqual(self.running(), {})
+                self.assertEqual(self.css.read_text(), "")
+                self.notifications.assert_called_once_with(
+                    "Codex",
+                    "Task",
+                    "prompt a\n\nFinished",
+                    789 if remote else 123,
+                    None if remote else 456,
+                )
+                if remote:
+                    self.assertEqual(self.remote_calls.call_count, 3)
+
+    def test_overlapping_turns_keep_their_own_prompts(self):
+        for remote in (False, True):
+            with self.subTest(remote=remote), self.desktop(remote):
+                self.event("UserPromptSubmit", turn="a")
+                self.event("UserPromptSubmit", turn="b")
+                self.event("Stop", turn="a")
+                self.assertEqual(set(self.running()), {"s:b"})
+                self.assertTrue(codex_notify.state_path("s", "s:b").exists())
+                self.assertTrue(self.css.read_text())
+                self.assertEqual(self.notifications.call_args.args[2], "prompt a")
+                self.event("Stop", turn="b")
+                self.assertEqual(self.notifications.call_args.args[2], "prompt b")
+                self.assertEqual(self.running(), {})
+                self.assertEqual(self.css.read_text(), "")
+
+    def test_interrupt_and_repeated_stop_do_not_notify(self):
+        for remote in (False, True):
+            with self.subTest(remote=remote), self.desktop(remote):
+                self.event("UserPromptSubmit")
+                self.event("Interrupt")
+                self.assertFalse(codex_notify.state_path("s", "s:a").exists())
+                self.assertEqual(self.running(), {})
+                self.assertEqual(self.css.read_text(), "")
+                self.event("Stop")
+                self.event("Stop")
+                self.notifications.assert_not_called()
+
+    def test_session_end_preserves_other_sessions(self):
+        for remote in (False, True):
+            with self.subTest(remote=remote), self.desktop(remote):
+                self.event("UserPromptSubmit", turn="a")
+                self.event("UserPromptSubmit", turn="b")
+                self.event("UserPromptSubmit", session="other", turn="c")
+                self.event("SessionEnd", turn=None)
+                self.assertEqual(set(self.running()), {"other:c"})
+                self.assertFalse(codex_notify.state_path("s", "s:a").exists())
+                self.assertFalse(codex_notify.state_path("s", "s:b").exists())
+                self.assertTrue(codex_notify.state_path("other", "other:c").exists())
+                self.notifications.assert_not_called()
+                self.event("Stop", session="other", turn="c")
+                self.assertEqual(self.css.read_text(), "")
+
+    def test_stop_without_prompt_still_clears_highlight(self):
+        for remote in (False, True):
+            with self.subTest(remote=remote), self.desktop(remote):
+                self.event("UserPromptSubmit")
+                codex_notify.state_path("s", "s:a").unlink()
+                self.event("Stop")
+                self.assertEqual(self.running(), {})
+                self.assertEqual(self.css.read_text(), "")
+                self.notifications.assert_not_called()
+
+    def test_harness_without_turn_id_uses_session_identity(self):
+        for remote in (False, True):
+            with self.subTest(remote=remote), self.desktop(remote):
+                self.event("UserPromptSubmit", turn=None)
+                self.assertEqual(set(self.running()), {"s"})
+                self.event("Stop", turn=None)
+                self.assertFalse(codex_notify.state_path("s", "s").exists())
+                self.assertEqual(self.running(), {})
+                self.assertEqual(self.css.read_text(), "")
+
+    def test_internal_prompt_does_not_consume_user_turn(self):
+        for remote in (False, True):
+            with self.subTest(remote=remote), self.desktop(remote):
+                self.event("UserPromptSubmit", turn="a")
+                self.event(
+                    "UserPromptSubmit",
+                    turn="internal",
+                    prompt=codex_notify.TITLE_PROMPT_PREFIX + "title",
+                )
+                self.event("Stop", turn="internal")
+                self.assertEqual(set(self.running()), {"s:a"})
+                self.assertTrue(codex_notify.state_path("s", "s:a").exists())
+                self.notifications.assert_not_called()
+                self.event("Stop", turn="a")
+                self.assertEqual(self.notifications.call_args.args[2], "prompt a")
+                self.assertEqual(self.css.read_text(), "")
+
+
 class RemoteFunctions(unittest.TestCase):
     def test_desktop_functions_can_be_uploaded(self):
         try:
@@ -292,6 +500,7 @@ class RemoteFunctions(unittest.TestCase):
             self.skipTest("ssh_sync is not installed")
 
         for name in (
+            "apply_desktop_event",
             "show_notify",
             "mark_process_workspace_running",
             "write_workspace_highlights",
