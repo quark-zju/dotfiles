@@ -104,12 +104,31 @@ def detect_harness() -> str | None:
 
 
 def codex_client_process(session_id: str) -> tuple[int, int] | None:
-    """Find a remote resume client by its explicit session ID argument.
+    """Find the per-TUI wrapper, or a remote resume client by session ID.
 
-    This assumes the client stays on its initial session. If several clients
-    are attached, use the most recently started one.
+    The shared-server fallback assumes the client stays on its initial session.
+    If several clients are attached, use the most recently started one.
     """
     import subprocess
+
+    tui_pid = os.environ.get("CODEX_TUI_PID")
+    if tui_pid is not None:
+        try:
+            pid = int(tui_pid)
+            start_time = int(os.environ["CODEX_TUI_START_TICKS"])
+        except (KeyError, ValueError):
+            return None
+        stat = process_stat(pid)
+        process = (
+            (pid, start_time) if stat is not None and stat[1] == start_time else None
+        )
+        log_event(
+            "client_process_resolved",
+            session_id=session_id,
+            process=process,
+            source="tui_wrapper",
+        )
+        return process
 
     try:
         output = subprocess.check_output(
@@ -145,8 +164,8 @@ def codex_client_process(session_id: str) -> tuple[int, int] | None:
 def agent_process(agent: str, session_id: str | None = None) -> tuple[int, int] | None:
     """Return the nearest ancestor agent process's PID and start time.
 
-    A shared Codex app-server runs hooks for multiple terminals; find the
-    session's client instead of using the server's terminal ancestry.
+    A Codex app-server runs hooks for its clients; find the per-TUI wrapper or
+    the session's shared-server client instead of using the server's ancestry.
     """
     for pid in ancestors(os.getppid()):
         if process_name(pid) in AGENT_PROCESS_NAMES[agent]:

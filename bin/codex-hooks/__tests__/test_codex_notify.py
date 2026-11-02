@@ -111,6 +111,37 @@ class AgentProcess(unittest.TestCase):
 
 
 class CodexClientProcess(unittest.TestCase):
+    def setUp(self):
+        self.environment = mock.patch.dict(os.environ, {}, clear=True)
+        self.environment.start()
+        self.addCleanup(self.environment.stop)
+
+    def test_per_tui_wrapper_needs_no_session_argument(self):
+        with (
+            mock.patch.dict(
+                os.environ, {"CODEX_TUI_PID": "123", "CODEX_TUI_START_TICKS": "456"}
+            ),
+            mock.patch.object(codex_notify, "process_stat", return_value=(1, 456)),
+            mock.patch("subprocess.check_output") as scan,
+            mock.patch.object(codex_notify, "log_event"),
+        ):
+            self.assertEqual(codex_notify.codex_client_process("session"), (123, 456))
+            scan.assert_not_called()
+
+    def test_missing_or_reused_wrapper_is_not_resolved(self):
+        for stat in (None, (1, 789)):
+            with (
+                self.subTest(stat=stat),
+                mock.patch.dict(
+                    os.environ, {"CODEX_TUI_PID": "123", "CODEX_TUI_START_TICKS": "456"}
+                ),
+                mock.patch.object(codex_notify, "process_stat", return_value=stat),
+                mock.patch("subprocess.check_output") as scan,
+                mock.patch.object(codex_notify, "log_event"),
+            ):
+                self.assertIsNone(codex_notify.codex_client_process("session"))
+                scan.assert_not_called()
+
     def find_client(self, commands, stats):
         def read_cmdline(path):
             value = commands[int(path.parent.name)]
