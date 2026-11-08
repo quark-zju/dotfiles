@@ -94,6 +94,42 @@ def redact_agent_prompt(value: str) -> str:
     return value
 
 
+def simplify_agent_prompt(value: str) -> str:
+    value = re.sub(
+        r"<image\s+name=(\[Image #[^\]\n]+\])\s+[^>]*>\s*</image>",
+        r"\1",
+        value,
+    )
+
+    def replace_reply(match):
+        try:
+            replies = json.loads(match.group(1))
+            if not isinstance(replies, list) or not replies:
+                return match.group(0)
+            if any(
+                not isinstance(reply, dict)
+                or not isinstance(reply.get("question"), str)
+                or not isinstance(reply.get("answer"), str)
+                for reply in replies
+            ):
+                return match.group(0)
+            return "\n\n".join(
+                "\n".join("> " + line for line in reply["question"].split("\n"))
+                + "\n\n"
+                + reply["answer"]
+                for reply in replies
+            )
+        except (ValueError, TypeError):
+            return match.group(0)
+
+    return re.sub(
+        r"<send_user_message_question_reply>\s*(.*?)\s*</send_user_message_question_reply>",
+        replace_reply,
+        value,
+        flags=re.DOTALL,
+    )
+
+
 def keep_repeated_value(value: str) -> bool:
     return (
         "\n" not in value
@@ -150,9 +186,11 @@ def rewrite_commit_msg(
         if not key or not value:
             continue
         if key == "Agent-Prompt":
-            value = redact_agent_prompt(value)
+            value = redact_agent_prompt(simplify_agent_prompt(value))
         if not keep_repeated_value(value) and agent_utils.normalize_repeated_value(
-            parent_commit_env.get(key, "")
+            simplify_agent_prompt(parent_commit_env.get(key, ""))
+            if key == "Agent-Prompt"
+            else parent_commit_env.get(key, "")
         ) == agent_utils.normalize_repeated_value(value):
             value = same_as_before_value(value)
         if "\n" in value:
@@ -1081,9 +1119,7 @@ def run_self_tests():
             return {
                 "payload_type": "runtime.user_intent.accepted",
                 "payload": {
-                    "model_messages": [
-                        {"content": [{"kind": "text", "text": text}]}
-                    ],
+                    "model_messages": [{"content": [{"kind": "text", "text": text}]}],
                     "semantic_kind": {"kind": "chat"},
                 },
             }
@@ -1335,6 +1371,27 @@ def run_self_tests():
                 "    AWS_SECRET_ACCESS_KEY=[aws_secret_key]\n\n"
                 f"Agent-Model: {github_pat}\n",
             )
+
+        def test_simplify_agent_prompt(self):
+            prompt = (
+                '图片\n<image name=[Image #1] path="/tmp/a.png">\n</image>\n'
+                "<send_user_message_question_reply>\n"
+                '[{"question":"材料？","answer":"PLA"},'
+                '{"question":"多行\\n问题？","answer":"是"}]\n'
+                "</send_user_message_question_reply>"
+            )
+            self.assertEqual(
+                simplify_agent_prompt(prompt),
+                "图片\n[Image #1]\n> 材料？\n\nPLA\n\n> 多行\n> 问题？\n\n是",
+            )
+            self.assertEqual(
+                simplify_agent_prompt(
+                    "<send_user_message_question_reply>bad</send_user_message_question_reply>"
+                ),
+                "<send_user_message_question_reply>bad</send_user_message_question_reply>",
+            )
+            output = self.rewrite("subject\n", {"Agent-Prompt": prompt})
+            self.assertIn("    [Image #1]\n    > 材料？\n    \n    PLA", output)
 
         def test_rewrite_redacts_supported_hostnames(self):
             output = self.rewrite(
