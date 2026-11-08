@@ -13,7 +13,7 @@ import subprocess
 import sys
 import textwrap
 import time
-from typing import Dict, Iterable
+from typing import Dict, Iterable, Optional, Tuple
 
 # Hooks are installed from this dotfiles checkout, so import the shared
 # detector from the repository's local Python library.
@@ -29,12 +29,17 @@ PARENT_COMMIT_SCAN_LIMIT = 16
 SAME_AS_BEFORE_EN = "(same as before)"
 SAME_AS_BEFORE_ZH = "(同上)"
 SAME_AS_BEFORE_VALUES = {SAME_AS_BEFORE_EN, SAME_AS_BEFORE_ZH}
+PROMPT_REFERENCE_VALUES = SAME_AS_BEFORE_VALUES | {"同上", "（同上）"}
+PROMPT_SEPARATOR = "\n----\n"
 
 
-def get_parent_commit_env(keys: Iterable[str]) -> Dict[str, str]:
+def get_commit_context(
+    keys: Iterable[str],
+) -> Tuple[Dict[str, str], Dict[str, str]]:
+    """Read HEAD's metadata and the latest concrete value for each key."""
     key_list = [key for key in keys if key]
     if not key_list:
-        return {}
+        return {}, {}
 
     try:
         commit_msgs = subprocess.check_output(
@@ -50,18 +55,26 @@ def get_parent_commit_env(keys: Iterable[str]) -> Dict[str, str]:
             text=True,
         )
     except subprocess.CalledProcessError:
-        return {}
+        return {}, {}
 
+    head_env = {}
     env = {}
-    for commit_msg in commit_msgs.split("\x1e"):
+    for index, commit_msg in enumerate(commit_msgs.split("\x1e")):
         parsed_env = agent_utils.parse_commit_env(commit_msg, key_list)
+        if index == 0:
+            head_env = parsed_env
         for key in key_list:
             value = parsed_env.get(key, "").strip()
-            if key not in env and value and value not in SAME_AS_BEFORE_VALUES:
+            references = (
+                PROMPT_REFERENCE_VALUES
+                if key == "Agent-Prompt"
+                else SAME_AS_BEFORE_VALUES
+            )
+            if key not in env and value and value not in references:
                 env[key] = value
         if len(env) == len(key_list):
             break
-    return env
+    return head_env, env
 
 
 def is_chinese_text(value: str) -> bool:
@@ -138,10 +151,36 @@ def keep_repeated_value(value: str) -> bool:
     )
 
 
+def trim_recorded_prompt(value: str, parent_prompt: str) -> str:
+    parent_prompt = parent_prompt.strip()
+    if not parent_prompt or parent_prompt in PROMPT_REFERENCE_VALUES:
+        return value
+
+    # Match complete requests, preserving the original formatting of the tail.
+    # The parent may itself contain only the tail of a longer transcript.
+    parts = value.split(PROMPT_SEPARATOR)
+    parent = [
+        agent_utils.normalize_repeated_value(part)
+        for part in parent_prompt.split(PROMPT_SEPARATOR)
+    ]
+    if any(part in PROMPT_REFERENCE_VALUES for part in parent):
+        return value
+    normalized = [agent_utils.normalize_repeated_value(part) for part in parts]
+    matches = [
+        start
+        for start in range(len(parts) - len(parent) + 1)
+        if normalized[start : start + len(parent)] == parent
+    ]
+    if len(matches) != 1:
+        return value
+    return PROMPT_SEPARATOR.join(parts[matches[0] + len(parent) :]).strip()
+
+
 def rewrite_commit_msg(
     commit_msg_file: str,
     agent_env: Dict[str, str],
     parent_commit_env: Dict[str, str],
+    head_env: Optional[Dict[str, str]] = None,
 ):
     if not agent_env:
         return
@@ -185,14 +224,27 @@ def rewrite_commit_msg(
         value = (raw_val or "").strip()
         if not key or not value:
             continue
+        previous_value = parent_commit_env.get(key, "")
         if key == "Agent-Prompt":
             value = redact_agent_prompt(simplify_agent_prompt(value))
-        if not keep_repeated_value(value) and agent_utils.normalize_repeated_value(
-            simplify_agent_prompt(parent_commit_env.get(key, ""))
-            if key == "Agent-Prompt"
-            else parent_commit_env.get(key, "")
-        ) == agent_utils.normalize_repeated_value(value):
-            value = same_as_before_value(value)
+            previous_value = simplify_agent_prompt(previous_value)
+        full_value = value
+        if (
+            key == "Agent-Prompt"
+            and head_env
+            and head_env.get("Agent-Harness")
+            and head_env["Agent-Harness"] == agent_env.get("Agent-Harness")
+        ):
+            value = trim_recorded_prompt(
+                value, simplify_agent_prompt(head_env.get("Agent-Prompt", ""))
+            )
+        if not value or (
+            (key != "Agent-Prompt" or value not in PROMPT_REFERENCE_VALUES)
+            and not keep_repeated_value(value)
+            and agent_utils.normalize_repeated_value(previous_value)
+            == agent_utils.normalize_repeated_value(value)
+        ):
+            value = same_as_before_value(full_value)
         if "\n" in value:
             buf.append(f"{key}:\n")
             buf.append(textwrap.indent(value, "    ", lambda line: True))
@@ -220,11 +272,8 @@ def main():
     else:
         # used as git hook to rewrite commit message
         agent_env = agent_utils.get_agent_env()
-        rewrite_commit_msg(
-            sys.argv[1],
-            agent_env,
-            get_parent_commit_env(agent_env.keys()),
-        )
+        head_env, parent_commit_env = get_commit_context(agent_env.keys())
+        rewrite_commit_msg(sys.argv[1], agent_env, parent_commit_env, head_env)
 
 
 def run_self_tests():
@@ -1515,6 +1564,49 @@ def run_self_tests():
                 finally:
                     os.environ.clear()
                     os.environ.update(old_env)
+
+        def test_git_hook_trims_requests_recorded_in_head(self):
+            hook_dir = pathlib.Path(__file__).resolve().parent
+            env = os.environ.copy()
+            env.pop("SKIP_GIT_AGENT_MESSAGE", None)
+            env["AGENT_MODEL"] = "test-model"
+            scenarios = [
+                ("第一条\n----\n第二条", "第一条\n----\n第二条"),
+                ("第一条\n----\n第二条\n----\n第三条", "第三条"),
+                ("第一条\n----\n第二条\n----\n第三条\n----\n第四条", "第四条"),
+                ("第三条\n----\n第四条", "(同上)"),
+                ("第四条\n----\n第五条", "第四条\n----\n第五条"),
+                ("（同上）", "（同上）"),
+                ("（同上）\n----\n保留此条", "（同上）\n----\n保留此条"),
+                ("同上", "同上"),
+                ("同上\n----\n第六条", "同上\n----\n第六条"),
+                (
+                    "同上\n----\n第六条\n----\n第七条",
+                    "同上\n----\n第六条\n----\n第七条",
+                ),
+            ]
+            with tempfile.TemporaryDirectory() as tmpdir:
+                repo = pathlib.Path(tmpdir)
+                self.run_git(["init"], repo, env)
+                self.run_git(["config", "user.name", "Self Test"], repo, env)
+                self.run_git(
+                    ["config", "user.email", "self-test@example.com"], repo, env
+                )
+                self.run_git(["config", "core.hooksPath", str(hook_dir)], repo, env)
+
+                for index, (prompt, expected) in enumerate(scenarios):
+                    with self.subTest(prompt=prompt):
+                        env["AGENT_PROMPT"] = prompt
+                        self.run_git(
+                            ["commit", "--allow-empty", "-m", f"commit {index}"],
+                            repo,
+                            env,
+                        )
+                        message = self.run_git(["log", "-1", "--format=%B"], repo, env)
+                        parsed = agent_utils.parse_commit_env(
+                            message.stdout, ["Agent-Prompt"]
+                        )
+                        self.assertEqual(parsed["Agent-Prompt"], expected)
 
         def test_git_commit_hook_elides_repeated_agent_values(self):
             hook_dir = pathlib.Path(__file__).resolve().parent
