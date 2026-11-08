@@ -19,7 +19,8 @@ SAME_AS_BEFORE_EN = "(same as before)"
 SAME_AS_BEFORE_ZH = "(同上)"
 SAME_AS_BEFORE_VALUES = {SAME_AS_BEFORE_EN, SAME_AS_BEFORE_ZH}
 EXEC_CMD_RE = re.compile(
-    r'(?:\{|,)\s*(?:"cmd"|cmd)\s*:\s*"(?P<exec_cmd>(?:\\.|[^"\\])*)"'
+    r"""(?:\{|,)\s*(?:"cmd"|cmd)\s*:\s*(?P<quote>["'`])"""
+    r"(?P<exec_cmd>(?:\\[\s\S]|(?!(?P=quote))[^\\])*)(?P=quote)"
 )
 GIT_COMMIT_RE = re.compile(
     r"(?:^|&&|\|\||;|\n|\\n)\s*git(?:\s+-C\s+\S+)*\s+commit\b"

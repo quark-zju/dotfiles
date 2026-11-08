@@ -261,8 +261,8 @@ def run_self_tests():
                         "type": "custom_tool_call",
                         "name": "exec",
                         "input": (
-                            'tools.exec_command({cmd:"git add file && '
-                            'git commit -m old"})'
+                            "tools.exec_command({cmd:`git add file\n"
+                            "git commit -m old`})"
                         ),
                     },
                 },
